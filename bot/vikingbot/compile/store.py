@@ -64,6 +64,19 @@ class CompileTaskStore:
                 return None
             return CompileTask.model_validate_json(path.read_text(encoding="utf-8"))
 
+    async def list(self) -> list[CompileTask]:
+        """Return every readable task record, newest first."""
+        tasks: list[CompileTask] = []
+        for path in self.root.glob("cmp_*.json"):
+            try:
+                task = await self.get(path.stem)
+            except (OSError, ValueError):
+                continue
+            if task is not None:
+                tasks.append(task)
+        tasks.sort(key=lambda task: (task.created_at, task.task_id), reverse=True)
+        return tasks
+
     async def update(
         self,
         task_id: str,

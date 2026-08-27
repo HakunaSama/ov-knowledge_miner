@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQueries, useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
   BotIcon,
@@ -16,9 +16,11 @@ import {
   FolderIcon,
   FolderOpenIcon,
   FolderTreeIcon,
+  HistoryIcon,
   Layers3Icon,
   LoaderCircleIcon,
   NetworkIcon,
+  PlusIcon,
   TagsIcon,
   RotateCcwIcon,
   SparklesIcon,
@@ -63,6 +65,8 @@ import {
   ensureLlmWikiSkill,
   getCompileTask,
   isCompileTerminal,
+  listCompileTasks,
+  resumeCompile,
   startCompile,
   uploadKnowledgeFile,
   writeOkfConfig,
@@ -73,6 +77,17 @@ import type {
   CompileTask,
   CompileView,
 } from './-lib/api'
+import {
+  jobsFromCompileTasks,
+  mergeMiningJobs,
+  parseMiningHistory,
+} from './-lib/history'
+import type {
+  FileProgress,
+  MiningHistory,
+  MiningJob,
+  MiningPhase,
+} from './-lib/history'
 import {
   DOCUMENT_EXTENSIONS,
   MEMORY_EXTENSIONS,
@@ -119,43 +134,6 @@ export const Route = createFileRoute('/knowledge-mining')({
   component: KnowledgeMiningRoute,
 })
 
-type MiningPhase =
-  | 'idle'
-  | 'preparing'
-  | 'uploading'
-  | 'compiling_documents'
-  | 'compiling_memory'
-  | 'compiling_human'
-  | 'awaiting_human'
-  | 'partial'
-  | 'completed'
-  | 'failed'
-  | 'cancelled'
-
-type FileProgress = {
-  name: string
-  percent: number
-  status: 'pending' | 'uploading' | 'processing' | 'completed' | 'failed'
-}
-
-type MiningJob = {
-  documentFiles: FileProgress[]
-  documentSourceUri: string
-  documentTaskId: string | null
-  error: string | null
-  memoryFiles: FileProgress[]
-  memorySourceUri: string
-  memoryTaskId: string | null
-  humanTaskId: string | null
-  phase: MiningPhase
-  reason: string
-  result: CompileResult | null
-  okfConfigUri: string | null
-  skillUri: string | null
-  targetUri: string
-  taskId: string | null
-}
-
 function getErrorMessage(error: unknown): string {
   if (isOvClientError(error) || error instanceof Error) return error.message
   return String(error)
@@ -193,7 +171,9 @@ function newJob(
   reason: string,
 ): MiningJob {
   const { documentSourceUri, memorySourceUri, targetUri } = createJobUris()
+  const now = new Date().toISOString()
   return {
+    createdAt: now,
     documentFiles: progressFor(documentFiles),
     documentSourceUri,
     documentTaskId: null,
@@ -202,6 +182,11 @@ function newJob(
     memorySourceUri,
     memoryTaskId: null,
     humanTaskId: null,
+    id:
+      targetUri
+        .replace(/\/wiki$/, '')
+        .split('/')
+        .at(-1) || targetUri,
     phase: 'preparing',
     reason,
     result: null,
@@ -209,45 +194,21 @@ function newJob(
     skillUri: null,
     targetUri,
     taskId: null,
+    updatedAt: now,
   }
 }
 
-function readStoredJob(storageKey: string): MiningJob | null {
+function readMiningHistory(
+  historyStorageKey: string,
+  legacyJobStorageKey: string,
+): MiningHistory {
   try {
-    const value = window.sessionStorage.getItem(storageKey)
-    if (!value) return null
-    const raw = JSON.parse(value) as Omit<Partial<MiningJob>, 'phase'> & {
-      files?: FileProgress[]
-      sourceUri?: string
-      phase?: MiningPhase | 'compiling'
-    }
-    const job: Partial<MiningJob> = {
-      ...raw,
-      documentFiles: raw.documentFiles || raw.files || [],
-      documentSourceUri: raw.documentSourceUri || raw.sourceUri,
-      documentTaskId: raw.documentTaskId || raw.taskId,
-      memoryFiles: raw.memoryFiles || [],
-      memorySourceUri:
-        raw.memorySourceUri || `${raw.sourceUri || ''}/team-memory`,
-      memoryTaskId: raw.memoryTaskId || null,
-      humanTaskId: raw.humanTaskId || null,
-      phase: raw.phase === 'compiling' ? 'compiling_documents' : raw.phase,
-      reason: raw.reason || '',
-      result: raw.result || null,
-    }
-    if (
-      !job.taskId ||
-      !job.documentSourceUri ||
-      !job.targetUri ||
-      !job.phase ||
-      !Array.isArray(job.documentFiles) ||
-      !Array.isArray(job.memoryFiles)
-    ) {
-      return null
-    }
-    return job as MiningJob
+    return parseMiningHistory(
+      window.localStorage.getItem(historyStorageKey),
+      window.sessionStorage.getItem(legacyJobStorageKey),
+    )
   } catch {
-    return null
+    return parseMiningHistory(null, null)
   }
 }
 
@@ -287,6 +248,9 @@ function phaseProgress(phase: MiningPhase, compileTask?: CompileTask): number {
   if (stage === 'loading_skill') return incremental ? 76 : 38
   if (stage === 'collecting_context') return incremental ? 80 : 44
   if (stage === 'agent') return incremental ? 88 : 56
+  if (stage === 'source_coverage') return incremental ? 84 : 48
+  if (stage === 'candidate_knowledge') return incremental ? 89 : 58
+  if (stage === 'page_generation') return incremental ? 93 : 66
   if (stage === 'rendering') return incremental ? 93 : 64
   if (stage === 'writing') return incremental ? 96 : 68
   if (stage === 'refreshing' || stage === 'salvaging')
@@ -547,13 +511,21 @@ function KnowledgeMiningRoute() {
   const navigate = useNavigate()
   const { t } = useTranslation('knowledgeMining')
   const { identityScopeKey } = useAppConnection()
-  const jobStorageKey = `openviking.knowledge-mining.${identityScopeKey}`
+  const legacyJobStorageKey = `openviking.knowledge-mining.${identityScopeKey}`
+  const historyStorageKey = `openviking.knowledge-mining.history.${identityScopeKey}`
   const [documentFiles, setDocumentFiles] = React.useState<File[]>([])
   const [memoryFiles, setMemoryFiles] = React.useState<File[]>([])
   const [okfConfigFile, setOkfConfigFile] = React.useState<File | null>(null)
   const [reason, setReason] = React.useState(() => t('reason.default'))
-  const [job, setJob] = React.useState<MiningJob | null>(() =>
-    readStoredJob(jobStorageKey),
+  const [history, setHistory] = React.useState<MiningHistory>(() =>
+    readMiningHistory(historyStorageKey, legacyJobStorageKey),
+  )
+  const job = React.useMemo(
+    () =>
+      history.jobs.find(
+        (candidate) => candidate.id === history.selectedJobId,
+      ) || null,
+    [history.jobs, history.selectedJobId],
   )
   const [selectedUri, setSelectedUri] = React.useState<string | null>(null)
   const [selectedViewId, setSelectedViewId] = React.useState('main')
@@ -562,6 +534,47 @@ function KnowledgeMiningRoute() {
   const previousDefaultReasonRef = React.useRef(t('reason.default'))
   const okfConfigInputRef = React.useRef<HTMLInputElement>(null)
   const resourceFolderInputRef = React.useRef<HTMLInputElement>(null)
+  const historyHydratedRef = React.useRef(false)
+  const advancingJobsRef = React.useRef(new Set<string>())
+
+  const updateJob = React.useCallback(
+    (
+      jobId: string,
+      updater: (current: MiningJob) => MiningJob,
+      options?: { select?: boolean },
+    ) => {
+      setHistory((current) => {
+        const index = current.jobs.findIndex(
+          (candidate) => candidate.id === jobId,
+        )
+        if (index < 0) return current
+        const existing = current.jobs[index]
+        const updated = updater(existing)
+        if (updated === existing && !options?.select) return current
+        const jobs = [...current.jobs]
+        jobs[index] = {
+          ...updated,
+          createdAt: existing.createdAt,
+          id: existing.id,
+          updatedAt: new Date().toISOString(),
+        }
+        return {
+          ...current,
+          jobs,
+          selectedJobId: options?.select ? jobId : current.selectedJobId,
+        }
+      })
+    },
+    [],
+  )
+
+  const addJob = React.useCallback((nextJob: MiningJob) => {
+    setHistory((current) => ({
+      ...current,
+      jobs: [nextJob, ...current.jobs.filter((item) => item.id !== nextJob.id)],
+      selectedJobId: nextJob.id,
+    }))
+  }, [])
 
   const setResourceFolderInputRef = React.useCallback(
     (input: HTMLInputElement | null) => {
@@ -583,15 +596,38 @@ function KnowledgeMiningRoute() {
 
   React.useEffect(() => {
     try {
-      if (job?.taskId) {
-        window.sessionStorage.setItem(jobStorageKey, JSON.stringify(job))
-      } else {
-        window.sessionStorage.removeItem(jobStorageKey)
-      }
+      window.localStorage.setItem(historyStorageKey, JSON.stringify(history))
+      window.sessionStorage.removeItem(legacyJobStorageKey)
     } catch {
       // Storage may be unavailable in privacy-restricted browser contexts.
     }
-  }, [job, jobStorageKey])
+  }, [history, historyStorageKey, legacyJobStorageKey])
+
+  const serverHistoryQuery = useQuery({
+    queryFn: listCompileTasks,
+    queryKey: ['knowledge-mining-history', identityScopeKey],
+    refetchInterval: 15_000,
+    retry: 2,
+  })
+
+  React.useEffect(() => {
+    if (!serverHistoryQuery.data) return
+    setHistory((current) => {
+      const jobs = mergeMiningJobs(
+        current.jobs,
+        jobsFromCompileTasks(serverHistoryQuery.data),
+      )
+      const firstHydration = !historyHydratedRef.current
+      historyHydratedRef.current = true
+      return {
+        ...current,
+        jobs,
+        selectedJobId:
+          current.selectedJobId ||
+          (firstHydration ? jobs[0]?.id || null : null),
+      }
+    })
+  }, [serverHistoryQuery.data])
 
   const addDocumentFiles = React.useCallback(
     (incoming: File[]) => {
@@ -712,60 +748,53 @@ function KnowledgeMiningRoute() {
     [addDocumentFiles, addMemoryFiles, t],
   )
 
-  const compileQuery = useQuery({
-    enabled: Boolean(job?.taskId),
-    queryFn: () => getCompileTask(job?.taskId || ''),
-    queryKey: ['knowledge-mining-compile', identityScopeKey, job?.taskId],
-    refetchInterval: (query) =>
-      isCompileTerminal(query.state.data?.status) ? false : 2_000,
-    retry: 2,
+  const trackedJobs = React.useMemo(
+    () => history.jobs.filter((candidate) => Boolean(candidate.taskId)),
+    [history.jobs],
+  )
+  const compileQueries = useQueries({
+    queries: trackedJobs.map((candidate) => ({
+      queryFn: () => getCompileTask(candidate.taskId || ''),
+      queryKey: [
+        'knowledge-mining-compile',
+        identityScopeKey,
+        candidate.taskId,
+      ],
+      refetchInterval: (query: { state: { data?: CompileTask } }) =>
+        isCompileTerminal(query.state.data?.status) ? false : 2_000,
+      retry: 2,
+    })),
   })
-  const compileTask = compileQuery.data
+  const compileTasksByJobId = React.useMemo(
+    () =>
+      new Map(
+        trackedJobs.flatMap((candidate, index) => {
+          const task = compileQueries[index]?.data
+          return task ? ([[candidate.id, task]] as const) : []
+        }),
+      ),
+    [compileQueries, trackedJobs],
+  )
+  const compileTask = job ? compileTasksByJobId.get(job.id) : undefined
   const effectiveCompileResult = compileTask?.result || job?.result || null
   const hasVisibleResults = Boolean(
     job &&
-    ['awaiting_human', 'compiling_human', 'partial', 'completed'].includes(
-      job.phase,
-    ) &&
+    [
+      'compiling_memory',
+      'compiling_human',
+      'awaiting_human',
+      'partial',
+      'completed',
+      'failed',
+      'cancelled',
+    ].includes(job.phase) &&
     effectiveCompileResult,
   )
-
-  const incrementalMutation = useMutation({
-    mutationFn: async (currentJob: MiningJob) =>
-      startCompile(
-        buildTeamMemoryCompileInput({
-          memorySourceUri: currentJob.memorySourceUri,
-          okfConfig: currentJob.okfConfigUri || '',
-          reason: `${currentJob.reason}\n\n${t('memory.incrementalReason')}`,
-          skill: currentJob.skillUri || '',
-          targetUri: currentJob.targetUri,
-        }),
-      ),
-    onError: (error) => {
-      const message = getErrorMessage(error)
-      setJob((current) =>
-        current ? { ...current, error: message, phase: 'failed' } : current,
-      )
-      toast.error(message)
-    },
-    onSuccess: (accepted) => {
-      setJob((current) =>
-        current
-          ? {
-              ...current,
-              error: null,
-              memoryTaskId: accepted.task_id,
-              phase: 'compiling_memory',
-              taskId: accepted.task_id,
-            }
-          : current,
-      )
-    },
-  })
 
   const humanAnswerMutation = useMutation({
     mutationFn: async (questionnaire: Questionnaire) => {
       if (!job) throw new Error(t('errors.missingJob'))
+      const jobId = job.id
       const answeredAt = new Date().toISOString()
       const content = buildHumanAnswersMarkdown(
         questionnaire,
@@ -780,7 +809,7 @@ function KnowledgeMiningRoute() {
         }),
         job.memorySourceUri,
       )
-      return startCompile(
+      const accepted = await startCompile(
         buildHumanAnswerCompileInput({
           answerSourceUri,
           okfConfig: job.okfConfigUri || '',
@@ -789,119 +818,139 @@ function KnowledgeMiningRoute() {
           targetUri: job.targetUri,
         }),
       )
+      return { accepted, jobId }
     },
     onError: (error) => toast.error(getErrorMessage(error)),
-    onSuccess: (accepted) => {
-      setJob((current) =>
-        current
-          ? {
-              ...current,
-              error: null,
-              humanTaskId: accepted.task_id,
-              phase: 'compiling_human',
-              taskId: accepted.task_id,
-            }
-          : current,
-      )
+    onSuccess: ({ accepted, jobId }) => {
+      updateJob(jobId, (current) => ({
+        ...current,
+        error: null,
+        humanTaskId: accepted.task_id,
+        phase: 'compiling_human',
+        taskId: accepted.task_id,
+      }))
     },
   })
 
   React.useEffect(() => {
-    if (!compileTask || !isCompileTerminal(compileTask.status)) return
-    if (compileTask.task_id !== job?.taskId) return
-    if (compileTask.status === 'completed') {
+    trackedJobs.forEach((trackedJob, index) => {
+      const taskQuery = compileQueries[index]
+      const task = taskQuery?.data
+      if (taskQuery?.error && !task) {
+        updateJob(trackedJob.id, (current) =>
+          current.phase === 'failed' &&
+          current.error === getErrorMessage(taskQuery.error)
+            ? current
+            : {
+                ...current,
+                error: getErrorMessage(taskQuery.error),
+                phase: 'failed',
+              },
+        )
+        return
+      }
+      if (!task || !isCompileTerminal(task.status)) return
+      if (task.task_id !== trackedJob.taskId) return
+      if (task.status !== 'completed') {
+        const error = task.error
+          ? `${task.error.code}: ${task.error.message}`
+          : task.status === 'cancelled'
+            ? t('status.cancelledDescription')
+            : t('errors.compileFailed')
+        const phase = task.status === 'cancelled' ? 'cancelled' : 'failed'
+        updateJob(trackedJob.id, (current) =>
+          current.phase === phase && current.error === error
+            ? current
+            : { ...current, error, phase },
+        )
+        return
+      }
       const transition = transitionAfterCompletedCompile({
-        hasMemoryFiles: job.memoryFiles.length > 0,
-        memoryTaskStarted: Boolean(job.memoryTaskId),
-        phase: job.phase,
-        result: compileTask.result,
-        taskStage: compileTask.stage,
+        hasMemoryFiles: trackedJob.memoryFiles.length > 0,
+        memoryTaskStarted: Boolean(trackedJob.memoryTaskId),
+        phase: trackedJob.phase,
+        result: task.result,
+        taskStage: task.stage,
       })
       if (transition === 'show_partial_result') {
-        setJob((current) =>
-          current
-            ? {
+        updateJob(trackedJob.id, (current) =>
+          current.phase === 'partial' && current.result === task.result
+            ? current
+            : {
                 ...current,
                 error: null,
                 phase: 'partial',
-                result: compileTask.result || current.result,
-              }
-            : current,
+                result: task.result || current.result,
+              },
         )
         return
       }
       if (transition === 'start_memory_compile') {
-        if (!incrementalMutation.isPending && !job.memoryTaskId) {
-          setJob((current) =>
-            current
-              ? { ...current, result: compileTask.result || current.result }
-              : current,
-          )
-          incrementalMutation.mutate(job)
-        }
+        if (advancingJobsRef.current.has(trackedJob.id)) return
+        advancingJobsRef.current.add(trackedJob.id)
+        updateJob(trackedJob.id, (current) => ({
+          ...current,
+          result: task.result || current.result,
+        }))
+        void startCompile(
+          buildTeamMemoryCompileInput({
+            memorySourceUri: trackedJob.memorySourceUri,
+            okfConfig: trackedJob.okfConfigUri || '',
+            reason: `${trackedJob.reason}\n\n${t('memory.incrementalReason')}`,
+            skill: trackedJob.skillUri || '',
+            targetUri: trackedJob.targetUri,
+          }),
+        )
+          .then((accepted) => {
+            updateJob(trackedJob.id, (current) => ({
+              ...current,
+              error: null,
+              memoryTaskId: accepted.task_id,
+              phase: 'compiling_memory',
+              taskId: accepted.task_id,
+            }))
+          })
+          .catch((error: unknown) => {
+            const message = getErrorMessage(error)
+            updateJob(trackedJob.id, (current) => ({
+              ...current,
+              error: message,
+              phase: 'failed',
+            }))
+            toast.error(message)
+          })
+          .finally(() => advancingJobsRef.current.delete(trackedJob.id))
         return
       }
       if (transition === 'await_human_evidence') {
-        setJob((current) =>
-          current
-            ? {
+        updateJob(trackedJob.id, (current) =>
+          current.phase === 'awaiting_human' && current.result === task.result
+            ? current
+            : {
                 ...current,
                 error: null,
                 phase: 'awaiting_human',
-                result: compileTask.result || current.result,
-              }
-            : current,
+                result: task.result || current.result,
+              },
         )
-        setSelectedViewId('questionnaire')
+        if (trackedJob.id === history.selectedJobId) {
+          setSelectedViewId('questionnaire')
+        }
         return
       }
       if (transition !== 'complete_workflow') return
-      setJob((current) =>
-        current
-          ? {
+      updateJob(trackedJob.id, (current) =>
+        current.phase === 'completed' && current.result === task.result
+          ? current
+          : {
               ...current,
               error: null,
               phase: 'completed',
-              result: compileTask.result || current.result,
-            }
-          : current,
+              result: task.result || current.result,
+            },
       )
-      return
-    }
-    const error = compileTask.error
-      ? `${compileTask.error.code}: ${compileTask.error.message}`
-      : compileTask.status === 'cancelled'
-        ? t('status.cancelledDescription')
-        : t('errors.compileFailed')
-    setJob((current) =>
-      current
-        ? {
-            ...current,
-            error,
-            phase: compileTask.status === 'cancelled' ? 'cancelled' : 'failed',
-          }
-        : current,
-    )
-  }, [
-    compileTask,
-    incrementalMutation.isPending,
-    incrementalMutation.mutate,
-    job,
-    t,
-  ])
-
-  React.useEffect(() => {
-    if (!compileQuery.error) return
-    setJob((current) =>
-      current
-        ? {
-            ...current,
-            error: getErrorMessage(compileQuery.error),
-            phase: 'failed',
-          }
-        : current,
-    )
-  }, [compileQuery.error])
+    })
+  }, [compileQueries, history.selectedJobId, t, trackedJobs, updateJob])
 
   const wikiQuery = useQuery({
     enabled: hasVisibleResults,
@@ -1181,7 +1230,7 @@ function KnowledgeMiningRoute() {
       setSelectedUri(null)
       setSelectedViewId('main')
       setQuestionnaireAnswers({})
-      setJob(nextJob)
+      addJob(nextJob)
       try {
         try {
           await checkVikingBot()
@@ -1189,9 +1238,11 @@ function KnowledgeMiningRoute() {
           throw new Error(t('errors.botUnavailable'), { cause: error })
         }
         const skillUri = await ensureLlmWikiSkill()
-        setJob((current) =>
-          current ? { ...current, phase: 'uploading', skillUri } : current,
-        )
+        updateJob(nextJob.id, (current) => ({
+          ...current,
+          phase: 'uploading',
+          skillUri,
+        }))
 
         const uploadBatch = async (
           batch: File[],
@@ -1199,44 +1250,32 @@ function KnowledgeMiningRoute() {
           field: 'documentFiles' | 'memoryFiles',
         ) => {
           for (const [index, file] of batch.entries()) {
-            setJob((current) =>
-              current
-                ? {
-                    ...current,
-                    [field]: current[field].map((progress, progressIndex) =>
-                      progressIndex === index
-                        ? { ...progress, percent: 0, status: 'uploading' }
-                        : progress,
-                    ),
-                  }
-                : current,
-            )
+            updateJob(nextJob.id, (current) => ({
+              ...current,
+              [field]: current[field].map((progress, progressIndex) =>
+                progressIndex === index
+                  ? { ...progress, percent: 0, status: 'uploading' }
+                  : progress,
+              ),
+            }))
             await uploadKnowledgeFile(file, parentUri, (percent) => {
-              setJob((current) =>
-                current
-                  ? {
-                      ...current,
-                      [field]: current[field].map((progress, progressIndex) =>
-                        progressIndex === index
-                          ? { ...progress, percent, status: 'uploading' }
-                          : progress,
-                      ),
-                    }
-                  : current,
-              )
+              updateJob(nextJob.id, (current) => ({
+                ...current,
+                [field]: current[field].map((progress, progressIndex) =>
+                  progressIndex === index
+                    ? { ...progress, percent, status: 'uploading' }
+                    : progress,
+                ),
+              }))
             })
-            setJob((current) =>
-              current
-                ? {
-                    ...current,
-                    [field]: current[field].map((progress, progressIndex) =>
-                      progressIndex === index
-                        ? { ...progress, percent: 100, status: 'completed' }
-                        : progress,
-                    ),
-                  }
-                : current,
-            )
+            updateJob(nextJob.id, (current) => ({
+              ...current,
+              [field]: current[field].map((progress, progressIndex) =>
+                progressIndex === index
+                  ? { ...progress, percent: 100, status: 'completed' }
+                  : progress,
+              ),
+            }))
           }
         }
 
@@ -1253,7 +1292,7 @@ function KnowledgeMiningRoute() {
           nextJob.documentSourceUri,
           okfConfigFile ? await okfConfigFile.text() : DEFAULT_OKF_CONFIG,
         )
-        setJob((current) => (current ? { ...current, okfConfigUri } : current))
+        updateJob(nextJob.id, (current) => ({ ...current, okfConfigUri }))
 
         const accepted = await startCompile({
           from: [nextJob.documentSourceUri],
@@ -1262,23 +1301,21 @@ function KnowledgeMiningRoute() {
           skill: skillUri,
           to: nextJob.targetUri,
         })
-        setJob((current) =>
-          current
-            ? {
-                ...current,
-                documentTaskId: accepted.task_id,
-                phase: 'compiling_documents',
-                skillUri,
-                taskId: accepted.task_id,
-              }
-            : current,
-        )
+        updateJob(nextJob.id, (current) => ({
+          ...current,
+          documentTaskId: accepted.task_id,
+          phase: 'compiling_documents',
+          skillUri,
+          taskId: accepted.task_id,
+        }))
         return accepted
       } catch (error) {
         const message = getErrorMessage(error)
-        setJob((current) =>
-          current ? { ...current, error: message, phase: 'failed' } : current,
-        )
+        updateJob(nextJob.id, (current) => ({
+          ...current,
+          error: message,
+          phase: 'failed',
+        }))
         throw error
       }
     },
@@ -1288,6 +1325,40 @@ function KnowledgeMiningRoute() {
   const cancelMutation = useMutation({
     mutationFn: () => cancelCompile(job?.taskId || ''),
     onError: (error) => toast.error(getErrorMessage(error)),
+  })
+
+  const resumeMutation = useMutation({
+    mutationFn: async () => {
+      if (!job?.taskId) throw new Error(t('errors.missingJob'))
+      const jobId = job.id
+      await ensureLlmWikiSkill()
+      const accepted = await resumeCompile(job.taskId)
+      return { accepted, jobId }
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+    onSuccess: ({ accepted, jobId }) => {
+      updateJob(jobId, (current) => {
+        const resumesHuman = current.taskId === current.humanTaskId
+        const resumesMemory = current.taskId === current.memoryTaskId
+        return {
+          ...current,
+          documentTaskId:
+            !resumesHuman && !resumesMemory
+              ? accepted.task_id
+              : current.documentTaskId,
+          error: null,
+          humanTaskId: resumesHuman ? accepted.task_id : current.humanTaskId,
+          memoryTaskId: resumesMemory ? accepted.task_id : current.memoryTaskId,
+          phase: resumesHuman
+            ? 'compiling_human'
+            : resumesMemory
+              ? 'compiling_memory'
+              : 'compiling_documents',
+          taskId: accepted.task_id,
+        }
+      })
+      toast.success(t('actions.resumeAccepted'))
+    },
   })
 
   const isActive = Boolean(
@@ -1307,7 +1378,7 @@ function KnowledgeMiningRoute() {
       : compileTask?.stage || job?.phase || 'idle'
 
   function reset(): void {
-    setJob(null)
+    setHistory((current) => ({ ...current, selectedJobId: null }))
     setDocumentFiles([])
     setMemoryFiles([])
     setOkfConfigFile(null)
@@ -1315,6 +1386,13 @@ function KnowledgeMiningRoute() {
     setSelectedViewId('main')
     setQuestionnaireAnswers({})
     setReason(t('reason.default'))
+  }
+
+  function selectHistoryJob(jobId: string): void {
+    setHistory((current) => ({ ...current, selectedJobId: jobId }))
+    setSelectedUri(null)
+    setSelectedViewId('main')
+    setQuestionnaireAnswers({})
   }
 
   return (
@@ -1336,12 +1414,119 @@ function KnowledgeMiningRoute() {
             </p>
           </div>
           {job ? (
-            <Button variant="outline" onClick={reset} disabled={isActive}>
-              <RotateCcwIcon />
+            <Button variant="outline" onClick={reset}>
+              <PlusIcon />
               {t('actions.newJob')}
             </Button>
           ) : null}
         </header>
+
+        {history.jobs.length > 0 ? (
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <HistoryIcon className="size-4" />
+                    {t('history.title')}
+                    <Badge variant="secondary">{history.jobs.length}</Badge>
+                  </CardTitle>
+                  <CardDescription className="mt-1.5">
+                    {t('history.description')}
+                  </CardDescription>
+                </div>
+                <Button size="sm" variant="outline" onClick={reset}>
+                  <PlusIcon />
+                  {t('history.newJob')}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="flex gap-3 overflow-x-auto pb-2">
+                {history.jobs.map((historyJob) => {
+                  const historyTask = compileTasksByJobId.get(historyJob.id)
+                  const historyProgress = phaseProgress(
+                    historyJob.phase,
+                    historyTask,
+                  )
+                  const sourceCount =
+                    historyJob.documentFiles.length +
+                      historyJob.memoryFiles.length ||
+                    historyJob.result?.source_coverage?.uploaded ||
+                    null
+                  const selected = history.selectedJobId === historyJob.id
+                  return (
+                    <button
+                      key={historyJob.id}
+                      type="button"
+                      className={cn(
+                        'w-[18rem] shrink-0 rounded-xl border bg-background p-3 text-left transition-colors hover:border-primary/50 hover:bg-muted/30',
+                        selected &&
+                          'border-primary bg-primary/[0.04] ring-1 ring-primary/20',
+                      )}
+                      onClick={() => selectHistoryJob(historyJob.id)}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <Badge
+                          variant={
+                            historyJob.phase === 'failed'
+                              ? 'destructive'
+                              : selected
+                                ? 'default'
+                                : 'secondary'
+                          }
+                        >
+                          {[
+                            'preparing',
+                            'uploading',
+                            'compiling_documents',
+                            'compiling_memory',
+                            'compiling_human',
+                          ].includes(historyJob.phase) ? (
+                            <LoaderCircleIcon className="animate-spin" />
+                          ) : null}
+                          {t(`phases.${historyJob.phase}`)}
+                        </Badge>
+                        {selected ? (
+                          <span className="text-[10px] font-medium text-primary">
+                            {t('history.current')}
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-2 line-clamp-2 min-h-10 text-sm font-medium leading-5">
+                        {historyJob.reason || t('history.untitled')}
+                      </p>
+                      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full bg-primary transition-[width]"
+                          style={{ width: `${historyProgress}%` }}
+                        />
+                      </div>
+                      <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                        <span>
+                          {new Intl.DateTimeFormat(undefined, {
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            month: '2-digit',
+                          }).format(new Date(historyJob.createdAt))}
+                        </span>
+                        <span>
+                          {sourceCount === null
+                            ? t('history.sourcesUnknown')
+                            : t('history.sources', { count: sourceCount })}
+                        </span>
+                      </div>
+                      <p className="mt-1 truncate font-mono text-[9px] text-muted-foreground/80">
+                        {historyJob.taskId || historyJob.id}
+                      </p>
+                    </button>
+                  )
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
 
         <div className="grid gap-6 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
           <div className="space-y-6">
@@ -1767,17 +1952,31 @@ function KnowledgeMiningRoute() {
                     'compiling_documents',
                     'compiling_memory',
                     'compiling_human',
-                    'cancelled',
                   ].includes(job.phase) ? (
                     <Button
                       variant="outline"
-                      disabled={
-                        job.phase === 'cancelled' || cancelMutation.isPending
-                      }
+                      disabled={cancelMutation.isPending}
                       onClick={() => cancelMutation.mutate()}
                     >
                       <CircleStopIcon />
                       {t('actions.cancel')}
+                    </Button>
+                  ) : null}
+                  {job.taskId &&
+                  ['failed', 'cancelled', 'partial'].includes(job.phase) ? (
+                    <Button
+                      className="w-full"
+                      disabled={resumeMutation.isPending}
+                      onClick={() => resumeMutation.mutate()}
+                    >
+                      {resumeMutation.isPending ? (
+                        <LoaderCircleIcon className="animate-spin" />
+                      ) : (
+                        <RotateCcwIcon />
+                      )}
+                      {resumeMutation.isPending
+                        ? t('actions.resuming')
+                        : t('actions.resume')}
                     </Button>
                   ) : null}
                 </CardContent>
@@ -1787,9 +1986,16 @@ function KnowledgeMiningRoute() {
 
           <Card className="min-h-[620px]">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FolderTreeIcon className="size-4" />
-                {t('results.title')}
+              <CardTitle className="flex flex-wrap items-center gap-2">
+                <span className="flex items-center gap-2">
+                  <FolderTreeIcon className="size-4" />
+                  {t('results.title')}
+                </span>
+                {job?.phase === 'partial' ? (
+                  <Badge variant="destructive">
+                    {t('results.partialBadge')}
+                  </Badge>
+                ) : null}
               </CardTitle>
               <CardDescription>
                 {hasVisibleResults

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 import yaml
@@ -42,6 +44,13 @@ from vikingbot.compile.renderer import (
 )
 
 _LINK_FIELDS = frozenset({"f", "t", "link_type", "weight", "match_text", "description"})
+_GENERIC_CHECKPOINT_REASONS = (
+    "inspected completely but did not produce",
+    "no sufficiently supported distinct knowledge unit",
+    "the candidate was not promoted in this run",
+    "no distinct knowledge",
+    "irrelevant",
+)
 
 
 def _normalize_workspace_path(path: str) -> str:
@@ -79,6 +88,419 @@ def _skill_workspace_read_hint(uri: str) -> str | None:
         return _normalize_workspace_path(value)
     except ValueError:
         return None
+
+
+def _resource_contains(root: str, resource: str) -> bool:
+    normalized_root = root.strip().rstrip("/")
+    normalized_resource = resource.strip().rstrip("/")
+    if normalized_root == normalized_resource:
+        return True
+    try:
+        return bool(relative_uri_path(normalized_root, normalized_resource))
+    except ValueError:
+        return False
+
+
+def _checkpoint_reason(value: Any, *, label: str) -> str:
+    if not isinstance(value, str) or len(value.strip()) < 20:
+        raise ValueError(f"{label} needs a source-specific reason of at least 20 characters")
+    reason = value.strip()
+    normalized = " ".join(reason.casefold().split())
+    if any(fragment in normalized for fragment in _GENERIC_CHECKPOINT_REASONS):
+        raise ValueError(f"{label} uses a generic reason; cite source-specific evidence instead")
+    return reason
+
+
+def _json_object(payload: bytes | None, *, path: str) -> dict[str, Any]:
+    if payload is None:
+        raise ValueError(f'checkpoint artifact "{path}" is missing')
+    try:
+        value = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f'checkpoint artifact "{path}" must contain valid UTF-8 JSON') from exc
+    if not isinstance(value, Mapping):
+        raise ValueError(f'checkpoint artifact "{path}" must contain a JSON object')
+    if value.get("version") != "1.0":
+        raise ValueError(f'checkpoint artifact "{path}" must use version "1.0"')
+    return dict(value)
+
+
+def _string_list(value: Any, *, label: str, allow_empty: bool = True) -> list[str]:
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) or not item.strip() for item in value
+    ):
+        raise ValueError(f"{label} must be a JSON array of non-empty strings")
+    result = [item.strip() for item in value]
+    if not allow_empty and not result:
+        raise ValueError(f"{label} must not be empty")
+    return result
+
+
+@dataclass
+class CompilePhaseGate:
+    """Shared state for the mandatory coverage -> candidates -> pages workflow."""
+
+    coverage_passed: bool = False
+    candidates_passed: bool = False
+
+
+class _SubmitMiningCheckpointTool(Tool):
+    checkpoint_name = ""
+
+    def __init__(
+        self,
+        *,
+        phase_gate: CompilePhaseGate,
+        source_roots: Mapping[str, str],
+        source_units: list[dict[str, Any]],
+        baseline_checkout: Mapping[str, bytes],
+        okf_config: OKFConfig,
+        limits: CompileLimits,
+        readlist: Any | None,
+        on_accepted: Callable[[str], Awaitable[None]] | None = None,
+    ):
+        self.phase_gate = phase_gate
+        self.source_roots = dict(source_roots)
+        self.source_units = list(source_units)
+        self.baseline_checkout = dict(baseline_checkout)
+        self.okf_config = okf_config
+        self.limits = limits
+        self.readlist = readlist
+        self.on_accepted = on_accepted
+
+    @property
+    def name(self) -> str:
+        return self.checkpoint_name
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {"type": "object", "properties": {}, "additionalProperties": False}
+
+    async def _checkout(self, tool_context: ToolContext) -> dict[str, bytes]:
+        if tool_context.sandbox_manager is None:
+            raise ValueError("task sandbox is unavailable")
+        sandbox = await tool_context.sandbox_manager.get_sandbox(tool_context.session_key)
+        entries = await sandbox.list_files(
+            COMPILE_TARGET_CHECKOUT_ROOT,
+            max_entries=self.limits.target_inventory_entries,
+        )
+        prefix = f"{COMPILE_TARGET_CHECKOUT_ROOT}/"
+        checkout: dict[str, bytes] = {}
+        for entry in entries:
+            workspace_path = _normalize_workspace_path(entry.path)
+            if not workspace_path.startswith(prefix):
+                continue
+            relative = validate_relative_file_path(workspace_path.removeprefix(prefix))
+            checkout[relative] = await sandbox.read_file_bytes(
+                workspace_path,
+                max_bytes=self.limits.target_total_bytes,
+            )
+        return checkout
+
+    def _artifact_paths(self) -> tuple[str, str, str]:
+        intermediate = self.okf_config.intermediates
+        if intermediate is None:
+            raise ValueError("the active OKF config does not declare mining intermediates")
+        root = intermediate.root_path
+        return (
+            f"{root}/{intermediate.run_manifest}",
+            f"{root}/{intermediate.source_coverage}",
+            f"{root}/{intermediate.candidate_knowledge}",
+        )
+
+    def _reject_changes_outside(
+        self, checkout: Mapping[str, bytes], *, allowed_paths: set[str]
+    ) -> None:
+        changed = sorted(
+            path
+            for path, payload in checkout.items()
+            if path not in allowed_paths and self.baseline_checkout.get(path) != payload
+        )
+        if changed:
+            raise ValueError(
+                "later-stage artifacts and page generation are locked at this checkpoint; move "
+                "scratch work outside compile_target_checkout and restore/remove these files: "
+                + ", ".join(changed[:20])
+            )
+
+    async def _read_paths(self) -> set[str]:
+        if self.readlist is None:
+            return set()
+        await self.readlist.summary()
+        return set(self.readlist.read_paths)
+
+    def _validate_coverage(
+        self, checkout: Mapping[str, bytes], *, read_paths: set[str]
+    ) -> tuple[str, dict[str, Mapping[str, Any]]]:
+        manifest_path, coverage_path, _candidate_path = self._artifact_paths()
+        manifest = _json_object(checkout.get(manifest_path), path=manifest_path)
+        stage = manifest.get("stage")
+        if stage not in {"documents", "memory_incremental", "human_incremental"}:
+            raise ValueError(
+                "run manifest stage must be documents, memory_incremental, or human_incremental"
+            )
+        coverage = _json_object(checkout.get(coverage_path), path=coverage_path)
+        if coverage.get("stage") != stage:
+            raise ValueError("source coverage stage must match the run manifest stage")
+        raw_sources = coverage.get("sources")
+        if not isinstance(raw_sources, list):
+            raise ValueError("source coverage sources must be a JSON array")
+        by_resource: dict[str, Mapping[str, Any]] = {}
+        for index, raw in enumerate(raw_sources):
+            if not isinstance(raw, Mapping):
+                raise ValueError(f"source coverage sources[{index}] must be an object")
+            resource = raw.get("resource")
+            if not isinstance(resource, str) or not resource.strip().startswith("viking://"):
+                raise ValueError(f"source coverage sources[{index}] needs an exact Viking URI")
+            normalized = resource.strip().rstrip("/")
+            if normalized in by_resource:
+                raise ValueError(f'duplicate source coverage entry: "{normalized}"')
+            by_resource[normalized] = raw
+
+        expected = {
+            str(unit.get("resource") or "").strip().rstrip("/"): unit
+            for unit in self.source_units
+            if str(unit.get("resource") or "").strip()
+        }
+        missing = sorted(set(expected) - set(by_resource))
+        if missing:
+            raise ValueError(
+                "source coverage checkpoint must account for every upload-level source: missing "
+                + ", ".join(missing)
+            )
+        counts = {
+            "uploaded": len(by_resource),
+            "inspected": 0,
+            "cited": 0,
+            "merged": 0,
+            "skipped": 0,
+        }
+        skip_reasons: dict[str, str] = {}
+        for resource, entry in by_resource.items():
+            if entry.get("inspected") is not True:
+                raise ValueError(f'source coverage source "{resource}" must be inspected')
+            counts["inspected"] += 1
+            status = entry.get("status")
+            if status not in {"cited", "merged", "skipped"}:
+                raise ValueError(f'source coverage source "{resource}" has invalid status')
+            counts[str(status)] += 1
+            if status in {"merged", "skipped"}:
+                reason = _checkpoint_reason(
+                    entry.get("reason"), label=f'source coverage source "{resource}" {status}'
+                )
+                if status == "skipped" and resource in expected:
+                    fingerprint = " ".join(reason.casefold().split())
+                    previous = skip_reasons.get(fingerprint)
+                    if previous is not None:
+                        raise ValueError(
+                            "source coverage cannot reuse one skipped reason for multiple uploads: "
+                            f'"{previous}" and "{resource}"'
+                        )
+                    skip_reasons[fingerprint] = resource
+            unit = expected.get(resource)
+            required = {
+                str(path)
+                for path in ((unit or {}).get("required_read_paths") or [])
+                if str(path)
+            }
+            unread = sorted(required - read_paths)
+            if unread:
+                raise ValueError(
+                    f'source coverage source "{resource}" is missing required reads: '
+                    + ", ".join(unread)
+                )
+            if status == "merged":
+                merged_into = str(entry.get("merged_into") or "").rstrip("/")
+                if merged_into == resource or merged_into not in by_resource:
+                    raise ValueError(
+                        f'source coverage source "{resource}" needs merged_into pointing '
+                        "to another covered source"
+                    )
+        for resource, entry in by_resource.items():
+            if entry.get("status") == "merged":
+                target = by_resource[str(entry.get("merged_into") or "").rstrip("/")]
+                if target.get("status") != "cited":
+                    raise ValueError(
+                        f'source coverage source "{resource}" must merge into a cited source'
+                    )
+        if coverage.get("summary") != counts:
+            raise ValueError("source coverage summary must exactly match its source entries")
+        return str(stage), by_resource
+
+    def _validate_candidates(self, checkout: Mapping[str, bytes], *, stage: str) -> None:
+        _manifest_path, _coverage_path, candidate_path = self._artifact_paths()
+        document = _json_object(checkout.get(candidate_path), path=candidate_path)
+        if document.get("stage") != stage:
+            raise ValueError("candidate knowledge stage must match the run manifest stage")
+        raw_candidates = document.get("candidates")
+        if not isinstance(raw_candidates, list):
+            raise ValueError("candidate knowledge candidates must be a JSON array")
+        expected = {
+            str(unit.get("resource") or "").strip().rstrip("/")
+            for unit in self.source_units
+            if str(unit.get("resource") or "").strip()
+        }
+        candidates: dict[str, Mapping[str, Any]] = {}
+        candidate_sources: set[str] = set()
+        counts = {
+            "total": len(raw_candidates),
+            "promoted": 0,
+            "merged": 0,
+            "deferred": 0,
+            "rejected": 0,
+        }
+        roots = tuple(self.source_roots.values())
+        for index, raw in enumerate(raw_candidates):
+            if not isinstance(raw, Mapping):
+                raise ValueError(f"candidate knowledge candidates[{index}] must be an object")
+            candidate_id = raw.get("id")
+            if (
+                not isinstance(candidate_id, str)
+                or not candidate_id.strip()
+                or candidate_id in candidates
+            ):
+                raise ValueError("candidate ids must be unique non-empty strings")
+            for field_name in ("title", "summary"):
+                if not isinstance(raw.get(field_name), str) or not str(raw[field_name]).strip():
+                    raise ValueError(f'candidate "{candidate_id}" needs non-empty {field_name}')
+            if raw.get("kind") not in {"entity", "concept", "synthesis"}:
+                raise ValueError(f'candidate "{candidate_id}" has invalid kind')
+            if raw.get("stage") != stage:
+                raise ValueError(f'candidate "{candidate_id}" stage must match the run manifest')
+            disposition = raw.get("disposition")
+            if disposition not in {"promoted", "merged", "deferred", "rejected"}:
+                raise ValueError(f'candidate "{candidate_id}" has invalid disposition')
+            counts[str(disposition)] += 1
+            sources = _string_list(
+                raw.get("source_resources"),
+                label=f'candidate "{candidate_id}" source_resources',
+                allow_empty=False,
+            )
+            if any(
+                not any(_resource_contains(root, source) for root in roots)
+                for source in sources
+            ):
+                raise ValueError(f'candidate "{candidate_id}" references an unknown source')
+            candidate_sources.update(source.rstrip("/") for source in sources)
+            current = any(
+                _resource_contains(resource, source)
+                for resource in expected
+                for source in sources
+            )
+            if disposition == "promoted":
+                if not isinstance(raw.get("meta_id"), str) or not str(raw["meta_id"]).strip():
+                    raise ValueError(f'promoted candidate "{candidate_id}" needs meta_id')
+                planned_paths = _string_list(
+                    raw.get("page_paths"),
+                    label=f'promoted candidate "{candidate_id}" page_paths',
+                    allow_empty=False,
+                )
+                for path in planned_paths:
+                    validate_relative_page_path(path)
+            elif disposition == "merged":
+                if not isinstance(raw.get("merged_into"), str) or not str(
+                    raw["merged_into"]
+                ).strip():
+                    raise ValueError(f'merged candidate "{candidate_id}" needs merged_into')
+                if current:
+                    _checkpoint_reason(
+                        raw.get("reason"), label=f'merged candidate "{candidate_id}"'
+                    )
+            elif current:
+                _checkpoint_reason(
+                    raw.get("reason"), label=f'{disposition} candidate "{candidate_id}"'
+                )
+            candidates[candidate_id] = raw
+        for candidate_id, entry in candidates.items():
+            if entry.get("disposition") == "merged":
+                target = candidates.get(str(entry.get("merged_into") or ""))
+                if target is None or target.get("disposition") != "promoted":
+                    raise ValueError(
+                        f'merged candidate "{candidate_id}" must point to a promoted candidate'
+                    )
+        missing = sorted(
+            resource
+            for resource in expected
+            if not any(_resource_contains(resource, source) for source in candidate_sources)
+        )
+        if missing:
+            raise ValueError(
+                "candidate knowledge checkpoint must account for every upload-level source: missing "
+                + ", ".join(missing)
+            )
+        if stage == "documents" and len(expected) > 1 and counts["promoted"] == 0:
+            raise ValueError("multi-document mining must promote at least one candidate")
+        if document.get("summary") != counts:
+            raise ValueError("candidate knowledge summary must exactly match its candidates")
+
+
+class SubmitSourceCoverageTool(_SubmitMiningCheckpointTool):
+    checkpoint_name = "submit_source_coverage"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Complete the first mandatory mining checkpoint. Call only after every upload-level "
+            "source has been read and _mining/source-coverage.json accounts for all of them. "
+            "No new or modified Wiki/output page may exist yet."
+        )
+
+    async def execute(self, tool_context: ToolContext, **kwargs: Any) -> str:
+        self.phase_gate.coverage_passed = False
+        self.phase_gate.candidates_passed = False
+        if kwargs:
+            return "Error: submit_source_coverage takes no arguments."
+        try:
+            checkout = await self._checkout(tool_context)
+            manifest_path, coverage_path, _candidate_path = self._artifact_paths()
+            self._reject_changes_outside(
+                checkout, allowed_paths={manifest_path, coverage_path}
+            )
+            self._validate_coverage(checkout, read_paths=await self._read_paths())
+        except (OSError, ValueError) as exc:
+            return f"Error: Invalid source coverage checkpoint: {exc}"
+        if self.on_accepted is not None:
+            await self.on_accepted("candidate_knowledge")
+        # Unlock the next gate only after the durable checkpoint callback succeeds.
+        self.phase_gate.coverage_passed = True
+        return "Source coverage checkpoint accepted. Build the candidate knowledge ledger next."
+
+
+class SubmitCandidateKnowledgeTool(_SubmitMiningCheckpointTool):
+    checkpoint_name = "submit_candidate_knowledge"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Complete the second mandatory mining checkpoint. It is unavailable until source "
+            "coverage passes. Call after candidate-knowledge.json accounts for every upload-level "
+            "source. No new or modified Wiki/output page may exist yet."
+        )
+
+    async def execute(self, tool_context: ToolContext, **kwargs: Any) -> str:
+        self.phase_gate.candidates_passed = False
+        if kwargs:
+            return "Error: submit_candidate_knowledge takes no arguments."
+        if not self.phase_gate.coverage_passed:
+            return "Error: Source coverage checkpoint must pass first."
+        try:
+            checkout = await self._checkout(tool_context)
+            manifest_path, coverage_path, candidate_path = self._artifact_paths()
+            self._reject_changes_outside(
+                checkout,
+                allowed_paths={manifest_path, coverage_path, candidate_path},
+            )
+            stage, _coverage = self._validate_coverage(
+                checkout, read_paths=await self._read_paths()
+            )
+            self._validate_candidates(checkout, stage=stage)
+        except (OSError, ValueError) as exc:
+            return f"Error: Invalid candidate knowledge checkpoint: {exc}"
+        if self.on_accepted is not None:
+            await self.on_accepted("page_generation")
+        # Final-page generation must not begin if persisting the candidate checkpoint failed.
+        self.phase_gate.candidates_passed = True
+        return "Candidate knowledge checkpoint accepted. Wiki page generation is now unlocked."
 
 
 class CompileScopedTool(Tool):
@@ -201,6 +623,7 @@ class SubmitTargetCheckoutTool(Tool):
         task_id: str = "unknown",
         baseline_intermediates: Mapping[str, bytes] | None = None,
         baseline_checkout: Mapping[str, bytes] | None = None,
+        phase_gate: CompilePhaseGate | None = None,
     ):
         self.target_uri = target_uri.rstrip("/")
         self.source_roots = dict(source_roots)
@@ -215,6 +638,7 @@ class SubmitTargetCheckoutTool(Tool):
         self.task_id = task_id
         self.baseline_intermediates = dict(baseline_intermediates or {})
         self.baseline_checkout = dict(baseline_checkout or {})
+        self.phase_gate = phase_gate
         self.bundle: RenderedBundle | None = None
         self.page_count = 0
         self.file_count = 0
@@ -254,6 +678,11 @@ class SubmitTargetCheckoutTool(Tool):
         self.investigation_status = None
         self.question_count = 0
         self.source_coverage = None
+        if self.phase_gate is not None and not self.phase_gate.candidates_passed:
+            return (
+                "Error: Invalid target checkout: candidate knowledge checkpoint must pass "
+                "before Wiki page generation and final submission."
+            )
         if kwargs:
             return "Error: submit_wiki_bundle takes no arguments for a Resource checkout."
         if tool_context.sandbox_manager is None:

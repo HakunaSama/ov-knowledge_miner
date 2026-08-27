@@ -3,7 +3,7 @@ name: llm-wiki
 description: Compile heterogeneous documents, notes, spreadsheets, reports, and code into an evidence-grounded OKF knowledge base with entity, concept, and synthesis pages; deterministic path/type rules; source metadata; and literal cross-page WikiLinks. Use with ov compile for new or incremental knowledge mining.
 ---
 
-<!-- OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 4.2 -->
+<!-- OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 4.3 -->
 
 # LLM Wiki
 
@@ -390,16 +390,14 @@ the cross-stage source and intermediate-resource union as a second line of defen
 
 ### Candidate knowledge
 
-Before writing final pages, externalize the extraction decision set in
-`_mining/candidate-knowledge.json`. Create candidates from every upload-level source first,
-then decide whether each candidate is `promoted`, `merged`, `deferred`, or `rejected`.
-This is the auditable bridge between reading a document and producing a smaller number of
-meta-knowledge units; do not jump directly from source files to final pages.
-
-Treat this as a live checkpoint: after inspecting each upload-level source, add at least
-one source-specific candidate and persist the artifact in small batches. Do not postpone
-the first candidate write until the whole corpus has been read. The platform never invents
-missing rejected candidates, and final pages cannot reconstruct a skipped candidate stage.
+After the complete source-coverage checkpoint has passed, externalize the extraction
+decision set in `_mining/candidate-knowledge.json`. Create candidates from every upload-level
+source, then decide whether each candidate is `promoted`, `merged`, `deferred`, or
+`rejected`. This is the auditable bridge between reading the complete corpus and producing
+a smaller number of meta-knowledge units; do not jump directly from source files to final
+pages. Call `submit_candidate_knowledge` and wait for acceptance before creating or changing
+any final Wiki page. The platform never invents missing rejected candidates, and final pages
+cannot reconstruct or bypass a skipped candidate stage.
 
 Each candidate has a unique `id`, non-empty `title` and `summary`, `kind` (`entity`,
 `concept`, or `synthesis`), exact `source_resources`, a disposition, and the current
@@ -444,7 +442,8 @@ still-valid candidates; the platform merges candidates by id and recomputes the 
 
 ### Source coverage
 
-`_mining/source-coverage.json` is the corpus completeness contract. Start from the
+`_mining/source-coverage.json` is the first and mandatory corpus completeness checkpoint.
+Start from the
 authoritative `_source-units.json` list and inspect **every listed required_read_path** for
 every unit. Documents with at most eight materialized content fragments require all of
 them. Larger parsed documents use adaptive deterministic coverage: 12 probes for 9-24
@@ -469,6 +468,13 @@ Each entry uses `status: cited`, `merged`, or `skipped`:
 Set `inspected: true` only after reading the source. The summary counts must exactly
 match the entries. Submission is rejected when a source is missing, unread, falsely
 cited, merged into a non-cited source, or skipped without a reason.
+
+Before writing `_mining/candidate-knowledge.json` or any final output page, call
+`submit_source_coverage` and wait for acceptance. During this pre-page checkpoint, a source
+planned for direct use may be marked `cited` before its final `page_paths` and
+`evidence_resources` are known; the final bundle must populate and validate both fields.
+Do not create or modify `index.md`, knowledge pages, or other final output before this
+checkpoint and the following candidate checkpoint both pass.
 
 Compile itself commits `_mining/readlist.json` from the sandbox read trace and appends a
 run rather than trusting a model-authored claim. It records each source unit's materialized
@@ -561,6 +567,9 @@ history when useful, and update both report and questionnaire status.
 ## Quality gate
 
 Before calling `submit_wiki_bundle`, verify all of the following:
+
+- `submit_source_coverage` passed before candidate extraction, and
+  `submit_candidate_knowledge` passed before any final page was generated or modified;
 
 - the effective OKF config was read and no config file was treated as knowledge;
 - `index.md` exists, is typed by its configured path rule, and catalogs active pages;

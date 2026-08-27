@@ -26,7 +26,7 @@ curl http://localhost:1933/bot/v1/health
 3. “OKF 格式配置”默认使用 `llm-wiki/OKF_CONFIG.yaml`；也可以选择自定义 `.yaml`/`.yml`，改写必需 frontmatter、目录类型映射、派生视图和 WikiLink 规则。
 4. 在“挖掘目标”中说明问题、受众、时间范围、输出语言和侧重点。这段内容会作为 Compile 的 `reason`。
 5. 点击“开始知识挖掘”。页面先用文档生成主知识库；如果上传了团队 Memory，文档任务成功后会自动对同一目标启动第二个增量 Compile。
-6. 任务卡分别显示文档和 Memory 的真实 `task_id`、`status` 和 `stage`。当前运行中的 Compile 可以协作式取消。
+6. 页面顶部的“挖掘历史”会列出当前 principal 最近 90 天内的历史和运行中批次；点击任一批次即可用同一套完整界面查看目录、覆盖账本、中间产物、调查问卷和知识点阵。任务卡分别显示文档和 Memory 的真实 `task_id`、`status` 和 `stage`。切换到其他历史不会停止后台轮询或后续自动增量；当前运行中的 Compile 可以协作式取消，失败或已取消后也可点击“从检查点恢复”，无需重新上传文件。
 7. 主视图以可展开目录树展示真实知识文件。一个元知识有独立目录，由共享同一 `meta_id` 的 what、why、how 三页构成；根 `index.md` 只是导航，不计入知识文件。旧版结果仍会按 `meta_id` 显示兼容目录。
 8. 主视图、知识域和使用场景始终展示同一批文件且总数一致。“知识域”表示整个元知识的一个主要主题归属，“使用场景”表示它的一个主要用途；两者只重组整组三页，不复制或拆散文件。“中间产物”用于审计证据链，“人工调查”是最终完成前的补证门禁。
 9. “知识点阵”直接复用 `examples/compile/graph-show/knowledge-graph/knowledge_graph.py` 中的官方 KG Explorer HTML/CSS/D3 渲染器；Studio 只负责把元知识、what/why/how、WikiLink、跨知识引用和证据链适配为官方 `nodes` / `links` 数据。保留类型筛选、关系图例、检索、邻居聚焦、平移缩放和实体检查器。
@@ -68,6 +68,8 @@ POST /bot/v1/compile
 
 `skill` 指向当前用户或共享空间中的 `llm-wiki` Skill，`okf_config` 指向本批次写入的 `OKF_CONFIG.yaml`。VikingBot 将配置物化为 `compile_config/OKF_CONFIG.yaml` 并优先执行；提交器会确定性校验 frontmatter、元知识独立目录、What/Why/How 物理路径、原始来源与中间证据的双重谱系、跨库引用、派生视图标签、WikiLink，以及八类中间产物的结构和一致性，而不是只依赖模型遵守提示词。知识阅读、归纳和页面写作仍在 VikingBot 的任务独立 AgentLoop 中执行。
 
+Studio 启动 Compile 时不再提交一小时运行时限，服务端默认也没有墙钟硬截止时间。三阶段门禁会在服务端私有目录保存可恢复检查点：通过来源覆盖后保存一次，通过候选知识后再保存一次；协作式取消也会尽力保存当前工作区。恢复接口复用原任务的来源 URI 和净化请求，并校验来源签名后恢复 checkout、阅读账本与阶段状态。检查点在最终提交通过前不会写入 `wiki/` 正式目标，因此中断恢复不会暴露半成品知识库。
+
 ## 主视图与派生视图
 
 主视图永远对应 `wiki/` 中的实际文件，也是唯一事实源。除 `index.md` 外，默认契约要求页面位于 `knowledge/<topic>/<meta_id>/what|why|how/`。每个元知识必须有且仅有一个 what、一个 why 和一个 how 页面，三页共享稳定的 `meta_id`，且物理目录名必须与它一致。提交器会拒绝缺页、目录不匹配、同一分类有多页或三页视图标签不一致的结果。
@@ -85,6 +87,8 @@ POST /bot/v1/compile
 
 `_mining/source-coverage.json` 以用户上传级文档为单位，而不是把解析后的 chunk 当成独立来源。每个来源必须标记为 `cited`、`merged` 或 `skipped`；小文档的全部片段、大文档自适应且确定性的首/中/尾探针都必须出现在平台生成的 `readlist.json` 中，`cited` 必须指向证据账本中的有效页面，`merged` 必须指向另一个直接引用来源，`skipped` 必须给出不可跨来源复制的具体理由。`candidate-knowledge.json` 是最终页面之前的强制候选检查点，逐项解释候选为何晋升、合并、延后或拒绝；平台不会为缺失来源伪造 rejected 候选。增量 Compile 会合并旧证据并追加 `evidence-history.json` 快照。
 
+知识挖掘采用平台强制的三阶段门禁，顺序固定为 `source_coverage` → `candidate_knowledge` → `page_generation`。第一阶段必须读完本轮每份上传文档的必读探针、完整写入覆盖账本并调用 `submit_source_coverage`；在它通过前不能创建候选账本或修改最终页面。第二阶段必须让候选账本覆盖每份上传文档并调用 `submit_candidate_knowledge`；在它通过前仍不能创建或修改最终页面。只有两个检查点都通过后，`submit_wiki_bundle` 才会解锁。检查点会将任务开始时的目标 checkout 作为基线，因此增量任务可保留未改动的旧页面，但不能把本轮页面生成伪装成旧内容来绕过顺序。
+
 同库页面使用 `[[WikiLink]]`。跨知识库关系是正文位置级的多对多关系：同一页面的不同段落可以引用不同知识目标，同一目标也可以被多个页面引用。每个 `knowledge_links` 条目除目标 `viking://` URI、标题、关系和方向外，还必须包含正文中的原文 `context`，并在该正文位置放置可读 Markdown 链接；提交器会确定性校验两者。只有目标库也保存了镜像关系时才使用 `bidirectional`；否则保存为 `outgoing`，并把缺少反向关系记录为证据缺口。
 
 调查报告的状态为 `clear` 或 `needs_human_input`。存在冲突/缺口时，每个 issue 必须由至少一个问卷问题覆盖，否则提交会失败。`needs_human_input` 会让 Studio 暂停在补证门禁，而不是显示为最终完成。人工答案不是直接修改页面：它先被保存为新来源，再通过同一 `to` 目录的增量 Compile 更新主视图、证据账本和报告。
@@ -99,7 +103,7 @@ POST /bot/v1/compile
 - **文件解析失败**：在任务中心查看对应的 `add_resource` 任务，并检查 VLM/Embedding 配置和文件大小。
 - **Compile 在 `loading_skill` 失败**：在“技能”页面确认 `llm-wiki` 可见，且 `SKILL.md` 格式有效。
 - **Compile 在 `agent` 阶段失败**：检查 VikingBot LLM 的凭证、额度、上下文窗口和服务日志。
-- **任务显示“部分结果”**：任务进入了 `salvaged`；这些页面和中间产物可用于排查，但没有通过完整契约校验，也不会触发下一轮自动增量。查看任务 warning 和 `_mining/` 产物后重新运行。
+- **任务显示 `SALVAGED · 未通过校验` 标签**：任务进入了 `salvaged`；这些页面和中间产物可用于排查，但没有通过完整契约校验，也不会触发下一轮自动增量。查看任务 warning 和 `_mining/` 产物后重新运行。
 - **结果页暂时读不到**：Compile 的 `writing`/`refreshing` 阶段尚未结束；等待任务进入 `completed` 后再读取目标目录。
 
 相关资料：[上下文编译概览](./01-overview.md) · [LLM Wiki 示例](./02-llm-wiki.md) · [VikingBot API](../api/24-vikingbot.md)

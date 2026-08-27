@@ -6,7 +6,7 @@ import { getOvResult, ovClient, postResourcesTempUpload } from '#/lib/ov-client'
 export const LLM_WIKI_SKILL_NAME = 'llm-wiki'
 export const DEFAULT_OKF_CONFIG = defaultOkfConfig
 const LLM_WIKI_SKILL_VERSION_MARKER =
-  'OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 4.2'
+  'OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 4.3'
 
 export type CompileStatus =
   | 'accepted'
@@ -89,16 +89,34 @@ export type CompileView = {
 }
 
 export type CompileTask = {
+  checkpoint_available?: boolean
+  checkpoint_stage?: string | null
   created_at: string
   error?: {
     code: string
     message: string
   }
   result?: CompileResult
+  resumed_from_task_id?: string
   stage: string
   status: CompileStatus
   task_id: string
   updated_at: string
+}
+
+export type CompileTaskHistoryItem = CompileTask & {
+  request: {
+    from: string[]
+    okf_config?: string
+    reason: string
+    skill: string
+    to: string
+  }
+}
+
+type CompileTaskHistory = {
+  tasks: CompileTaskHistoryItem[]
+  total: number
 }
 
 type CompileAccepted = {
@@ -202,7 +220,7 @@ export async function ensureLlmWikiSkill(): Promise<string> {
             operation: 'update',
             source: 'openviking_knowledge_mining',
             type: 'bundled_example',
-            version: 4,
+            version: 5,
           },
           telemetry: true,
           timeout: 300,
@@ -222,7 +240,7 @@ export async function ensureLlmWikiSkill(): Promise<string> {
           operation: 'install',
           source: 'openviking_knowledge_mining',
           type: 'bundled_example',
-          version: 4,
+          version: 5,
         },
         telemetry: true,
         timeout: 300,
@@ -333,7 +351,6 @@ export async function startCompile(
         from: input.from,
         okf_config: input.okfConfig,
         reason: input.reason,
-        runtime_timeout_seconds: 3600,
         skill: input.skill,
         to: input.to,
       },
@@ -369,11 +386,30 @@ export async function getCompileTask(taskId: string): Promise<CompileTask> {
   )
 }
 
+export async function listCompileTasks(): Promise<CompileTaskHistoryItem[]> {
+  const history = await getOvResult<CompileTaskHistory>(
+    ovClient.client.get({
+      query: { limit: 1000 },
+      url: '/bot/v1/compile',
+    }),
+  )
+  return history.tasks
+}
+
 export async function cancelCompile(taskId: string): Promise<CompileTask> {
   return getOvResult<CompileTask>(
     ovClient.client.post({
       body: {},
       url: `/bot/v1/compile/${encodeURIComponent(taskId)}/cancel`,
+    }),
+  )
+}
+
+export async function resumeCompile(taskId: string): Promise<CompileAccepted> {
+  return getOvResult<CompileAccepted>(
+    ovClient.client.post({
+      body: {},
+      url: `/bot/v1/compile/${encodeURIComponent(taskId)}/resume`,
     }),
   )
 }

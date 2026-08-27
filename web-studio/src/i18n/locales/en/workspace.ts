@@ -74,6 +74,16 @@ const workspace = {
     title: 'Knowledge Mining',
     description:
       'Build every knowledge item as one meta-knowledge triplet of what / why / how pages, then incrementally update the same knowledge base from team Memory and human answers. Main, domain, and usage views always browse the same files.',
+    history: {
+      current: 'Viewing',
+      description:
+        'Switch between complete progress, knowledge files, source coverage, intermediates, questionnaires, and the knowledge cloud. Running jobs continue updating in the background.',
+      newJob: 'New mining job',
+      sources: '{{count}} sources',
+      sourcesUnknown: 'Sources in details',
+      title: 'Mining history',
+      untitled: 'Untitled knowledge-mining job',
+    },
     upload: {
       title: 'Upload knowledge sources',
       description:
@@ -123,6 +133,10 @@ const workspace = {
       start: 'Start knowledge mining',
       running: 'Mining…',
       cancel: 'Cancel Compile task',
+      resume: 'Resume from checkpoint',
+      resuming: 'Resuming…',
+      resumeAccepted:
+        'A resumed task was created and will reuse uploaded sources and any available checkpoint.',
       newJob: 'New mining task',
       removeFile: 'Remove {{name}}',
     },
@@ -140,7 +154,7 @@ const workspace = {
       okfConfig: 'OKF config',
       output: 'Output',
       cancelledDescription:
-        'The task was cancelled. Writes already completed are not rolled back.',
+        'The task was cancelled. Its saved phase checkpoint can be resumed.',
     },
     phases: {
       idle: 'Ready',
@@ -168,6 +182,9 @@ const workspace = {
       loading_skill: 'Loading the llm-wiki Skill',
       collecting_context: 'Collecting source and target context',
       agent: 'VikingBot is reading, synthesizing, and writing',
+      source_coverage: 'Phase 1/3 · validating per-document coverage',
+      candidate_knowledge: 'Phase 2/3 · validating candidate knowledge',
+      page_generation: 'Phase 3/3 · generating knowledge pages',
       rendering: 'Validating and rendering Wiki outputs',
       writing: 'Writing to the OpenViking target',
       refreshing: 'Generating semantic sidecars and refreshing indexes',
@@ -184,11 +201,12 @@ const workspace = {
       awaitingHuman:
         'A reviewable provisional knowledge base is ready and paused at the human-evidence gate. It becomes final only after the answers are applied.',
       partialTitle: 'This is a salvaged partial result',
+      partialBadge: 'SALVAGED · validation failed',
       partial:
         'The task did not pass the complete OKF validation, so later Memory and human incremental stages were stopped. Saved pages, audit artifacts, and derived views remain reviewable, but this is not a final knowledge base.',
       waitingTitle: 'VikingBot is working',
       waitingDescription:
-        'Document parsing and long-running Agent work can take several minutes. Keep this page open and status will refresh automatically.',
+        'Long-running mining has no one-hour hard deadline by default. You may close or refresh this page; phase checkpoints persist and can be resumed after failure or cancellation.',
       emptyTitle: 'No mining result yet',
       emptyDescription:
         'Choose documents, describe the objective, and start. The result is persisted as an OpenViking Resource.',

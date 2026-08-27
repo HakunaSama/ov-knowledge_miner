@@ -41,7 +41,7 @@ class CompileLimits(BaseModel):
     target_catalog_pages: int = 10
     initial_prompt_chars: int = 300_000
     agent_context_chars: int = 240_000
-    agent_iterations: int = 60
+    agent_iterations: int = 240
     tool_uri_count: int = 32
     tool_result_bytes: int = 1024 * 1024
     tool_total_result_bytes: int = 8 * 1024 * 1024
@@ -53,10 +53,13 @@ class CompileLimits(BaseModel):
     accepted_tasks: int = 40
     accepted_tasks_per_principal: int = 10
     queue_wait_seconds: float = 60 * 60
-    task_runtime_seconds: float = 60 * 60
+    # Long-running knowledge mining is checkpointed and explicitly cancellable.  A
+    # missing server limit therefore means "no wall-clock deadline"; deployments that
+    # need a hard ceiling can still configure a positive value here.
+    task_runtime_seconds: float | None = None
     salvage_grace_seconds: float = 120
     cleanup_grace_seconds: float = 40
-    terminal_task_retention_seconds: float = 24 * 60 * 60
+    terminal_task_retention_seconds: float = 90 * 24 * 60 * 60
     terminal_task_records: int = 1000
 
 
@@ -247,6 +250,9 @@ class CompileTask(BaseModel):
     updated_at: str
     result: CompileResult | None = None
     error: CompileErrorInfo | None = None
+    resumed_from_task_id: str | None = None
+    checkpoint_available: bool = False
+    checkpoint_stage: str | None = None
 
     @model_validator(mode="after")
     def normalize_salvaged_validation(self) -> "CompileTask":

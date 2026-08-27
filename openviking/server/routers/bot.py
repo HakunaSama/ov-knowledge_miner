@@ -213,6 +213,38 @@ async def create_compile(
     )
 
 
+@router.get("/compile")
+async def list_compile(
+    request: Request,
+    limit: int = 200,
+    _ctx: RequestContext = Depends(get_request_context),
+):
+    """List Compile history for the authenticated OV identity."""
+    bot_url = get_bot_url()
+    connection = _attach_openviking_connection(
+        {},
+        request,
+        _ctx,
+        include_legacy_user_id=False,
+    ).get("openviking_connection")
+    try:
+        async with _create_bot_proxy_client() as client:
+            response = await client.get(
+                f"{bot_url}/bot/v1/compile",
+                params={"limit": max(1, min(limit, 1000))},
+                headers=_bot_gateway_headers(connection=connection),
+                timeout=30.0,
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Bot service unavailable: {exc}",
+        ) from exc
+    if not response.is_success:
+        _raise_compile_proxy_error(response)
+    return Response(status="ok", result=response.json())
+
+
 @router.get("/compile/{task_id}")
 async def get_compile(
     task_id: str,
@@ -274,6 +306,41 @@ async def cancel_compile(
     if not response.is_success:
         _raise_compile_proxy_error(response)
     return Response(status="ok", result=response.json())
+
+
+@router.post("/compile/{task_id}/resume", status_code=status.HTTP_202_ACCEPTED)
+async def resume_compile(
+    task_id: str,
+    request: Request,
+    _ctx: RequestContext = Depends(get_request_context),
+):
+    """Resume a terminal Compile task with the authenticated OV identity."""
+    bot_url = get_bot_url()
+    connection = _attach_openviking_connection(
+        {},
+        request,
+        _ctx,
+        include_legacy_user_id=False,
+    ).get("openviking_connection")
+    try:
+        async with _create_bot_proxy_client() as client:
+            response = await client.post(
+                f"{bot_url}/bot/v1/compile/{task_id}/resume",
+                json={},
+                headers=_bot_gateway_headers(connection=connection),
+                timeout=30.0,
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Bot service unavailable: {exc}",
+        ) from exc
+    if not response.is_success:
+        _raise_compile_proxy_error(response)
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
+        content=Response(status="ok", result=response.json()).model_dump(mode="json"),
+    )
 
 
 @router.get("/health")

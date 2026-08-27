@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from vikingbot.compile.models import CompileAccepted, CompileFailure, CompileRequest
 from vikingbot.compile.service import BotCompileService
@@ -16,6 +16,7 @@ _ERROR_HTTP_STATUS = {
     "UNAUTHENTICATED": status.HTTP_401_UNAUTHORIZED,
     "PERMISSION_DENIED": status.HTTP_403_FORBIDDEN,
     "NOT_FOUND": status.HTTP_404_NOT_FOUND,
+    "CONFLICT": status.HTTP_409_CONFLICT,
     "RESOURCE_EXHAUSTED": status.HTTP_429_TOO_MANY_REQUESTS,
     "DEADLINE_EXCEEDED": status.HTTP_504_GATEWAY_TIMEOUT,
     "UNAVAILABLE": status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -57,6 +58,15 @@ def register_compile_routes(
         except CompileFailure as exc:
             _raise_http_failure(exc)
 
+    @router.get("/compile")
+    async def list_compile(
+        http_request: Request,
+        limit: int = Query(default=200, ge=1, le=1000),
+        auth: Any = Depends(verify_gateway_request),
+    ) -> dict[str, Any]:
+        principal_scope = await channel._resolve_request_principal(http_request, auth)
+        return await service.list_tasks(principal_scope=principal_scope, limit=limit)
+
     @router.get("/compile/{task_id}")
     async def get_compile(
         task_id: str,
@@ -86,6 +96,32 @@ def register_compile_routes(
                 detail={"code": "NOT_FOUND", "message": "Compile task not found"},
             )
         return task
+
+    @router.post(
+        "/compile/{task_id}/resume",
+        response_model=CompileAccepted,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def resume_compile(
+        task_id: str,
+        http_request: Request,
+        auth: Any = Depends(verify_gateway_request),
+    ) -> CompileAccepted:
+        connection, principal_scope = await channel._resolve_request_identity(http_request, auth)
+        try:
+            accepted = await service.resume_task(
+                task_id,
+                principal_scope=principal_scope,
+                connection=connection,
+            )
+        except CompileFailure as exc:
+            _raise_http_failure(exc)
+        if accepted is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "NOT_FOUND", "message": "Compile task not found"},
+            )
+        return accepted
 
 
 __all__ = ["register_compile_routes"]

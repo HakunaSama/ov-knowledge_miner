@@ -248,6 +248,15 @@ async def test_compile_proxy_forwards_create_and_status_identity(monkeypatch):
 
         async def post(self, url, json, headers, timeout):
             forwarded.append(("POST", url, json, headers, timeout))
+            if url.endswith("/resume"):
+                return FakeResponse(
+                    {
+                        "task_id": "cmp_2",
+                        "status": "accepted",
+                        "to": "viking://resources/wiki",
+                    },
+                    202,
+                )
             if url.endswith("/cancel"):
                 return FakeResponse(
                     {
@@ -267,8 +276,10 @@ async def test_compile_proxy_forwards_create_and_status_identity(monkeypatch):
                 202,
             )
 
-        async def get(self, url, headers, timeout):
-            forwarded.append(("GET", url, None, headers, timeout))
+        async def get(self, url, headers, timeout, params=None):
+            forwarded.append(("GET", url, params, headers, timeout))
+            if url.endswith("/compile"):
+                return FakeResponse({"tasks": [], "total": 0})
             return FakeResponse(
                 {
                     "task_id": "cmp_1",
@@ -308,11 +319,22 @@ async def test_compile_proxy_forwards_create_and_status_identity(monkeypatch):
             "/bot/v1/compile/cmp_1/cancel",
             headers=headers,
         )
+        resume_response = await client.post(
+            "/bot/v1/compile/cmp_1/resume",
+            headers=headers,
+        )
+        history_response = await client.get(
+            "/bot/v1/compile?limit=50",
+            headers=headers,
+        )
 
     assert created.status_code == 202
     assert created.json()["result"]["task_id"] == "cmp_1"
     assert status_response.json()["result"]["stage"] == "agent"
     assert cancel_response.json()["result"]["status"] == "cancelled"
+    assert resume_response.status_code == 202
+    assert resume_response.json()["result"]["task_id"] == "cmp_2"
+    assert history_response.json()["result"] == {"tasks": [], "total": 0}
     post = forwarded[0]
     assert post[1].endswith("/bot/v1/compile")
     assert post[2]["openviking_connection"]["api_key"] == "active-user-key"
@@ -327,6 +349,15 @@ async def test_compile_proxy_forwards_create_and_status_identity(monkeypatch):
     assert cancel[2] == {}
     assert cancel[3]["X-Gateway-Token"] == "gateway-secret"
     assert cancel[3]["X-API-Key"] == "active-user-key"
+    resume = forwarded[3]
+    assert resume[1].endswith("/bot/v1/compile/cmp_1/resume")
+    assert resume[2] == {}
+    assert resume[3]["X-Gateway-Token"] == "gateway-secret"
+    assert resume[3]["X-API-Key"] == "active-user-key"
+    history = forwarded[4]
+    assert history[1].endswith("/bot/v1/compile")
+    assert history[2] == {"limit": 50}
+    assert history[3]["X-OpenViking-User"] == "alice"
 
 
 @pytest.mark.asyncio

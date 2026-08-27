@@ -146,7 +146,7 @@ Start an asynchronous, Skill-driven Compile task. VikingBot loads the selected S
 | `skill` | string | Yes | - | Skill directory or its `SKILL.md` URI |
 | `okf_config` | string | No | - | External OKF YAML file URI; Resource Wiki submission validates frontmatter, path/type rules, and WikiLinks against it |
 | `reason` | string | No | Skill-driven default | Additional instructions for this Compile run |
-| `runtime_timeout_seconds` | number | No | 3600 | Positive finite runtime limit no greater than the server maximum (3600 seconds by default) |
+| `runtime_timeout_seconds` | number | No | None | Optional positive runtime limit. With no value, the task has no server-side hard deadline. If an administrator configures a server maximum, this value must not exceed it |
 
 **HTTP API**
 
@@ -181,7 +181,7 @@ ov compile \
 
 `--okf-config` points to a readable YAML file in OpenViking. VikingBot materializes it as `compile_config/OKF_CONFIG.yaml` and treats it as control data rather than knowledge; the external contract takes precedence over conflicting Skill format rules. Omitting it preserves existing Compile behavior.
 
-`--wait` polls the status endpoint until the task reaches a terminal state. `--timeout` limits only the local wait and does not cancel the server task. `--runtime-timeout` sets `runtime_timeout_seconds` for this run and can only shorten the server-owned runtime maximum; an excessive value is rejected with `429 RESOURCE_EXHAUSTED`. Reaching that deadline while the Agent is running, or reaching Compile's own tool-iteration limit (currently 60), attempts to save eligible partial Resource output within a separate short grace period. The task fails if there is no eligible output to save; non-Resource targets and deadlines in later stages do not use this fallback. Three consecutive submissions that fail with the exact same validation error enter partial salvage early instead of spending the remaining iterations on a retry loop that is not making progress.
+`--wait` polls the status endpoint until the task reaches a terminal state. `--timeout` limits only the local wait and does not cancel the server task. There is no server-side hard runtime deadline by default; a task is deadline-bound only when `--runtime-timeout` is supplied or an administrator configures a server maximum. Requests above an administrator maximum are rejected with `429 RESOURCE_EXHAUSTED`. Compile now allows up to 240 tool iterations to stop truly non-progressing loops rather than limiting wall-clock runtime. Knowledge-mining runs write private recovery checkpoints when the `source_coverage` and `candidate_knowledge` gates pass, and also attempt to preserve the current checkpoint on cancellation, an explicit deadline, or iteration exhaustion. Unvalidated partial output is never published to the canonical target as part of this checkpoint process.
 
 The `direct` backend runs Compile `exec` commands with the Bot host's permissions. `bot.sandbox.backends.direct.allow_compile_exec` defaults to `true`: the Compile toolchain is open source, so `exec` runs directly in the user's shell by default, and ordinary Wiki and artifact generation run through file tools as before. A Skill that declares `requires.bins` or `requires.env` still probes the commands; set the option to `false` to omit `exec` from Compile (then such Skills fail with `SKILL_CAPABILITY_UNAVAILABLE` before any command probe runs). Isolated backends with filesystem and network policies are recommended for CLI-dependent Skills. Admission overflow returns `429 RESOURCE_EXHAUSTED`.
 
@@ -198,6 +198,14 @@ The HTTP endpoint returns `202 Accepted`:
     "to": "viking://resources/research-wiki"
   }
 }
+```
+
+### compile_history()
+
+List Compile tasks visible to the current principal in reverse creation order. Each item contains its public task state and sanitized original request so clients can group document, Memory, and human-evidence stages sharing the same `to` target into one mining-history entry. The default limit is 200, configurable up to 1000; terminal tasks are retained for 90 days by default.
+
+```http
+GET /bot/v1/compile?limit=200
 ```
 
 ### compile_status()
@@ -296,7 +304,7 @@ ov task status cmp_01abc
 
 ### compile_cancel()
 
-Request cooperative cancellation of a Compile task by task ID. The task first enters `cancelling`, then becomes `cancelled` after its in-process work and cleanup settle. Writes that already completed are not rolled back. Repeated cancellation of a `cancelled` task is idempotent; a missing task or a task owned by another principal returns `404`.
+Request cooperative cancellation of a Compile task by task ID. The task first enters `cancelling`, then becomes `cancelled` after preserving an available private recovery checkpoint and completing cleanup. Canonical writes that already completed are not rolled back. Repeated cancellation of a `cancelled` task is idempotent; a missing task or a task owned by another principal returns `404`.
 
 **CLI**
 
@@ -315,12 +323,27 @@ curl -X POST http://localhost:1933/bot/v1/compile/cmp_01abc/cancel \
   -H "X-API-Key: your-key"
 ```
 
+### compile_resume()
+
+Create a new Compile task from a `failed`, `cancelled`, or unvalidated `salvaged` task. The new task reuses the original task's persisted sanitized request and source URIs, so files do not need to be uploaded again. If a private checkpoint with the same source signature exists, execution continues after its latest completed phase; otherwise it restarts at source reading. The original task remains unchanged and the new task records it in `resumed_from_task_id`.
+
+```http
+POST /bot/v1/compile/{task_id}/resume
+```
+
+```bash
+curl -X POST http://localhost:1933/bot/v1/compile/cmp_01abc/resume \
+  -H "X-API-Key: your-key"
+```
+
+`checkpoint_available` in task status indicates that the server has a resumable checkpoint, while `checkpoint_stage` reports the latest completed gate. Checkpoints are private server state and never appear in the canonical knowledge base. A changed source list or content signature causes checkpoint restoration to fail with `409 CONFLICT`.
+
 Task lifecycle values are:
 
 | Status | Typical stages |
 |--------|----------------|
 | `accepted` | `queued` |
-| `running` | `loading_skill`, `collecting_context`, `agent`, `rendering` |
+| `running` | `loading_skill`, `collecting_context`, `source_coverage`, `candidate_knowledge`, `page_generation`, `agent`, `rendering` |
 | `committing` | `writing`, `refreshing`, `salvaging` |
 | `cancelling` | Settling in-process work and resource cleanup |
 | `completed` | `completed`, `salvaged` |

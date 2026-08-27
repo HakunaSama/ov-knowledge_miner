@@ -74,6 +74,16 @@ const workspace = {
     title: '知识挖掘',
     description:
       '把每项知识构造成一个由 what / why / how 三页组成的元知识，再用团队 Memory 和人工问卷答案增量更新同一知识库；主视图、知识域和使用场景始终浏览同一批知识文件。',
+    history: {
+      current: '当前查看',
+      description:
+        '切换后会加载该次任务的完整进度、知识目录、来源覆盖、中间产物、人工问卷和知识点阵；运行中的任务也会持续更新。',
+      newJob: '新建挖掘',
+      sources: '{{count}} 份来源',
+      sourcesUnknown: '来源清单见详情',
+      title: '挖掘历史',
+      untitled: '未命名的知识挖掘任务',
+    },
     upload: {
       title: '上传知识来源',
       description: '同一批文档会放入独立的来源目录，不会覆盖其他批次。',
@@ -120,6 +130,9 @@ const workspace = {
       start: '开始知识挖掘',
       running: '正在挖掘……',
       cancel: '取消 Compile 任务',
+      resume: '从检查点恢复挖掘',
+      resuming: '正在恢复……',
+      resumeAccepted: '恢复任务已创建，将复用已上传来源和可用检查点。',
       newJob: '新建挖掘任务',
       removeFile: '移除 {{name}}',
     },
@@ -135,7 +148,7 @@ const workspace = {
       skill: 'Skill',
       okfConfig: 'OKF 配置',
       output: '产物目录',
-      cancelledDescription: '任务已取消。已完成的写入不会回滚。',
+      cancelledDescription: '任务已取消。已保存的阶段检查点可以继续恢复。',
     },
     phases: {
       idle: '待开始',
@@ -162,6 +175,9 @@ const workspace = {
       loading_skill: '加载 llm-wiki Skill',
       collecting_context: '收集来源与目标上下文',
       agent: 'VikingBot 正在阅读、归纳和写作',
+      source_coverage: '阶段 1/3 · 校验逐文档覆盖账本',
+      candidate_knowledge: '阶段 2/3 · 校验候选知识账本',
+      page_generation: '阶段 3/3 · 生成知识页面',
       rendering: '验证并渲染 Wiki 产物',
       writing: '写入 OpenViking 目标目录',
       refreshing: '生成语义侧车并刷新索引',
@@ -178,11 +194,12 @@ const workspace = {
       awaitingHuman:
         '已生成可审阅的阶段性知识，并暂停在人工补证门禁；提交答案后才会完成最终知识库。',
       partialTitle: '这是抢救保存的部分结果',
+      partialBadge: 'SALVAGED · 未通过校验',
       partial:
         '任务没有通过完整 OKF 校验，系统已停止后续 Memory 或人工增量阶段。可浏览已保存页面、中间账本和派生视图，但不能将它视为最终知识库。',
       waitingTitle: 'VikingBot 正在工作',
       waitingDescription:
-        '文档解析和长程 Agent 挖掘可能需要数分钟。可以保持页面打开，这里会自动刷新状态。',
+        '长程挖掘默认没有一小时硬截止。可以关闭或刷新页面；阶段检查点会持久化，并可在失败或取消后继续恢复。',
       emptyTitle: '还没有挖掘结果',
       emptyDescription:
         '选择文档、填写挖掘目标并开始任务，结果会作为持久化 OpenViking Resource 保存。',

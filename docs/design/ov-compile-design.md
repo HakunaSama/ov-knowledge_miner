@@ -188,7 +188,7 @@ VikingBot 负责规范化参数并计算实际任务描述：
 effective_reason = (request.reason or "").strip() or DEFAULT_COMPILE_REASON
 ```
 
-可选的 `runtime_timeout_seconds` 必须为正数且有限，并且只能缩短 `CompileLimits.task_runtime_seconds` 定义的服务端最大值（默认 3600 秒）；超限请求在创建任务时以 `RESOURCE_EXHAUSTED` 拒绝。
+可选的 `runtime_timeout_seconds` 必须为正数且有限。`CompileLimits.task_runtime_seconds` 默认为 `None`，表示服务端没有墙钟硬截止时间；部署方可以配置正数最大值，此时请求只能缩短该上限，超限请求在创建任务时以 `RESOURCE_EXHAUSTED` 拒绝。知识挖掘在来源覆盖和候选知识门禁后保存服务端私有恢复检查点，失败或取消任务可通过 `POST /bot/v1/compile/{task_id}/resume` 复用来源和最近检查点创建新任务。
 
 ### 4.2 查询任务
 

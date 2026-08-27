@@ -13,7 +13,10 @@ from vikingbot.agent.loop import (
 )
 from vikingbot.agent.tools.base import Tool, ToolContext
 from vikingbot.agent.tools.compile import (
+    CompilePhaseGate,
     CompileScopedTool,
+    SubmitCandidateKnowledgeTool,
+    SubmitSourceCoverageTool,
     SubmitTargetCheckoutTool,
     SubmitWikiBundleTool,
 )
@@ -24,6 +27,7 @@ from vikingbot.agent.tools.ov_file import (
 )
 from vikingbot.agent.tools.registry import ToolRegistry
 from vikingbot.compile.models import (
+    COMPILE_TARGET_CHECKOUT_ROOT,
     DEFAULT_COMPILE_REASON,
     CompileFailure,
     CompileLimits,
@@ -145,13 +149,14 @@ def test_compile_limit_defaults_match_the_resource_envelope():
     assert limits.accepted_tasks == 40
     assert limits.accepted_tasks_per_principal == 10
     assert limits.queue_wait_seconds == 60 * 60
-    assert limits.task_runtime_seconds == 60 * 60
-    assert limits.agent_iterations == 60
+    assert limits.task_runtime_seconds is None
+    assert limits.agent_iterations == 240
     assert limits.source_files == 5000
     assert limits.source_total_bytes == 1024 * 1024 * 1024
     assert limits.target_total_bytes == 1024 * 1024 * 1024
     assert limits.salvage_grace_seconds == 120
     assert limits.cleanup_grace_seconds == 40
+    assert limits.terminal_task_retention_seconds == 90 * 24 * 60 * 60
     assert limits.target_inventory_entries == 2000
     assert limits.target_catalog_pages == 10
     assert limits.output_pages == 128
@@ -276,6 +281,167 @@ def test_submit_tool_checkout_schema_takes_no_file_manifest():
         "additionalProperties": False,
     }
     assert "Pass no pages, files, paths, or content" in tool.description
+
+
+@pytest.mark.asyncio
+async def test_mining_checkpoints_enforce_coverage_then_candidates_then_pages():
+    config = parse_okf_config(
+        Path("examples/compile/ov-compile-skills/llm-wiki/OKF_CONFIG.yaml").read_text()
+    )
+    limits = CompileLimits()
+    gate = CompilePhaseGate()
+    source = "viking://resources/source/document"
+    required_path = "compile_resources/src/document.md"
+    prefix = f"{COMPILE_TARGET_CHECKOUT_ROOT}/"
+    files = {
+        f"{prefix}_mining/run-manifest.json": json.dumps(
+            {"version": "1.0", "stage": "documents"}
+        ).encode(),
+        f"{prefix}_mining/source-coverage.json": json.dumps(
+            {
+                "version": "1.0",
+                "stage": "documents",
+                "sources": [
+                    {
+                        "resource": source,
+                        "inspected": True,
+                        "status": "cited",
+                    }
+                ],
+                "summary": {
+                    "uploaded": 1,
+                    "inspected": 1,
+                    "cited": 1,
+                    "merged": 0,
+                    "skipped": 0,
+                },
+            }
+        ).encode(),
+    }
+
+    class Sandbox:
+        async def list_files(self, path=".", *, max_entries):
+            assert path == COMPILE_TARGET_CHECKOUT_ROOT
+            assert len(files) <= max_entries
+            return [SandboxFileInfo(path=name, size=len(value)) for name, value in files.items()]
+
+        async def read_file_bytes(self, path, *, max_bytes=None):
+            assert max_bytes is None or len(files[path]) <= max_bytes
+            return files[path]
+
+    class Manager:
+        async def get_sandbox(self, session_key):
+            del session_key
+            return Sandbox()
+
+    class Readlist:
+        read_paths = {required_path}
+
+        async def summary(self):
+            return "complete"
+
+    common = {
+        "phase_gate": gate,
+        "source_roots": {"src": "viking://resources/source"},
+        "source_units": [{"resource": source, "required_read_paths": [required_path]}],
+        "baseline_checkout": {},
+        "okf_config": config,
+        "limits": limits,
+        "readlist": Readlist(),
+    }
+    coverage_tool = SubmitSourceCoverageTool(**common)
+    candidate_tool = SubmitCandidateKnowledgeTool(**common)
+    final_tool = SubmitTargetCheckoutTool(
+        target_uri="viking://resources/wiki",
+        source_roots={"src": "viking://resources/source"},
+        source_units=common["source_units"],
+        limits=limits,
+        okf_config=config,
+        phase_gate=gate,
+    )
+    context = ToolContext(sandbox_manager=Manager())
+
+    assert "must pass first" in await candidate_tool.execute(context)
+    assert "checkpoint must pass" in await final_tool.execute(context)
+    assert (await coverage_tool.execute(context)).startswith("Source coverage checkpoint accepted")
+    assert gate.coverage_passed is True
+    assert gate.candidates_passed is False
+
+    files[f"{prefix}_mining/candidate-knowledge.json"] = json.dumps(
+        {
+            "version": "1.0",
+            "stage": "documents",
+            "candidates": [
+                {
+                    "id": "candidate",
+                    "title": "Candidate",
+                    "summary": "Source-grounded candidate prepared before page generation.",
+                    "kind": "concept",
+                    "source_resources": [source],
+                    "disposition": "promoted",
+                    "meta_id": "candidate",
+                    "page_paths": [
+                        "knowledge/topic/candidate/what/candidate.md",
+                        "knowledge/topic/candidate/why/candidate-rationale.md",
+                        "knowledge/topic/candidate/how/candidate-procedure.md",
+                    ],
+                    "stage": "documents",
+                }
+            ],
+            "summary": {
+                "total": 1,
+                "promoted": 1,
+                "merged": 0,
+                "deferred": 0,
+                "rejected": 0,
+            },
+        }
+    ).encode()
+    assert (await candidate_tool.execute(context)).startswith(
+        "Candidate knowledge checkpoint accepted"
+    )
+    assert gate.candidates_passed is True
+
+
+@pytest.mark.asyncio
+async def test_source_checkpoint_rejects_candidate_or_page_created_too_early():
+    config = parse_okf_config(
+        Path("examples/compile/ov-compile-skills/llm-wiki/OKF_CONFIG.yaml").read_text()
+    )
+    prefix = f"{COMPILE_TARGET_CHECKOUT_ROOT}/"
+    files = {
+        f"{prefix}_mining/run-manifest.json": b'{"version":"1.0","stage":"documents"}',
+        f"{prefix}_mining/source-coverage.json": b'{"version":"1.0"}',
+        f"{prefix}_mining/candidate-knowledge.json": b'{"version":"1.0"}',
+        f"{prefix}knowledge/topic/what/page.md": b"premature",
+    }
+
+    class Sandbox:
+        async def list_files(self, path=".", *, max_entries):
+            del path, max_entries
+            return [SandboxFileInfo(path=name, size=len(value)) for name, value in files.items()]
+
+        async def read_file_bytes(self, path, *, max_bytes=None):
+            del max_bytes
+            return files[path]
+
+    class Manager:
+        async def get_sandbox(self, session_key):
+            del session_key
+            return Sandbox()
+
+    tool = SubmitSourceCoverageTool(
+        phase_gate=CompilePhaseGate(),
+        source_roots={"src": "viking://resources/source"},
+        source_units=[],
+        baseline_checkout={},
+        okf_config=config,
+        limits=CompileLimits(),
+        readlist=None,
+    )
+    result = await tool.execute(ToolContext(sandbox_manager=Manager()))
+    assert "later-stage artifacts and page generation are locked" in result
+    assert "candidate-knowledge.json" in result
 
 
 @pytest.mark.parametrize(
@@ -1900,6 +2066,7 @@ def test_source_units_require_distributed_pdf_depth_including_exact_middle():
         )
         for index in range(1, 21)
     ]
+    content_hash = "a" * 64
     units = BotCompileService._build_source_units(
         sources=[
             {
@@ -1909,6 +2076,7 @@ def test_source_units_require_distributed_pdf_depth_including_exact_middle():
             }
         ],
         rows=rows,
+        content_hashes={("src_1", rows[0][1]): content_hash},
     )
 
     assert len(units) == 1
@@ -1918,6 +2086,7 @@ def test_source_units_require_distributed_pdf_depth_including_exact_middle():
     assert unit["required_read_paths"][0].endswith("page-1.md")
     assert unit["required_read_paths"][-1].endswith("page-20.md")
     assert any(path.endswith("page-11.md") for path in unit["required_read_paths"])
+    assert unit["leaves"][0]["sha256"] == content_hash
 
 
 @pytest.mark.asyncio
@@ -3428,6 +3597,10 @@ async def test_execute_skill_target_skips_recursive_catalog_and_completes(
         def __init__(self, task):
             self.task = task
 
+        async def get(self, task_id):
+            assert task_id == self.task.task_id
+            return self.task
+
         async def update(self, task_id, mutate):
             assert task_id == self.task.task_id
             mutate(self.task)
@@ -4034,6 +4207,23 @@ def test_compile_registry_has_a_fixed_ara_compatible_tool_set(exec_enabled):
     checkout_submit = checkout_registry.get("submit_wiki_bundle")
     assert isinstance(checkout_submit, SubmitTargetCheckoutTool)
     assert checkout_submit.parameters["properties"] == {}
+
+    mining_registry, _ = service._build_compile_registry(
+        **common,
+        capabilities=CompileCapabilities(exec_enabled=exec_enabled),
+        target_checkout_enabled=True,
+        source_roots={"src_1": "viking://resources/source"},
+        source_units=[{"resource": "viking://resources/source/document"}],
+        okf_config=parse_okf_config(
+            Path("examples/compile/ov-compile-skills/llm-wiki/OKF_CONFIG.yaml").read_text()
+        ),
+    )
+    assert mining_registry.tool_names[-3:] == [
+        "submit_source_coverage",
+        "submit_candidate_knowledge",
+        "submit_wiki_bundle",
+    ]
+    assert mining_registry.get("submit_wiki_bundle").phase_gate is not None
 
 
 def test_compile_registry_keeps_source_fallback_tools_only_when_needed():
@@ -4697,6 +4887,214 @@ async def test_compile_uses_request_runtime_timeout(monkeypatch, tmp_path: Path)
     assert observed and 0 < observed[0] <= 0.02
     assert failed is not None and failed.status == "failed"
     assert failed.error is not None and failed.error.code == "DEADLINE_EXCEEDED"
+
+
+@pytest.mark.asyncio
+async def test_compile_has_no_default_runtime_deadline(monkeypatch, tmp_path: Path):
+    service = _compile_service(
+        tmp_path,
+        auth_mode="api_key",
+        backend=SandboxBackend.AIOSANDBOX,
+    )
+    request = _sanitized_compile_request()
+    task = CompileTask(
+        task_id="cmp_unbounded",
+        principal_scope="owner",
+        sanitized_request=request,
+        status="accepted",
+        stage="queued",
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    await service.store.create(task)
+    observed = []
+
+    async def execute(*args, runtime_deadline, **kwargs):
+        del args, kwargs
+        observed.append(runtime_deadline)
+
+    monkeypatch.setattr(service, "_execute_task", execute)
+    await service._run_task(task.task_id, request, {"api_key": "secret"})
+
+    assert observed == [None]
+
+
+@pytest.mark.asyncio
+async def test_resume_checkpoint_round_trip_is_private_and_restores_phase(tmp_path: Path):
+    service = _compile_service(
+        tmp_path,
+        auth_mode="dev",
+        backend=SandboxBackend.DIRECT,
+    )
+    request = _sanitized_compile_request()
+    source = CompileTask(
+        task_id="cmp_checkpoint_source",
+        principal_scope="owner",
+        sanitized_request=request,
+        status="running",
+        stage="page_generation",
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    resumed = CompileTask(
+        task_id="cmp_checkpoint_resumed",
+        principal_scope="owner",
+        sanitized_request=request,
+        status="accepted",
+        stage="queued",
+        created_at=utc_now(),
+        updated_at=utc_now(),
+        resumed_from_task_id=source.task_id,
+    )
+    await service.store.create(source)
+    await service.store.create(resumed)
+    source_units = [
+        {
+            "resource": "viking://resources/source/doc",
+            "required_read_paths": ["a"],
+            "leaves": [
+                {
+                    "uri": "viking://resources/source/doc/page.md",
+                    "sha256": "original",
+                }
+            ],
+        }
+    ]
+
+    class Sandbox:
+        def __init__(self, files):
+            self.files = dict(files)
+
+        async def list_files(self, path=".", *, max_entries):
+            assert path == COMPILE_TARGET_CHECKOUT_ROOT
+            selected = {
+                name: payload
+                for name, payload in self.files.items()
+                if name.startswith(f"{COMPILE_TARGET_CHECKOUT_ROOT}/")
+            }
+            assert len(selected) <= max_entries
+            return [SandboxFileInfo(path=name, size=len(payload)) for name, payload in selected.items()]
+
+        async def read_file_bytes(self, path, *, max_bytes=None):
+            if path not in self.files:
+                raise FileNotFoundError(path)
+            payload = self.files[path]
+            assert max_bytes is None or len(payload) <= max_bytes
+            return payload
+
+        async def write_file_bytes(self, path, payload):
+            self.files[path] = payload
+
+    original = Sandbox(
+        {
+            f"{COMPILE_TARGET_CHECKOUT_ROOT}/_mining/source-coverage.json": b"{}",
+            f"{COMPILE_TARGET_CHECKOUT_ROOT}/_mining/candidate-knowledge.json": b"{}",
+            READLIST_PATH: b"compile_resources/src_1/a.md\n",
+        }
+    )
+    assert await service._save_resume_checkpoint(
+        task_id=source.task_id,
+        sandbox=original,
+        source_units=source_units,
+        completed_stage="candidate_knowledge",
+    )
+    restored = Sandbox({})
+    completed = await service._load_resume_checkpoint(
+        source_task_id=source.task_id,
+        current_task_id=resumed.task_id,
+        sandbox=restored,
+        source_units=source_units,
+    )
+
+    assert completed == "candidate_knowledge"
+    assert restored.files == original.files
+    stored_source = await service.store.get(source.task_id)
+    stored_resumed = await service.store.get(resumed.task_id)
+    assert stored_source is not None and stored_source.checkpoint_available is True
+    assert stored_resumed is not None and stored_resumed.checkpoint_stage == "candidate_knowledge"
+
+    changed_sources = [
+        {
+            **source_units[0],
+            "leaves": [{**source_units[0]["leaves"][0], "sha256": "changed"}],
+        }
+    ]
+    with pytest.raises(CompileFailure) as changed:
+        await service._load_resume_checkpoint(
+            source_task_id=source.task_id,
+            current_task_id=resumed.task_id,
+            sandbox=Sandbox({}),
+            source_units=changed_sources,
+        )
+    assert changed.value.code == "CONFLICT"
+
+
+@pytest.mark.asyncio
+async def test_resume_task_reuses_sanitized_request_and_links_task(monkeypatch, tmp_path: Path):
+    service = _compile_service(
+        tmp_path,
+        auth_mode="dev",
+        backend=SandboxBackend.DIRECT,
+    )
+    previous = CompileTask(
+        task_id="cmp_failed_resume",
+        principal_scope="owner",
+        sanitized_request=_sanitized_compile_request(),
+        status="failed",
+        stage="candidate_knowledge",
+        created_at=utc_now(),
+        updated_at=utc_now(),
+        error={"code": "DEADLINE_EXCEEDED", "message": "deadline"},
+    )
+    await service.store.create(previous)
+    observed = {}
+
+    async def enqueue(request, *, connection, principal_scope, resumed_from_task_id=None):
+        observed.update(
+            request=request,
+            connection=connection,
+            principal_scope=principal_scope,
+            resumed_from_task_id=resumed_from_task_id,
+        )
+        return SimpleNamespace(task_id="cmp_new", status="accepted", to=request.to)
+
+    monkeypatch.setattr(service, "_enqueue_task", enqueue)
+    accepted = await service.resume_task(previous.task_id, principal_scope="owner", connection={})
+
+    assert accepted is not None and accepted.task_id == "cmp_new"
+    assert observed["request"] == previous.sanitized_request
+    assert observed["resumed_from_task_id"] == previous.task_id
+    assert observed["principal_scope"] == "owner"
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_is_principal_scoped_and_includes_sanitized_request(tmp_path: Path):
+    service = _compile_service(
+        tmp_path,
+        auth_mode="dev",
+        backend=SandboxBackend.DIRECT,
+    )
+    request = _sanitized_compile_request()
+    for task_id, principal in (("cmp_owner_history", "owner"), ("cmp_other_history", "other")):
+        await service.store.create(
+            CompileTask(
+                task_id=task_id,
+                principal_scope=principal,
+                sanitized_request=request,
+                status="failed",
+                stage="agent",
+                created_at=utc_now(),
+                updated_at=utc_now(),
+                error={"code": "TEST", "message": "finished"},
+            )
+        )
+
+    history = await service.list_tasks(principal_scope="owner")
+
+    assert history["total"] == 1
+    assert history["tasks"][0]["task_id"] == "cmp_owner_history"
+    assert history["tasks"][0]["request"]["to"] == request.to
+    assert "openviking_connection" not in history["tasks"][0]["request"]
 
 
 @pytest.mark.asyncio

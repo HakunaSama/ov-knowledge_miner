@@ -143,7 +143,7 @@ data: {"event":"response","data":{"content":"当前知识库包含……","respo
 | `skill` | string | 是 | - | Skill 目录或其 `SKILL.md` URI |
 | `okf_config` | string | 否 | - | 外部 OKF YAML 配置文件 URI；Resource Wiki 提交会据此校验 frontmatter、目录类型与 WikiLink |
 | `reason` | string | 否 | Skill 驱动的默认值 | 本次 Compile 的补充指令 |
-| `runtime_timeout_seconds` | number | 否 | 3600 | 正数且有限，且不得超过服务端最大运行时限（默认 3600 秒） |
+| `runtime_timeout_seconds` | number | 否 | 无 | 可选的正数运行时限；不传时任务没有服务端硬截止时间。若服务端管理员配置了最大时限，本字段不得超过该值 |
 
 **HTTP API**
 
@@ -178,7 +178,7 @@ ov compile \
 
 `--okf-config` 指向 OpenViking 中可读的 YAML 文件。VikingBot 会将其物化为任务工作区的 `compile_config/OKF_CONFIG.yaml`，并把它作为控制数据而非知识来源；外部契约优先于 Skill 中冲突的格式规则。未提供时保持现有 Compile 行为。
 
-`--wait` 会轮询状态接口，直到任务进入终态。`--timeout` 只限制本地等待时间，不会取消服务端任务；`--runtime-timeout` 用于设置本次任务的 `runtime_timeout_seconds`，只能缩短服务端拥有的最大运行时限，超限请求会以 `429 RESOURCE_EXHAUSTED` 拒绝。在 Agent 执行期间达到该时限，或达到 Compile 自己的工具轮次上限（当前为 60）时，会在独立的短 grace period 内尝试保存符合条件的 Resource 阶段性产物；没有可保存产物时任务失败，非 Resource 目标以及后续阶段超时不使用该 fallback。连续三次以完全相同的错误提交目标目录时会提前进入阶段性保存，避免把剩余轮次浪费在不可收敛的重复重试上。
+`--wait` 会轮询状态接口，直到任务进入终态。`--timeout` 只限制本地等待时间，不会取消服务端任务。默认不设置服务端硬运行时限；只有显式传入 `--runtime-timeout`，或管理员配置了服务端最大运行时限时，任务才会因运行时限终止。超过管理员上限的请求会以 `429 RESOURCE_EXHAUSTED` 拒绝。Compile 的工具轮次上限现为 240，用于阻止无进展的无限循环，而不是墙钟超时。知识挖掘的 `source_coverage` 和 `candidate_knowledge` 门禁通过时会各自写入私有恢复检查点；任务被取消、显式超时或耗尽轮次时也会尽力保存当前检查点，但不会把未通过最终校验的半成品写入正式目标。
 
 `direct` backend 会以 Bot 宿主机权限执行 Compile 的 `exec` 命令。`bot.sandbox.backends.direct.allow_compile_exec` 默认为 `true`：Compile 工具链开源，`exec` 默认直接以用户 shell 权限运行，普通 Wiki 和产物文件整理仍通过文件工具运行。声明了 `requires.bins` 或 `requires.env` 的 Skill 仍会先探测命令；将该选项设为 `false` 时 Compile 不会暴露 `exec`，此类 Skill 会在执行任何命令探测前以 `SKILL_CAPABILITY_UNAVAILABLE` 失败。依赖 CLI 的 Skill 推荐使用具备文件系统和网络策略的隔离 backend。超过 admission 上限时返回 `429 RESOURCE_EXHAUSTED`。
 
@@ -195,6 +195,14 @@ HTTP 接口返回 `202 Accepted`：
     "to": "viking://resources/research-wiki"
   }
 }
+```
+
+### compile_history()
+
+列出当前 principal 可见的 Compile 任务，按创建时间倒序返回。响应包含公开任务状态及已净化的原始请求，便于客户端把同一 `to` 目标的文档、Memory 和人工补证任务组合成一条挖掘历史。默认最多返回 200 条，可通过 `limit` 调整到 1000；终态任务默认保留 90 天。
+
+```http
+GET /bot/v1/compile?limit=200
 ```
 
 ### compile_status()
@@ -293,7 +301,7 @@ ov task status cmp_01abc
 
 ### compile_cancel()
 
-按 task ID 请求协作式停止 Compile 任务。任务会先进入 `cancelling`，待当前进程内工作和清理完成后进入 `cancelled`；已经完成的写入不会回滚。重复取消已经 `cancelled` 的任务是幂等的，任务不存在或属于其他 principal 时返回 `404`。
+按 task ID 请求协作式停止 Compile 任务。任务会先进入 `cancelling`，在保存可用的私有恢复检查点并完成清理后进入 `cancelled`；已经完成的正式写入不会回滚。重复取消已经 `cancelled` 的任务是幂等的，任务不存在或属于其他 principal 时返回 `404`。
 
 **CLI**
 
@@ -312,12 +320,27 @@ curl -X POST http://localhost:1933/bot/v1/compile/cmp_01abc/cancel \
   -H "X-API-Key: your-key"
 ```
 
+### compile_resume()
+
+为一个 `failed`、`cancelled` 或未通过最终校验的 `salvaged` 任务创建新的 Compile 任务。新任务复用原任务已经净化并持久化的请求和来源 URI，因此无需重新上传文件；如果原任务有相同来源签名的私有检查点，则从最近完成的阶段继续，否则从来源读取阶段重新执行。原任务保持不变，新任务通过 `resumed_from_task_id` 记录来源任务。
+
+```http
+POST /bot/v1/compile/{task_id}/resume
+```
+
+```bash
+curl -X POST http://localhost:1933/bot/v1/compile/cmp_01abc/resume \
+  -H "X-API-Key: your-key"
+```
+
+任务状态中的 `checkpoint_available` 表示服务端已保存可恢复检查点，`checkpoint_stage` 表示最近完成的门禁阶段。检查点属于服务端私有状态，不会出现在正式知识库中；恢复时若来源清单或内容签名不一致，任务会以 `409 CONFLICT` 拒绝使用旧检查点。
+
 任务生命周期如下：
 
 | Status | 常见 Stage |
 |--------|------------|
 | `accepted` | `queued` |
-| `running` | `loading_skill`、`collecting_context`、`agent`、`rendering` |
+| `running` | `loading_skill`、`collecting_context`、`source_coverage`、`candidate_knowledge`、`page_generation`、`agent`、`rendering` |
 | `committing` | `writing`、`refreshing`、`salvaging` |
 | `cancelling` | 收敛当前进程内工作和清理资源 |
 | `completed` | `completed`、`salvaged` |
