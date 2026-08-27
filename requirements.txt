@@ -980,7 +980,7 @@ tqdm==4.67.3
     #   datasets
     #   huggingface-hub
     #   openai
-trafilatura==2.1.0
+trafilatura==2.2.0
     # via openviking
 tree-sitter==0.25.2
     # via
