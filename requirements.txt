@@ -455,7 +455,7 @@ marshmallow==3.26.2
     # via dataclasses-json
 maturin==1.15.0
     # via openviking
-mcp==1.27.0
+mcp==1.29.0
     # via openviking
 mdit-py-plugins==0.5.0
     # via myst-parser
