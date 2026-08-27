@@ -129,7 +129,9 @@ const workspace = {
     actions: {
       start: '开始知识挖掘',
       running: '正在挖掘……',
+      queued: '已加入挖掘队列',
       cancel: '取消 Compile 任务',
+      cancelQueued: '取消排队',
       resume: '从检查点恢复挖掘',
       resuming: '正在恢复……',
       resumeAccepted: '恢复任务已创建，将复用已上传来源和可用检查点。',
@@ -143,6 +145,7 @@ const workspace = {
       documentTaskId: '文档任务',
       memoryTaskId: 'Memory 任务',
       humanTaskId: '人工补充',
+      queuePosition: '队列位置',
       pending: '等待文档任务完成',
       skipped: '未配置',
       skill: 'Skill',
@@ -154,6 +157,7 @@ const workspace = {
       idle: '待开始',
       preparing: '准备环境',
       uploading: '解析文档',
+      queued: '等待挖掘',
       compiling_documents: '文档知识挖掘',
       compiling_memory: 'Memory 增量更新',
       compiling_human: '人工知识增量更新',
@@ -167,6 +171,7 @@ const workspace = {
       idle: '等待上传',
       preparing: '检查 VikingBot 并准备 llm-wiki Skill',
       uploading: '上传、解析和生成语义索引',
+      queued: '来源已隔离保存，等待前序完整流程结束',
       compiling: '等待 VikingBot',
       compiling_documents: '等待文档 Compile',
       compiling_memory: '等待团队 Memory 增量 Compile',
@@ -200,6 +205,9 @@ const workspace = {
       waitingTitle: 'VikingBot 正在工作',
       waitingDescription:
         '长程挖掘默认没有一小时硬截止。可以关闭或刷新页面；阶段检查点会持久化，并可在失败或取消后继续恢复。',
+      queuedTitle: '当前排在第 {{position}} 位',
+      queuedDescription:
+        '文档和团队 Memory 已保存到本任务的独立目录。前序任务的文档、Memory 与人工补证流程结束后，VikingBot 会自动开始本任务。',
       emptyTitle: '还没有挖掘结果',
       emptyDescription:
         '选择文档、填写挖掘目标并开始任务，结果会作为持久化 OpenViking Resource 保存。',
@@ -375,6 +383,16 @@ const workspace = {
       resultLoad: '无法读取结果目录',
       pageLoad: '无法读取 Wiki 页面',
       missingJob: '当前知识挖掘任务不存在，无法提交人工答案。',
+      incompleteQueueJob:
+        '排队任务缺少 Skill 或 OKF 配置，无法安全启动。请新建任务并重新上传。',
+      queueBusy:
+        '当前仍有正在执行或排队的挖掘任务。为保证严格串行，暂时不能恢复这个检查点。',
+    },
+    queue: {
+      added: '数据已独立保存并加入挖掘队列。',
+      badge: '排队中 · 第 {{position}} 位',
+      position: '第 {{position}} 位',
+      started: '队列任务已开始：{{name}}',
     },
   },
   monitoringPage: {

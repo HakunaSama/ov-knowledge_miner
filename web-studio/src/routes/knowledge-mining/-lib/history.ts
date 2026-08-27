@@ -4,6 +4,7 @@ export type MiningPhase =
   | 'idle'
   | 'preparing'
   | 'uploading'
+  | 'queued'
   | 'compiling_documents'
   | 'compiling_memory'
   | 'compiling_human'
@@ -67,6 +68,7 @@ function phaseValue(value: unknown): MiningPhase | null {
     'idle',
     'preparing',
     'uploading',
+    'queued',
     'compiling_documents',
     'compiling_memory',
     'compiling_human',

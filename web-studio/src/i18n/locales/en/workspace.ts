@@ -132,7 +132,9 @@ const workspace = {
     actions: {
       start: 'Start knowledge mining',
       running: 'Mining…',
+      queued: 'Added to mining queue',
       cancel: 'Cancel Compile task',
+      cancelQueued: 'Leave queue',
       resume: 'Resume from checkpoint',
       resuming: 'Resuming…',
       resumeAccepted:
@@ -148,6 +150,7 @@ const workspace = {
       documentTaskId: 'Document task',
       memoryTaskId: 'Memory task',
       humanTaskId: 'Human input',
+      queuePosition: 'Queue position',
       pending: 'Waiting for document task',
       skipped: 'Not configured',
       skill: 'Skill',
@@ -160,6 +163,7 @@ const workspace = {
       idle: 'Ready',
       preparing: 'Preparing',
       uploading: 'Parsing files',
+      queued: 'Waiting to mine',
       compiling_documents: 'Mining documents',
       compiling_memory: 'Updating from Memory',
       compiling_human: 'Updating from human input',
@@ -173,6 +177,7 @@ const workspace = {
       idle: 'Waiting for files',
       preparing: 'Checking VikingBot and preparing the llm-wiki Skill',
       uploading: 'Uploading, parsing, and generating semantic indexes',
+      queued: 'Sources saved in isolation; waiting for the prior workflow',
       compiling: 'Waiting for VikingBot',
       compiling_documents: 'Waiting for the document Compile',
       compiling_memory: 'Waiting for the team Memory incremental Compile',
@@ -207,6 +212,9 @@ const workspace = {
       waitingTitle: 'VikingBot is working',
       waitingDescription:
         'Long-running mining has no one-hour hard deadline by default. You may close or refresh this page; phase checkpoints persist and can be resumed after failure or cancellation.',
+      queuedTitle: 'Number {{position}} in the queue',
+      queuedDescription:
+        'Documents and team Memory are saved under this job’s isolated directories. VikingBot starts it after the prior document, Memory, and human-evidence workflow ends.',
       emptyTitle: 'No mining result yet',
       emptyDescription:
         'Choose documents, describe the objective, and start. The result is persisted as an OpenViking Resource.',
@@ -386,6 +394,16 @@ const workspace = {
       pageLoad: 'Could not load the Wiki page',
       missingJob:
         'The current mining job is unavailable, so human answers cannot be submitted.',
+      incompleteQueueJob:
+        'This queued job is missing its Skill or OKF config and cannot start safely. Create a new job and upload it again.',
+      queueBusy:
+        'Another mining job is running or queued. This checkpoint cannot resume until the serial queue is clear.',
+    },
+    queue: {
+      added: 'The isolated dataset was saved and added to the mining queue.',
+      badge: 'Queued · No. {{position}}',
+      position: 'No. {{position}}',
+      started: 'Queued job started: {{name}}',
     },
   },
   monitoringPage: {

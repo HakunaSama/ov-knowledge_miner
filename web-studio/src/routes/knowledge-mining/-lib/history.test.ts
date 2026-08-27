@@ -31,6 +31,30 @@ function task(
 }
 
 describe('knowledge mining history', () => {
+  it('restores queued jobs so dispatch can continue after a refresh', () => {
+    const stored = JSON.stringify({
+      jobs: [
+        {
+          createdAt: '2026-08-27T09:00:00Z',
+          documentSourceUri:
+            'viking://resources/knowledge-mining/queued/document-sources',
+          okfConfigUri:
+            'viking://resources/knowledge-mining/queued/document-sources/OKF_CONFIG.yaml',
+          phase: 'queued',
+          skillUri: 'viking://user/default/skills/llm-wiki',
+          targetUri: 'viking://resources/knowledge-mining/queued/wiki',
+        },
+      ],
+      selectedJobId: 'queued',
+      version: 1,
+    })
+
+    const history = parseMiningHistory(stored)
+
+    expect(history.jobs[0].phase).toBe('queued')
+    expect(history.jobs[0].okfConfigUri).toContain('OKF_CONFIG.yaml')
+  })
+
   it('migrates the previous single session job', () => {
     const legacy = JSON.stringify({
       files: [{ name: 'guide.pdf', percent: 100, status: 'completed' }],

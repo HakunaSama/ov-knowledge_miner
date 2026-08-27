@@ -7,6 +7,7 @@ import {
   CheckCircle2Icon,
   ChevronDownIcon,
   ChevronRightIcon,
+  Clock3Icon,
   ClipboardListIcon,
   CircleStopIcon,
   FileIcon,
@@ -88,6 +89,11 @@ import type {
   MiningJob,
   MiningPhase,
 } from './-lib/history'
+import {
+  hasOtherPendingMiningJob,
+  miningQueuePosition,
+  nextQueuedMiningJob,
+} from './-lib/queue'
 import {
   DOCUMENT_EXTENSIONS,
   MEMORY_EXTENSIONS,
@@ -238,6 +244,7 @@ function phaseProgress(phase: MiningPhase, compileTask?: CompileTask): number {
   if (phase === 'idle') return 0
   if (phase === 'preparing') return 5
   if (phase === 'uploading') return 28
+  if (phase === 'queued') return 34
   if (phase === 'awaiting_human') return 96
   if (phase === 'partial') return 100
   if (phase === 'completed') return 100
@@ -536,6 +543,7 @@ function KnowledgeMiningRoute() {
   const resourceFolderInputRef = React.useRef<HTMLInputElement>(null)
   const historyHydratedRef = React.useRef(false)
   const advancingJobsRef = React.useRef(new Set<string>())
+  const queueStartingJobsRef = React.useRef(new Set<string>())
 
   const updateJob = React.useCallback(
     (
@@ -628,6 +636,14 @@ function KnowledgeMiningRoute() {
       }
     })
   }, [serverHistoryQuery.data])
+
+  const schedulingJobs = React.useMemo(
+    () => [
+      ...history.jobs,
+      ...jobsFromCompileTasks(serverHistoryQuery.data || []),
+    ],
+    [history.jobs, serverHistoryQuery.data],
+  )
 
   const addDocumentFiles = React.useCallback(
     (incoming: File[]) => {
@@ -835,8 +851,8 @@ function KnowledgeMiningRoute() {
   React.useEffect(() => {
     trackedJobs.forEach((trackedJob, index) => {
       const taskQuery = compileQueries[index]
-      const task = taskQuery?.data
-      if (taskQuery?.error && !task) {
+      const task = taskQuery.data
+      if (taskQuery.error && !task) {
         updateJob(trackedJob.id, (current) =>
           current.phase === 'failed' &&
           current.error === getErrorMessage(taskQuery.error)
@@ -951,6 +967,49 @@ function KnowledgeMiningRoute() {
       )
     })
   }, [compileQueries, history.selectedJobId, t, trackedJobs, updateJob])
+
+  React.useEffect(() => {
+    if (!serverHistoryQuery.isSuccess) return
+    const queuedJob = nextQueuedMiningJob(schedulingJobs)
+    if (!queuedJob || queueStartingJobsRef.current.has(queuedJob.id)) return
+    if (!queuedJob.okfConfigUri || !queuedJob.skillUri) {
+      updateJob(queuedJob.id, (current) => ({
+        ...current,
+        error: t('errors.incompleteQueueJob'),
+        phase: 'failed',
+      }))
+      return
+    }
+
+    queueStartingJobsRef.current.add(queuedJob.id)
+    void startCompile({
+      from: [queuedJob.documentSourceUri],
+      okfConfig: queuedJob.okfConfigUri,
+      reason: queuedJob.reason,
+      skill: queuedJob.skillUri,
+      to: queuedJob.targetUri,
+    })
+      .then((accepted) => {
+        updateJob(queuedJob.id, (current) => ({
+          ...current,
+          documentTaskId: accepted.task_id,
+          error: null,
+          phase: 'compiling_documents',
+          taskId: accepted.task_id,
+        }))
+        toast.success(t('queue.started', { name: queuedJob.reason }))
+      })
+      .catch((error: unknown) => {
+        const message = getErrorMessage(error)
+        updateJob(queuedJob.id, (current) => ({
+          ...current,
+          error: message,
+          phase: 'failed',
+        }))
+        toast.error(message)
+      })
+      .finally(() => queueStartingJobsRef.current.delete(queuedJob.id))
+  }, [schedulingJobs, serverHistoryQuery.isSuccess, t, updateJob])
 
   const wikiQuery = useQuery({
     enabled: hasVisibleResults,
@@ -1292,23 +1351,13 @@ function KnowledgeMiningRoute() {
           nextJob.documentSourceUri,
           okfConfigFile ? await okfConfigFile.text() : DEFAULT_OKF_CONFIG,
         )
-        updateJob(nextJob.id, (current) => ({ ...current, okfConfigUri }))
-
-        const accepted = await startCompile({
-          from: [nextJob.documentSourceUri],
-          okfConfig: okfConfigUri,
-          reason: effectiveReason,
-          skill: skillUri,
-          to: nextJob.targetUri,
-        })
         updateJob(nextJob.id, (current) => ({
           ...current,
-          documentTaskId: accepted.task_id,
-          phase: 'compiling_documents',
+          okfConfigUri,
+          phase: 'queued',
           skillUri,
-          taskId: accepted.task_id,
         }))
-        return accepted
+        return nextJob.id
       } catch (error) {
         const message = getErrorMessage(error)
         updateJob(nextJob.id, (current) => ({
@@ -1320,6 +1369,7 @@ function KnowledgeMiningRoute() {
       }
     },
     onError: (error) => toast.error(getErrorMessage(error)),
+    onSuccess: () => toast.success(t('queue.added')),
   })
 
   const cancelMutation = useMutation({
@@ -1330,6 +1380,9 @@ function KnowledgeMiningRoute() {
   const resumeMutation = useMutation({
     mutationFn: async () => {
       if (!job?.taskId) throw new Error(t('errors.missingJob'))
+      if (hasOtherPendingMiningJob(schedulingJobs, job.id)) {
+        throw new Error(t('errors.queueBusy'))
+      }
       const jobId = job.id
       await ensureLlmWikiSkill()
       const accepted = await resumeCompile(job.taskId)
@@ -1366,10 +1419,15 @@ function KnowledgeMiningRoute() {
     [
       'preparing',
       'uploading',
+      'queued',
       'compiling_documents',
       'compiling_memory',
       'compiling_human',
     ].includes(job.phase),
+  )
+  const queuePosition = job ? miningQueuePosition(schedulingJobs, job.id) : null
+  const resumeBlocked = Boolean(
+    job && hasOtherPendingMiningJob(schedulingJobs, job.id),
   )
   const progress = phaseProgress(job?.phase || 'idle', compileTask)
   const currentStage =
@@ -1414,7 +1472,11 @@ function KnowledgeMiningRoute() {
             </p>
           </div>
           {job ? (
-            <Button variant="outline" onClick={reset}>
+            <Button
+              variant="outline"
+              disabled={startMutation.isPending}
+              onClick={reset}
+            >
               <PlusIcon />
               {t('actions.newJob')}
             </Button>
@@ -1435,7 +1497,12 @@ function KnowledgeMiningRoute() {
                     {t('history.description')}
                   </CardDescription>
                 </div>
-                <Button size="sm" variant="outline" onClick={reset}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={startMutation.isPending}
+                  onClick={reset}
+                >
                   <PlusIcon />
                   {t('history.newJob')}
                 </Button>
@@ -1445,6 +1512,10 @@ function KnowledgeMiningRoute() {
               <div className="flex gap-3 overflow-x-auto pb-2">
                 {history.jobs.map((historyJob) => {
                   const historyTask = compileTasksByJobId.get(historyJob.id)
+                  const historyQueuePosition = miningQueuePosition(
+                    schedulingJobs,
+                    historyJob.id,
+                  )
                   const historyProgress = phaseProgress(
                     historyJob.phase,
                     historyTask,
@@ -1484,8 +1555,14 @@ function KnowledgeMiningRoute() {
                             'compiling_human',
                           ].includes(historyJob.phase) ? (
                             <LoaderCircleIcon className="animate-spin" />
+                          ) : historyJob.phase === 'queued' ? (
+                            <Clock3Icon />
                           ) : null}
-                          {t(`phases.${historyJob.phase}`)}
+                          {historyQueuePosition
+                            ? t('queue.badge', {
+                                position: historyQueuePosition,
+                              })
+                            : t(`phases.${historyJob.phase}`)}
                         </Badge>
                         {selected ? (
                           <span className="text-[10px] font-medium text-primary">
@@ -1836,18 +1913,25 @@ function KnowledgeMiningRoute() {
                   size="lg"
                   disabled={
                     documentFiles.length === 0 ||
+                    startMutation.isPending ||
                     isActive ||
                     job?.phase === 'awaiting_human' ||
                     job?.phase === 'completed'
                   }
                   onClick={() => startMutation.mutate()}
                 >
-                  {isActive ? (
+                  {job?.phase === 'queued' ? (
+                    <Clock3Icon />
+                  ) : isActive || startMutation.isPending ? (
                     <LoaderCircleIcon className="animate-spin" />
                   ) : (
                     <SparklesIcon />
                   )}
-                  {isActive ? t('actions.running') : t('actions.start')}
+                  {job?.phase === 'queued'
+                    ? t('actions.queued')
+                    : isActive || startMutation.isPending
+                      ? t('actions.running')
+                      : t('actions.start')}
                 </Button>
               </CardContent>
             </Card>
@@ -1865,7 +1949,9 @@ function KnowledgeMiningRoute() {
                         job.phase === 'failed' ? 'destructive' : 'secondary'
                       }
                     >
-                      {t(`phases.${job.phase}`)}
+                      {queuePosition
+                        ? t('queue.badge', { position: queuePosition })
+                        : t(`phases.${job.phase}`)}
                     </Badge>
                   </CardTitle>
                   <CardDescription>{t('status.vikingBot')}</CardDescription>
@@ -1896,6 +1982,14 @@ function KnowledgeMiningRoute() {
                   </div>
 
                   <dl className="grid gap-2 text-xs text-muted-foreground">
+                    {queuePosition ? (
+                      <div className="grid grid-cols-[5rem_1fr] gap-2">
+                        <dt>{t('status.queuePosition')}</dt>
+                        <dd className="font-medium text-foreground">
+                          {t('queue.position', { position: queuePosition })}
+                        </dd>
+                      </div>
+                    ) : null}
                     <div className="grid grid-cols-[5rem_1fr] gap-2">
                       <dt>{t('status.documentTaskId')}</dt>
                       <dd className="truncate font-mono text-foreground">
@@ -1962,11 +2056,26 @@ function KnowledgeMiningRoute() {
                       {t('actions.cancel')}
                     </Button>
                   ) : null}
+                  {job.phase === 'queued' ? (
+                    <Button
+                      variant="outline"
+                      onClick={() =>
+                        updateJob(job.id, (current) => ({
+                          ...current,
+                          error: null,
+                          phase: 'cancelled',
+                        }))
+                      }
+                    >
+                      <CircleStopIcon />
+                      {t('actions.cancelQueued')}
+                    </Button>
+                  ) : null}
                   {job.taskId &&
                   ['failed', 'cancelled', 'partial'].includes(job.phase) ? (
                     <Button
                       className="w-full"
-                      disabled={resumeMutation.isPending}
+                      disabled={resumeMutation.isPending || resumeBlocked}
                       onClick={() => resumeMutation.mutate()}
                     >
                       {resumeMutation.isPending ? (
@@ -2012,20 +2121,28 @@ function KnowledgeMiningRoute() {
             <CardContent className="min-h-0 flex-1">
               {!hasVisibleResults ? (
                 <div className="flex min-h-[480px] flex-col items-center justify-center rounded-xl border border-dashed bg-muted/20 px-6 text-center">
-                  {isActive ? (
+                  {job?.phase === 'queued' ? (
+                    <Clock3Icon className="mb-4 size-10 text-primary/60" />
+                  ) : isActive ? (
                     <LoaderCircleIcon className="mb-4 size-10 animate-spin text-primary/60" />
                   ) : (
                     <FileTextIcon className="mb-4 size-10 text-muted-foreground/40" />
                   )}
                   <p className="font-medium">
-                    {isActive
-                      ? t('results.waitingTitle')
-                      : t('results.emptyTitle')}
+                    {job?.phase === 'queued'
+                      ? t('results.queuedTitle', {
+                          position: queuePosition || 1,
+                        })
+                      : isActive
+                        ? t('results.waitingTitle')
+                        : t('results.emptyTitle')}
                   </p>
                   <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-                    {isActive
-                      ? t('results.waitingDescription')
-                      : t('results.emptyDescription')}
+                    {job?.phase === 'queued'
+                      ? t('results.queuedDescription')
+                      : isActive
+                        ? t('results.waitingDescription')
+                        : t('results.emptyDescription')}
                   </p>
                 </div>
               ) : wikiQuery.isLoading ? (
