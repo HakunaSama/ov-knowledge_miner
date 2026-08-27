@@ -156,7 +156,7 @@ dateparser==1.4.1
     # via htmldate
 ddgs==9.11.3
     # via openviking
-decorator==5.2.1
+decorator==5.3.1
     # via retry
 defusedxml==0.7.1
     # via
