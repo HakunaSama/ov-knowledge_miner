@@ -69,6 +69,7 @@ from vikingbot.compile.okf_config import (
     OKFConfig,
     parse_okf_config,
 )
+from vikingbot.compile.read_depth import distributed_probe_indexes, required_probe_count
 from vikingbot.compile.readlist import READLIST_PATH, ReadlistTracker, ReadTrackingTool
 from vikingbot.compile.renderer import (
     WikiRenderer,
@@ -111,7 +112,6 @@ _MATERIALIZE_CONCURRENCY = 12  # parallel downloads while materializing sources
 _LANGUAGE_SAMPLE_FILES = 8
 _LANGUAGE_SAMPLE_CHARS_PER_FILE = 2_000
 _LANGUAGE_CONTEXT_CHARS = 16_000
-_REQUIRED_READ_PROBES = 8
 _COMPILE_BUDGET_REMINDER_THRESHOLDS = (15, 8, 3)  # heads_up / warn / critical iterations left
 
 _REQUIREMENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
@@ -165,9 +165,13 @@ def _source_reading_workflow(*, materialized: bool) -> str:
             f"`{COMPILE_STAGING_ROOT}/tmp/` are excluded from the final output."
         )
         step7 = (
-            "7. Before knowledge synthesis, verify that every upload-level unit's "
-            "required_read_paths appears in the readlist. Submission is rejected if even one "
-            "required distributed head/middle/tail probe is missing."
+            "7. Candidate extraction is a required checkpoint, not end-of-run paperwork. "
+            "Immediately after inspecting each upload-level unit, record at least one "
+            "source-specific candidate (promoted/merged/deferred/rejected) and periodically "
+            "persist `_mining/candidate-knowledge.json`; never wait until every document has "
+            "been read. Before synthesis, verify every required_read_path appears in the "
+            "readlist. Submission is rejected if a required adaptive probe or a source-level "
+            "candidate is missing."
         )
     else:
         map_step = (
@@ -198,8 +202,9 @@ def _source_reading_workflow(*, materialized: bool) -> str:
         f"4. Then read narrowly and purposefully: {targeted_reads}. Skip whole-file sweeps and "
         "never base a value judgment on a file's head alone."
         f"{materialized_override}\n"
-        "5. Write all output files in as few responses as possible: emit multiple write_file "
-        "calls in one response instead of one file per turn."
+        "5. Reserve the latter half of the task for candidate consolidation and what/why/how "
+        "page generation. Batch local reads with exec and batch write_file calls so mandatory "
+        "inspection cannot consume the generation budget."
         + (f"\n{step6}\n{step7}" if step6 else "")
     )
 
@@ -2473,28 +2478,16 @@ class BotCompileService:
                     )
                 ]
                 materialized.sort(key=_natural_path_key)
-                if len(materialized) <= _REQUIRED_READ_PROBES:
+                probe_count = required_probe_count(len(materialized))
+                if probe_count >= len(materialized):
                     required_read_paths = materialized
                     inspection_strategy = "all"
                 else:
-                    # Eight evenly distributed probes including the exact middle keep
-                    # long parsed PDFs from being represented by only three pages.
-                    # The cap remains small enough for one batched exec/read pass.
-                    probe_indexes = [
-                        round(index * (len(materialized) - 1) / (_REQUIRED_READ_PROBES - 1))
-                        for index in range(_REQUIRED_READ_PROBES)
-                    ]
-                    middle_index = len(materialized) // 2
-                    if middle_index not in probe_indexes:
-                        replace_at = min(
-                            range(1, len(probe_indexes) - 1),
-                            key=lambda index: abs(probe_indexes[index] - middle_index),
-                        )
-                        probe_indexes[replace_at] = middle_index
+                    probe_indexes = distributed_probe_indexes(len(materialized))
                     required_read_paths = [
-                        materialized[index] for index in sorted(probe_indexes)
+                        materialized[index] for index in probe_indexes
                     ]
-                    inspection_strategy = "distributed_head_middle_tail"
+                    inspection_strategy = "adaptive_distributed_head_middle_tail"
                 units.append(
                     {
                         "source_id": source_id,

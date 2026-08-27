@@ -83,13 +83,13 @@ POST /bot/v1/compile
 
 每个知识页的 `sources` 必须同时包含至少一个输入来源（`original`、`team-memory` 或 `human-answer`）和一个配置声明的 `intermediate` 来源。`_mining/evidence-ledger.json` 还必须逐页列出输入 URI、中间产物 URI 和关键声明，因此可以从最终知识回溯到上传文档及处理过程。
 
-`_mining/source-coverage.json` 以用户上传级文档为单位，而不是把解析后的 chunk 当成独立来源。每个来源必须标记为 `cited`、`merged` 或 `skipped`；小文档的全部片段、大文档确定性的首/中/尾片段都必须出现在平台生成的 `readlist.json` 中，`cited` 必须指向证据账本中的有效页面，`merged` 必须指向另一个直接引用来源，`skipped` 必须给出具体原因。`candidate-knowledge.json` 解释候选为何晋升、合并、延后或拒绝；增量 Compile 会合并旧证据并追加 `evidence-history.json` 快照。
+`_mining/source-coverage.json` 以用户上传级文档为单位，而不是把解析后的 chunk 当成独立来源。每个来源必须标记为 `cited`、`merged` 或 `skipped`；小文档的全部片段、大文档自适应且确定性的首/中/尾探针都必须出现在平台生成的 `readlist.json` 中，`cited` 必须指向证据账本中的有效页面，`merged` 必须指向另一个直接引用来源，`skipped` 必须给出不可跨来源复制的具体理由。`candidate-knowledge.json` 是最终页面之前的强制候选检查点，逐项解释候选为何晋升、合并、延后或拒绝；平台不会为缺失来源伪造 rejected 候选。增量 Compile 会合并旧证据并追加 `evidence-history.json` 快照。
 
 同库页面使用 `[[WikiLink]]`。跨知识库关系是正文位置级的多对多关系：同一页面的不同段落可以引用不同知识目标，同一目标也可以被多个页面引用。每个 `knowledge_links` 条目除目标 `viking://` URI、标题、关系和方向外，还必须包含正文中的原文 `context`，并在该正文位置放置可读 Markdown 链接；提交器会确定性校验两者。只有目标库也保存了镜像关系时才使用 `bidirectional`；否则保存为 `outgoing`，并把缺少反向关系记录为证据缺口。
 
 调查报告的状态为 `clear` 或 `needs_human_input`。存在冲突/缺口时，每个 issue 必须由至少一个问卷问题覆盖，否则提交会失败。`needs_human_input` 会让 Studio 暂停在补证门禁，而不是显示为最终完成。人工答案不是直接修改页面：它先被保存为新来源，再通过同一 `to` 目录的增量 Compile 更新主视图、证据账本和报告。
 
-平台会以受节点总数限制的深层递归 inventory 物化完整目标树，而不是使用服务端默认的三层 tree 深度。提交前再确定性地补齐并持久化运行清单、逐文档 readlist、证据历史、逐页账本、来源覆盖和候选知识，并把已有目标 checkout 与本轮 checkout 合并。因此第二阶段即使省略旧页面、覆盖旧账本或写出损坏的候选 JSON，也不能删除第一阶段知识或覆盖审计历史；若旧 coverage 已损坏，平台会从保留页面的来源谱系恢复历史来源。严格校验仍失败时，任务会进入 `salvaged` 并返回 `validation_passed=false` 的可检查阶段性结果；Studio 不会自动开始后续 Memory/人工答案阶段。
+平台会以受节点总数限制的深层递归 inventory 物化完整目标树，而不是使用服务端默认的三层 tree 深度。提交前会持久化运行清单、逐文档 readlist、证据历史并合并已有目标 checkout；逐页账本可依据最终页面谱系校正，但来源覆盖和候选知识必须由本轮真实决策支持，不能用通用跳过记录补齐。因此第二阶段省略旧页面或覆盖旧账本时仍不能删除第一阶段知识与审计历史；旧版本生成的通用 skipped/candidate 占位会被清除。严格校验仍失败时，任务会进入 `salvaged` 并返回 `validation_passed=false` 的可检查阶段性结果；Studio 不会自动开始后续 Memory/人工答案阶段。
 
 页面使用仓库自带、带版本标记的 `examples/compile/ov-compile-skills/llm-wiki/SKILL.md`。当前身份没有用户级 Skill 时会自动安装；发现由旧版知识挖掘页面安装的版本时会升级，使新的目录、引用与人工补证规则对后续任务生效。
 

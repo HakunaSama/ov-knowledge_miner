@@ -148,9 +148,8 @@ def test_platform_intermediates_preserve_prior_evidence_and_append_audit_runs():
     }
     candidates = json.loads(result["_mining/candidate-knowledge.json"])
     assert "prior-candidate" in {item["id"] for item in candidates["candidates"]}
-    assert any(
-        item["source_resources"] == ["viking://resources/current/document"]
-        and item["disposition"] == "rejected"
+    assert not any(
+        item.get("source_resources") == ["viking://resources/current/document"]
         for item in candidates["candidates"]
     )
     history = json.loads(result["_mining/evidence-history.json"])
@@ -158,7 +157,7 @@ def test_platform_intermediates_preserve_prior_evidence_and_append_audit_runs():
     assert history["runs"][-1]["pages"] == ledger["pages"]
 
 
-def test_platform_repairs_malformed_incremental_candidates_and_rebuilds_page_ledgers():
+def test_platform_enriches_explicit_incremental_candidates_and_rebuilds_page_ledgers():
     prior_source = "viking://resources/prior/document"
     current_source = "viking://resources/current/document"
     evidence_uri = "viking://resources/wiki/_mining/evidence-ledger.json"
@@ -213,7 +212,25 @@ def test_platform_repairs_malformed_incremental_candidates_and_rebuilds_page_led
         "_mining/source-coverage.json": _json(
             {"version": "1.0", "stage": "memory_incremental", "sources": []}
         ),
-        "_mining/candidate-knowledge.json": b'{"version":"1.0","candidates":[}',
+        "_mining/candidate-knowledge.json": _json(
+            {
+                "version": "1.0",
+                "stage": "memory_incremental",
+                "candidates": [
+                    {
+                        "id": "current-topic",
+                        "title": "Current topic",
+                        "kind": "concept",
+                        "summary": "The current source supports this topic.",
+                        "source_resources": [current_source],
+                        "disposition": "deferred",
+                        "reason": "Page generation for the current topic is still in progress.",
+                        "meta_id": "topic",
+                        "page_paths": [],
+                    }
+                ],
+            }
+        ),
         "_mining/investigation-report.json": _json(
             {
                 "version": "1.0",
@@ -252,8 +269,9 @@ def test_platform_repairs_malformed_incremental_candidates_and_rebuilds_page_led
                         "kind": "synthesis",
                         "summary": "Prior candidate.",
                         "source_resources": [prior_source],
-                        "disposition": "rejected",
-                        "reason": "No distinct knowledge.",
+                        "disposition": "deferred",
+                        "reason": "The retained prior topic is awaiting page reconciliation.",
+                        "meta_id": "prior-topic",
                         "page_paths": [],
                     }
                 ],

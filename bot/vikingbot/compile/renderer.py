@@ -29,6 +29,7 @@ from openviking.utils.path_safety import (
 from openviking_cli.utils import VikingURI
 from vikingbot.compile.models import CompileLimits, WikiBundleDraft, WikiLanguage
 from vikingbot.compile.okf_config import OKFConfig
+from vikingbot.compile.read_depth import distributed_probe_indexes
 
 _FRONTMATTER_RE = re.compile(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
 _FRONTMATTER_START_RE = re.compile(rb"\A---[ \t]*\r?\n")
@@ -685,6 +686,26 @@ def _string_array(value: Any, *, label: str) -> list[str]:
     return [item.strip() for item in value]
 
 
+_GENERIC_DISPOSITION_REASONS = (
+    "inspected completely but did not produce",
+    "no sufficiently supported distinct knowledge unit",
+    "the candidate was not promoted in this run",
+    "no distinct knowledge",
+    "irrelevant",
+)
+
+
+def _require_specific_reason(value: Any, *, label: str) -> str:
+    """Reject platform-like placeholders that conceal an unfinished analysis."""
+    if not isinstance(value, str) or len(value.strip()) < 20:
+        raise ValueError(f"{label} needs a specific reason of at least 20 characters")
+    reason = value.strip()
+    normalized = " ".join(reason.casefold().split())
+    if any(fragment in normalized for fragment in _GENERIC_DISPOSITION_REASONS):
+        raise ValueError(f"{label} uses a generic reason; cite source-specific evidence instead")
+    return reason
+
+
 def _validate_intermediate_artifacts(
     files: Mapping[str, bytes],
     *,
@@ -957,6 +978,7 @@ def _validate_intermediate_artifacts(
         "inspected": 0,
         **dict.fromkeys(dispositions, 0),
     }
+    current_skip_reasons: dict[str, str] = {}
     for resource, entry in coverage_by_resource.items():
         inspected = entry.get("inspected")
         if inspected is not True:
@@ -969,10 +991,27 @@ def _validate_intermediate_artifacts(
             )
         counts[str(status)] += 1
         reason = entry.get("reason")
-        if status in {"merged", "skipped"} and (not isinstance(reason, str) or not reason.strip()):
-            raise ValueError(
-                f'Compile source coverage source "{resource}" needs a non-empty {status} reason'
-            )
+        if status in {"merged", "skipped"}:
+            if resource in expected_units:
+                specific_reason = _require_specific_reason(
+                    reason,
+                    label=f'Compile source coverage source "{resource}" {status}',
+                )
+            elif not isinstance(reason, str) or not reason.strip():
+                raise ValueError(
+                    f'Compile retained source coverage source "{resource}" needs a reason'
+                )
+            else:
+                specific_reason = reason.strip()
+            if status == "skipped" and resource in expected_units:
+                fingerprint = " ".join(specific_reason.casefold().split())
+                previous = current_skip_reasons.get(fingerprint)
+                if previous is not None:
+                    raise ValueError(
+                        "Compile source coverage cannot reuse the same skipped reason for "
+                        f'multiple uploads: "{previous}" and "{resource}"'
+                    )
+                current_skip_reasons[fingerprint] = resource
 
         unit = expected_units.get(resource)
         leaves = unit.get("leaves", []) if isinstance(unit, Mapping) else []
@@ -987,20 +1026,10 @@ def _validate_intermediate_artifacts(
             # Backward-compatible deterministic fallback for callers that have not yet
             # attached upload-level probe metadata.
             ordered_paths = sorted(materialized_paths)
-            if len(ordered_paths) <= 8:
-                required_paths = set(ordered_paths)
-            else:
-                probe_indexes = [
-                    round(index * (len(ordered_paths) - 1) / 7) for index in range(8)
-                ]
-                middle_index = len(ordered_paths) // 2
-                if middle_index not in probe_indexes:
-                    replace_at = min(
-                        range(1, len(probe_indexes) - 1),
-                        key=lambda index: abs(probe_indexes[index] - middle_index),
-                    )
-                    probe_indexes[replace_at] = middle_index
-                required_paths = {ordered_paths[index] for index in probe_indexes}
+            required_paths = {
+                ordered_paths[index]
+                for index in distributed_probe_indexes(len(ordered_paths))
+            }
         unknown_required = sorted(required_paths - materialized_paths)
         if unknown_required:
             raise ValueError(
@@ -1153,16 +1182,34 @@ def _validate_intermediate_artifacts(
             if not page_paths:
                 raise ValueError(f'Compile promoted candidate "{candidate_id}" needs page_paths')
             promoted_pages.update(page_paths)
+        current_candidate = any(
+            source == resource or bool(relative_uri_path(resource, source))
+            for resource in expected_units
+            for source in (candidate_source.rstrip("/") for candidate_source in source_resources)
+        )
+        if disposition == "promoted":
+            pass
         elif disposition == "merged":
             if (
                 not isinstance(entry.get("merged_into"), str)
                 or not str(entry["merged_into"]).strip()
             ):
                 raise ValueError(f'Compile merged candidate "{candidate_id}" needs merged_into')
-            if not isinstance(entry.get("reason"), str) or not str(entry["reason"]).strip():
-                raise ValueError(f'Compile merged candidate "{candidate_id}" needs reason')
-        elif not isinstance(entry.get("reason"), str) or not str(entry["reason"]).strip():
-            raise ValueError(f'Compile {disposition} candidate "{candidate_id}" needs reason')
+            if current_candidate:
+                _require_specific_reason(
+                    entry.get("reason"), label=f'Compile merged candidate "{candidate_id}"'
+                )
+            elif not isinstance(entry.get("reason"), str) or not str(entry["reason"]).strip():
+                raise ValueError(f'Compile retained merged candidate "{candidate_id}" needs reason')
+        else:
+            if current_candidate:
+                _require_specific_reason(
+                    entry.get("reason"), label=f'Compile {disposition} candidate "{candidate_id}"'
+                )
+            elif not isinstance(entry.get("reason"), str) or not str(entry["reason"]).strip():
+                raise ValueError(
+                    f'Compile retained {disposition} candidate "{candidate_id}" needs reason'
+                )
         candidates_by_id[candidate_id] = entry
     for candidate_id, entry in candidates_by_id.items():
         if entry.get("disposition") == "merged":
@@ -1184,6 +1231,11 @@ def _validate_intermediate_artifacts(
         raise ValueError(
             "Compile candidate knowledge must account for every upload-level source: missing "
             + ", ".join(missing_candidate_sources)
+        )
+    if stage == "documents" and len(expected_units) > 1 and candidate_counts["promoted"] == 0:
+        raise ValueError(
+            "Compile document batches with multiple uploads must promote at least one "
+            "source-grounded candidate; an index-only/all-skipped result requires review"
         )
     exempt_paths = set(config.main_view.exempt_paths) if config.main_view is not None else set()
     missing_candidate_pages = sorted((wiki_paths - exempt_paths) - promoted_pages)

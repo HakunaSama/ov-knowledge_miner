@@ -396,13 +396,21 @@ then decide whether each candidate is `promoted`, `merged`, `deferred`, or `reje
 This is the auditable bridge between reading a document and producing a smaller number of
 meta-knowledge units; do not jump directly from source files to final pages.
 
+Treat this as a live checkpoint: after inspecting each upload-level source, add at least
+one source-specific candidate and persist the artifact in small batches. Do not postpone
+the first candidate write until the whole corpus has been read. The platform never invents
+missing rejected candidates, and final pages cannot reconstruct a skipped candidate stage.
+
 Each candidate has a unique `id`, non-empty `title` and `summary`, `kind` (`entity`,
 `concept`, or `synthesis`), exact `source_resources`, a disposition, and the current
 Compile `stage`. A promoted candidate also has a stable `meta_id` and non-empty
 `page_paths`. A merged candidate has `merged_into` pointing to a promoted candidate plus
-a specific `reason`; deferred and rejected candidates also require a specific reason.
-Every upload-level source must contribute to at least one candidate, and every non-index
-Wiki page must be listed by a promoted candidate. During incremental Compile, retain
+a source-specific `reason` that identifies the observed content and why it was consolidated;
+deferred and rejected candidates require the same level of specificity. Generic reasons
+such as “no distinct knowledge was found” are invalid. Every upload-level source must
+contribute to at least one candidate, and every non-index Wiki page must be listed by a
+promoted candidate. A multi-document initial run must promote at least one candidate; an
+all-skipped/index-only batch is rejected for review. During incremental Compile, retain
 still-valid candidates; the platform merges candidates by id and recomputes the summary.
 
 ```json
@@ -439,8 +447,9 @@ still-valid candidates; the platform merges candidates by id and recomputes the 
 `_mining/source-coverage.json` is the corpus completeness contract. Start from the
 authoritative `_source-units.json` list and inspect **every listed required_read_path** for
 every unit. Documents with at most eight materialized content fragments require all of
-them; larger parsed documents require up to eight deterministic, distributed fragments
-that include the head, exact middle, and tail. Write exactly one entry
+them. Larger parsed documents use adaptive deterministic coverage: 12 probes for 9-24
+fragments, 16 for 25-64, and 24 beyond that, always including the head, exact middle, and
+tail. Write exactly one entry
 for every listed resource. Parser chunks beneath one uploaded document are evidence
 leaves, not separate uploaded sources. During an incremental Compile, retain still-valid
 prior-stage source entries and add or update every source unit supplied for the current
@@ -454,7 +463,8 @@ Each entry uses `status: cited`, `merged`, or `skipped`:
 - `merged` is only for a true duplicate consolidated into another directly cited
   source. Provide a non-empty `reason` and `merged_into` pointing to that cited source.
 - `skipped` is only for inspected material that cannot contribute useful knowledge.
-  Provide a specific non-empty `reason`; never use a generic “irrelevant” reason.
+  Provide a source-specific reason naming the content actually observed and why it cannot
+  support a reusable unit. Generic or copy-pasted reasons across uploads are invalid.
 
 Set `inspected: true` only after reading the source. The summary counts must exactly
 match the entries. Submission is rejected when a source is missing, unread, falsely

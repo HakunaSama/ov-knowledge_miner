@@ -1913,8 +1913,8 @@ def test_source_units_require_distributed_pdf_depth_including_exact_middle():
 
     assert len(units) == 1
     unit = units[0]
-    assert unit["inspection_strategy"] == "distributed_head_middle_tail"
-    assert len(unit["required_read_paths"]) == 8
+    assert unit["inspection_strategy"] == "adaptive_distributed_head_middle_tail"
+    assert len(unit["required_read_paths"]) == 12
     assert unit["required_read_paths"][0].endswith("page-1.md")
     assert unit["required_read_paths"][-1].endswith("page-20.md")
     assert any(path.endswith("page-11.md") for path in unit["required_read_paths"])

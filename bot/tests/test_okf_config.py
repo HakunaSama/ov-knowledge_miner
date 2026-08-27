@@ -466,7 +466,7 @@ def test_source_coverage_rejects_unjustified_skip():
         "skipped": 1,
     }
     artifacts["_mining/source-coverage.json"] = json.dumps(coverage).encode()
-    with pytest.raises(ValueError, match="non-empty skipped reason"):
+    with pytest.raises(ValueError, match="specific reason"):
         finalize_resource_checkout(
             {**artifacts, **pages},
             target_uri="viking://resources/wiki",
@@ -474,6 +474,118 @@ def test_source_coverage_rejects_unjustified_skip():
             okf_config=config,
             source_units=[_source_unit()],
             read_paths={"compile_resources/src_1/document/content.md"},
+        )
+
+
+def test_source_coverage_rejects_legacy_generic_skip_reason():
+    config = parse_okf_config(DEFAULT_CONFIG)
+    pages = _unit_pages(
+        topic="people",
+        meta_id="alice",
+        what_name="Alice",
+        what_page=_page(page_type="entity", title="Alice", body="Body.", meta_id="alice"),
+    )
+    artifacts = _artifacts(list(pages))
+    coverage = json.loads(artifacts["_mining/source-coverage.json"])
+    coverage["sources"][0] = {
+        "resource": "viking://resources/source/document",
+        "status": "skipped",
+        "inspected": True,
+        "reason": "Inspected completely but did not produce a distinct knowledge page.",
+    }
+    coverage["summary"] = {
+        "uploaded": 1,
+        "inspected": 1,
+        "cited": 0,
+        "merged": 0,
+        "skipped": 1,
+    }
+    artifacts["_mining/source-coverage.json"] = json.dumps(coverage).encode()
+
+    with pytest.raises(ValueError, match="uses a generic reason"):
+        finalize_resource_checkout(
+            {**artifacts, **pages},
+            target_uri="viking://resources/wiki",
+            source_roots={"src_1": "viking://resources/source"},
+            okf_config=config,
+            source_units=[_source_unit()],
+            read_paths={"compile_resources/src_1/document/content.md"},
+        )
+
+
+def test_multi_document_batch_rejects_all_skipped_index_only_outcome():
+    config = parse_okf_config(DEFAULT_CONFIG)
+    pages = _unit_pages(
+        topic="people",
+        meta_id="alice",
+        what_name="Alice",
+        what_page=_page(page_type="entity", title="Alice", body="Body.", meta_id="alice"),
+    )
+    artifacts = _artifacts(list(pages))
+    resources = [
+        "viking://resources/source/document",
+        "viking://resources/source/document-2",
+    ]
+    coverage = {
+        "version": "1.0",
+        "stage": "documents",
+        "sources": [
+            {
+                "resource": resources[0],
+                "status": "skipped",
+                "inspected": True,
+                "reason": "The file only contains empty table-layout fixtures without domain facts.",
+            },
+            {
+                "resource": resources[1],
+                "status": "skipped",
+                "inspected": True,
+                "reason": "The workbook contains random parser-test values with no defined semantics.",
+            },
+        ],
+        "summary": {"uploaded": 2, "inspected": 2, "cited": 0, "merged": 0, "skipped": 2},
+    }
+    candidates = {
+        "version": "1.0",
+        "stage": "documents",
+        "candidates": [
+            {
+                "id": f"rejected-{index}",
+                "title": f"Rejected fixture {index}",
+                "kind": "synthesis",
+                "summary": "A source-specific low-information fixture decision.",
+                "source_resources": [resource],
+                "disposition": "rejected",
+                "reason": coverage["sources"][index - 1]["reason"],
+                "page_paths": [],
+            }
+            for index, resource in enumerate(resources, start=1)
+        ],
+        "summary": {"total": 2, "promoted": 0, "merged": 0, "deferred": 0, "rejected": 2},
+    }
+    artifacts["_mining/source-coverage.json"] = json.dumps(coverage).encode()
+    artifacts["_mining/candidate-knowledge.json"] = json.dumps(candidates).encode()
+    source_units = []
+    read_paths = set()
+    for index, resource in enumerate(resources, start=1):
+        path = f"compile_resources/src_1/document-{index}/content.md"
+        source_units.append(
+            {
+                "resource": resource,
+                "required_read_paths": [path],
+                "leaves": [{"workspace_path": path, "status": "materialized"}],
+            }
+        )
+        read_paths.add(path)
+
+    with pytest.raises(ValueError, match="must promote at least one"):
+        finalize_resource_checkout(
+            {**artifacts, **pages},
+            target_uri="viking://resources/wiki",
+            source_roots={"src_1": "viking://resources/source"},
+            okf_config=config,
+            source_units=source_units,
+            read_paths=read_paths,
         )
 
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from hashlib import sha256
 from typing import Any
 
 import yaml
@@ -16,6 +15,9 @@ from vikingbot.compile.okf_config import OKFConfig
 
 _FRONTMATTER_RE = re.compile(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
 _RESERVED_MARKDOWN = frozenset({".abstract.md", ".overview.md"})
+_LEGACY_PLACEHOLDER_SKIP = (
+    "inspected completely but did not produce a distinct knowledge page."
+)
 
 
 def _load(files: Mapping[str, bytes], path: str) -> dict[str, Any]:
@@ -176,7 +178,6 @@ def _merge_source_coverage(
     current: Mapping[str, Any],
     *,
     stage: str,
-    source_units: list[dict[str, Any]] | None = None,
     ledger: Mapping[str, Any] | None = None,
     source_roots: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -190,23 +191,17 @@ def _merge_source_coverage(
                 continue
             entry = dict(raw)
             resource = str(entry["resource"]).strip().rstrip("/")
+            if (
+                entry.get("status") == "skipped"
+                and str(entry.get("reason") or "").strip().casefold()
+                == _LEGACY_PLACEHOLDER_SKIP
+            ):
+                # Older runs fabricated this record for every uncovered source.
+                # Do not preserve it as if it were an authored semantic decision.
+                continue
             if resource:
                 entry["resource"] = resource
                 by_resource[resource] = entry
-    if source_units is not None:
-        for unit in source_units:
-            resource = str(unit.get("resource") or "").strip().rstrip("/")
-            if not resource:
-                continue
-            by_resource.setdefault(
-                resource,
-                {
-                    "resource": resource,
-                    "inspected": True,
-                    "status": "skipped",
-                    "reason": "Inspected completely but did not produce a distinct knowledge page.",
-                },
-            )
     if ledger is not None:
         ledger_pages = ledger.get("pages")
         known_roots = sorted(
@@ -286,7 +281,6 @@ def _merge_candidates(
     *,
     stage: str,
     pages: Mapping[str, Mapping[str, Any]] | None = None,
-    source_units: list[dict[str, Any]] | None = None,
     exempt_paths: set[str] | None = None,
 ) -> dict[str, Any]:
     by_id: dict[str, dict[str, Any]] = {}
@@ -299,6 +293,9 @@ def _merge_candidates(
                 continue
             entry = dict(raw)
             candidate_id = str(entry["id"]).strip()
+            if candidate_id.startswith("source-without-candidate-"):
+                # Remove legacy platform-generated rejection placeholders.
+                continue
             if candidate_id:
                 entry["id"] = candidate_id
                 entry.setdefault("stage", stage)
@@ -319,7 +316,11 @@ def _merge_candidates(
                 candidate_for_meta[meta_id] = candidate_id
 
         for meta_id, page_paths in grouped.items():
-            candidate_id = candidate_for_meta.get(meta_id, meta_id)
+            candidate_id = candidate_for_meta.get(meta_id)
+            if candidate_id is None:
+                # Candidate creation is an explicit mining stage. Reconstructing one
+                # from final pages would hide that the agent skipped that stage.
+                continue
             metadata = knowledge_pages[sorted(page_paths)[0]]
             entry = by_id.get(candidate_id, {"id": candidate_id})
             page_sources = list(
@@ -364,30 +365,6 @@ def _merge_candidates(
             ]
             if entry.get("disposition") == "promoted" and not entry["page_paths"]:
                 del by_id[candidate_id]
-
-    if source_units is not None:
-        covered_sources = {
-            source
-            for entry in by_id.values()
-            for source in _strings(entry.get("source_resources"))
-        }
-        for unit in source_units:
-            resource = str(unit.get("resource") or "").strip().rstrip("/")
-            if not resource or any(_is_within(resource, source) for source in covered_sources):
-                continue
-            digest = sha256(resource.encode("utf-8")).hexdigest()[:12]
-            candidate_id = f"source-without-candidate-{digest}"
-            by_id[candidate_id] = {
-                "id": candidate_id,
-                "title": str(unit.get("title") or resource.rsplit("/", 1)[-1]),
-                "kind": "synthesis",
-                "summary": "The source was inspected but did not support a distinct knowledge unit.",
-                "source_resources": [resource],
-                "disposition": "rejected",
-                "reason": "No sufficiently supported distinct knowledge unit was found.",
-                "page_paths": [],
-                "stage": stage,
-            }
 
     for candidate_id, entry in by_id.items():
         entry["id"] = candidate_id
@@ -559,7 +536,6 @@ def prepare_persistent_intermediates(
         _load(baseline, paths["source_coverage"]),
         _load(result, paths["source_coverage"]),
         stage=stage,
-        source_units=source_units,
         ledger=ledger,
         source_roots=(list(source_roots.values()) if source_roots is not None else None),
     )
@@ -570,7 +546,6 @@ def prepare_persistent_intermediates(
         _load(result, paths["candidate_knowledge"]),
         stage=stage,
         pages=canonical_pages,
-        source_units=source_units,
         exempt_paths=(set(config.main_view.exempt_paths) if config.main_view is not None else set()),
     )
     result[paths["candidate_knowledge"]] = _dump(candidates)
