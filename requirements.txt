@@ -4,7 +4,7 @@ agent-sandbox==0.0.26
     # via openviking
 aiofiles==24.1.0
     # via gradio
-aiohappyeyeballs==2.6.1
+aiohappyeyeballs==2.7.1
     # via aiohttp
 aiohttp==3.13.3
     # via
