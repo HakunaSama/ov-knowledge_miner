@@ -1,0 +1,105 @@
+# Studio 知识挖掘
+
+Web Studio 的“知识挖掘”页面把文件导入、`llm-wiki` Skill 和 VikingBot Compile 串成一个可视化工作流。用户可以一次选择整个资源文件夹，填写本次挖掘目标，查看长程任务进度，并在最终完成前处理 VikingBot 发现的证据冲突或缺口。
+
+## 前置条件
+
+知识挖掘依赖 VikingBot。启动本地服务时需要启用 Bot：
+
+```bash
+openviking-server --with-bot
+```
+
+然后打开 `http://localhost:1933/studio/knowledge-mining`。远程服务还需要在 Studio 的“连接设置”中配置 API Key 和正确的用户身份。
+
+服务必须已经配置可用的 VLM、Embedding 和 VikingBot LLM。可以先运行以下命令检查基础配置：
+
+```bash
+openviking-server doctor
+curl http://localhost:1933/bot/v1/health
+```
+
+## 使用流程
+
+1. 在“知识挖掘”页面选择文件，或一次选择包含 `documents/` 与 `team-memory/` 的完整资源文件夹。页面会递归分类子目录。支持 `.pdf`、`.md`、`.markdown`、`.doc`、`.docx`、`.xls` 和 `.xlsx`；文件总数不限，单文件上限 10 MiB。
+2. 可选上传团队 Memory 文件（`.md`、`.txt`、`.json`、`.yaml`、`.yml`）。它们会进入独立来源目录，不会混入首轮文档 Compile。
+3. “OKF 格式配置”默认使用 `llm-wiki/OKF_CONFIG.yaml`；也可以选择自定义 `.yaml`/`.yml`，改写必需 frontmatter、目录类型映射、派生视图和 WikiLink 规则。
+4. 在“挖掘目标”中说明问题、受众、时间范围、输出语言和侧重点。这段内容会作为 Compile 的 `reason`。
+5. 点击“开始知识挖掘”。页面先用文档生成主知识库；如果上传了团队 Memory，文档任务成功后会自动对同一目标启动第二个增量 Compile。
+6. 任务卡分别显示文档和 Memory 的真实 `task_id`、`status` 和 `stage`。当前运行中的 Compile 可以协作式取消。
+7. 主视图以可展开目录树展示真实知识文件。一个元知识有独立目录，由共享同一 `meta_id` 的 what、why、how 三页构成；根 `index.md` 只是导航，不计入知识文件。旧版结果仍会按 `meta_id` 显示兼容目录。
+8. 主视图、知识域和使用场景始终展示同一批文件且总数一致。“知识域”表示整个元知识的一个主要主题归属，“使用场景”表示它的一个主要用途；两者只重组整组三页，不复制或拆散文件。“中间产物”用于审计证据链，“人工调查”是最终完成前的补证门禁。
+9. “知识点阵”直接复用 `examples/compile/graph-show/knowledge-graph/knowledge_graph.py` 中的官方 KG Explorer HTML/CSS/D3 渲染器；Studio 只负责把元知识、what/why/how、WikiLink、跨知识引用和证据链适配为官方 `nodes` / `links` 数据。保留类型筛选、关系图例、检索、邻居聚焦、平移缩放和实体检查器。
+10. “来源覆盖”逐项展示已上传、已检查、已引用、已合并和已跳过的材料及原因。缺失来源、未实际读取、无理由跳过或引用与证据账本不一致都会拒绝提交，让 VikingBot 继续处理。
+11. 当报告发现来源冲突或证据缺口时，Studio 将整次工作流切换到“等待人工知识补证”，立即展示阶段性知识与问卷，但不会宣布挖掘完成。提交答案后，答案作为新的 `human-answer` 来源触发同目标增量 Compile；只有问题处理完成后才进入“已完成”。
+
+## 数据与执行模型
+
+每次运行会创建一个隔离目录：
+
+```text
+viking://resources/knowledge-mining/<batch-id>/
+├── document-sources/   # 上传并解析后的文档来源
+│   └── OKF_CONFIG.yaml  # 本次 Compile 使用的外部 OKF 契约
+├── team-memory/        # 可选的团队 Memory 增量来源
+└── wiki/                # llm-wiki 编译产物
+    ├── index.md
+    ├── knowledge/<topic>/<meta_id>/what/*.md
+    ├── knowledge/<topic>/<meta_id>/why/*.md
+    ├── knowledge/<topic>/<meta_id>/how/*.md
+    └── _mining/
+        ├── run-manifest.json
+        ├── evidence-ledger.json
+        ├── investigation-report.json
+        ├── questionnaire.json
+        ├── source-coverage.json
+        ├── candidate-knowledge.json
+        ├── readlist.json
+        └── evidence-history.json
+```
+
+页面使用 OpenViking 已有的临时上传和 `add_resource` 接口解析文件，并等待语义处理完成。随后它调用：
+
+```http
+POST /bot/v1/compile
+```
+
+首轮请求中的 `from` 指向 `document-sources`，`to` 指向 `wiki`。如果存在团队 Memory，第二轮请求严格使用 `from=team-memory`、`to=wiki`；VikingBot 会先读取现有目标，再把新增证据合并到规范页面中。增量提交允许保留首轮页面已有的文档出处，同时要求新 Memory 出处仍来自第二轮 supplied source。
+
+`skill` 指向当前用户或共享空间中的 `llm-wiki` Skill，`okf_config` 指向本批次写入的 `OKF_CONFIG.yaml`。VikingBot 将配置物化为 `compile_config/OKF_CONFIG.yaml` 并优先执行；提交器会确定性校验 frontmatter、元知识独立目录、What/Why/How 物理路径、原始来源与中间证据的双重谱系、跨库引用、派生视图标签、WikiLink，以及八类中间产物的结构和一致性，而不是只依赖模型遵守提示词。知识阅读、归纳和页面写作仍在 VikingBot 的任务独立 AgentLoop 中执行。
+
+## 主视图与派生视图
+
+主视图永远对应 `wiki/` 中的实际文件，也是唯一事实源。除 `index.md` 外，默认契约要求页面位于 `knowledge/<topic>/<meta_id>/what|why|how/`。每个元知识必须有且仅有一个 what、一个 why 和一个 how 页面，三页共享稳定的 `meta_id`，且物理目录名必须与它一致。提交器会拒绝缺页、目录不匹配、同一分类有多页或三页视图标签不一致的结果。
+
+派生视图不会复制或移动页面，而是读取每个元知识三页一致的 namespaced tags。`index.md` 不进入派生视图；每个默认视图使用 `selection: exactly_one`，因此主视图、知识域和使用场景中的知识文件集合及总数严格一致。默认契约内置：
+
+- `domain`：元知识的主要主题归属——人员与组织、产品与系统、流程与方法、决策与洞察；
+- `usage`：新人入门、规划与决策、执行与协作、排障与风险、参考查询。
+
+自定义 OKF 可以在 `views` 中定义其他分组。每个视图声明 `tag_prefix`、`selection` 和 `groups`；提交器要求每页（包括 `index.md`）至少选择一个有效 group tag，`selection: exactly_one` 时必须恰好一个。
+
+## 谱系、跨库引用与人工确认
+
+每个知识页的 `sources` 必须同时包含至少一个输入来源（`original`、`team-memory` 或 `human-answer`）和一个配置声明的 `intermediate` 来源。`_mining/evidence-ledger.json` 还必须逐页列出输入 URI、中间产物 URI 和关键声明，因此可以从最终知识回溯到上传文档及处理过程。
+
+`_mining/source-coverage.json` 以用户上传级文档为单位，而不是把解析后的 chunk 当成独立来源。每个来源必须标记为 `cited`、`merged` 或 `skipped`；小文档的全部片段、大文档确定性的首/中/尾片段都必须出现在平台生成的 `readlist.json` 中，`cited` 必须指向证据账本中的有效页面，`merged` 必须指向另一个直接引用来源，`skipped` 必须给出具体原因。`candidate-knowledge.json` 解释候选为何晋升、合并、延后或拒绝；增量 Compile 会合并旧证据并追加 `evidence-history.json` 快照。
+
+同库页面使用 `[[WikiLink]]`。跨知识库关系是正文位置级的多对多关系：同一页面的不同段落可以引用不同知识目标，同一目标也可以被多个页面引用。每个 `knowledge_links` 条目除目标 `viking://` URI、标题、关系和方向外，还必须包含正文中的原文 `context`，并在该正文位置放置可读 Markdown 链接；提交器会确定性校验两者。只有目标库也保存了镜像关系时才使用 `bidirectional`；否则保存为 `outgoing`，并把缺少反向关系记录为证据缺口。
+
+调查报告的状态为 `clear` 或 `needs_human_input`。存在冲突/缺口时，每个 issue 必须由至少一个问卷问题覆盖，否则提交会失败。`needs_human_input` 会让 Studio 暂停在补证门禁，而不是显示为最终完成。人工答案不是直接修改页面：它先被保存为新来源，再通过同一 `to` 目录的增量 Compile 更新主视图、证据账本和报告。
+
+平台会以受节点总数限制的深层递归 inventory 物化完整目标树，而不是使用服务端默认的三层 tree 深度。提交前再确定性地补齐并持久化运行清单、逐文档 readlist、证据历史、逐页账本、来源覆盖和候选知识，并把已有目标 checkout 与本轮 checkout 合并。因此第二阶段即使省略旧页面、覆盖旧账本或写出损坏的候选 JSON，也不能删除第一阶段知识或覆盖审计历史；若旧 coverage 已损坏，平台会从保留页面的来源谱系恢复历史来源。严格校验仍失败时，任务会进入 `salvaged` 并返回 `validation_passed=false` 的可检查阶段性结果；Studio 不会自动开始后续 Memory/人工答案阶段。
+
+页面使用仓库自带、带版本标记的 `examples/compile/ov-compile-skills/llm-wiki/SKILL.md`。当前身份没有用户级 Skill 时会自动安装；发现由旧版知识挖掘页面安装的版本时会升级，使新的目录、引用与人工补证规则对后续任务生效。
+
+## 常见问题
+
+- **提示无法连接 VikingBot**：确认服务使用 `--with-bot` 启动，并检查 `/bot/v1/health`。
+- **文件解析失败**：在任务中心查看对应的 `add_resource` 任务，并检查 VLM/Embedding 配置和文件大小。
+- **Compile 在 `loading_skill` 失败**：在“技能”页面确认 `llm-wiki` 可见，且 `SKILL.md` 格式有效。
+- **Compile 在 `agent` 阶段失败**：检查 VikingBot LLM 的凭证、额度、上下文窗口和服务日志。
+- **任务显示“部分结果”**：任务进入了 `salvaged`；这些页面和中间产物可用于排查，但没有通过完整契约校验，也不会触发下一轮自动增量。查看任务 warning 和 `_mining/` 产物后重新运行。
+- **结果页暂时读不到**：Compile 的 `writing`/`refreshing` 阶段尚未结束；等待任务进入 `completed` 后再读取目标目录。
+
+相关资料：[上下文编译概览](./01-overview.md) · [LLM Wiki 示例](./02-llm-wiki.md) · [VikingBot API](../api/24-vikingbot.md)

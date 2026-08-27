@@ -91,7 +91,7 @@ const resources = {
       'Upload a local file to the server. File type is auto-detected via magic bytes.',
     dropzone: {
       title: 'Drag & drop a file here, or click to select',
-      hint: 'Up to 10 files at a time.',
+      hint: 'Select multiple files at once; the file count is unlimited.',
       supportedFormats:
         'Supports PDF, Word, PPTX, Excel, Markdown, code files, images, and more',
     },
@@ -130,7 +130,6 @@ const resources = {
     success: 'Resource added successfully',
     fileBlocked: '"{{name}}" is not a supported file type.',
     fileTooLarge: '"{{name}}" exceeds the {{size}} file size limit.',
-    tooManyFiles: 'Only the first {{count}} files were kept.',
     error: 'Request Failed',
     dirPicker: {
       title: 'Select Directory',

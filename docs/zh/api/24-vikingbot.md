@@ -141,6 +141,7 @@ data: {"event":"response","data":{"content":"当前知识库包含……","respo
 | `from` | string[] | 是 | - | 一个或多个来源目录 |
 | `to` | string | 是 | - | 目标 Resource 或 Memory 目录，或受支持的 Skill namespace |
 | `skill` | string | 是 | - | Skill 目录或其 `SKILL.md` URI |
+| `okf_config` | string | 否 | - | 外部 OKF YAML 配置文件 URI；Resource Wiki 提交会据此校验 frontmatter、目录类型与 WikiLink |
 | `reason` | string | 否 | Skill 驱动的默认值 | 本次 Compile 的补充指令 |
 | `runtime_timeout_seconds` | number | 否 | 3600 | 正数且有限，且不得超过服务端最大运行时限（默认 3600 秒） |
 
@@ -158,6 +159,7 @@ curl -X POST http://localhost:1933/bot/v1/compile \
     "from": ["viking://resources/research"],
     "to": "viking://resources/research-wiki",
     "skill": "viking://user/default/skills/research-compiler",
+    "okf_config": "viking://resources/research/OKF_CONFIG.yaml",
     "reason": "追踪历史进展，并保留支撑证据。"
   }'
 ```
@@ -169,11 +171,14 @@ ov compile \
   --from viking://resources/research \
   --to viking://resources/research-wiki \
   --skill viking://user/default/skills/research-compiler \
+  --okf-config viking://resources/research/OKF_CONFIG.yaml \
   --reason "追踪历史进展，并保留支撑证据。" \
   --wait
 ```
 
-`--wait` 会轮询状态接口，直到任务进入终态。`--timeout` 只限制本地等待时间，不会取消服务端任务；`--runtime-timeout` 用于设置本次任务的 `runtime_timeout_seconds`，只能缩短服务端拥有的最大运行时限，超限请求会以 `429 RESOURCE_EXHAUSTED` 拒绝。在 Agent 执行期间达到该时限，或达到配置的 AgentLoop 迭代上限（`bot.agents.max_tool_iterations`，默认 50）时，会在独立的短 grace period 内尝试保存符合条件的 Resource 阶段性产物；没有可保存产物时任务失败，非 Resource 目标以及后续阶段超时不使用该 fallback。
+`--okf-config` 指向 OpenViking 中可读的 YAML 文件。VikingBot 会将其物化为任务工作区的 `compile_config/OKF_CONFIG.yaml`，并把它作为控制数据而非知识来源；外部契约优先于 Skill 中冲突的格式规则。未提供时保持现有 Compile 行为。
+
+`--wait` 会轮询状态接口，直到任务进入终态。`--timeout` 只限制本地等待时间，不会取消服务端任务；`--runtime-timeout` 用于设置本次任务的 `runtime_timeout_seconds`，只能缩短服务端拥有的最大运行时限，超限请求会以 `429 RESOURCE_EXHAUSTED` 拒绝。在 Agent 执行期间达到该时限，或达到 Compile 自己的工具轮次上限（当前为 60）时，会在独立的短 grace period 内尝试保存符合条件的 Resource 阶段性产物；没有可保存产物时任务失败，非 Resource 目标以及后续阶段超时不使用该 fallback。连续三次以完全相同的错误提交目标目录时会提前进入阶段性保存，避免把剩余轮次浪费在不可收敛的重复重试上。
 
 `direct` backend 会以 Bot 宿主机权限执行 Compile 的 `exec` 命令。`bot.sandbox.backends.direct.allow_compile_exec` 默认为 `true`：Compile 工具链开源，`exec` 默认直接以用户 shell 权限运行，普通 Wiki 和产物文件整理仍通过文件工具运行。声明了 `requires.bins` 或 `requires.env` 的 Skill 仍会先探测命令；将该选项设为 `false` 时 Compile 不会暴露 `exec`，此类 Skill 会在执行任何命令探测前以 `SKILL_CAPABILITY_UNAVAILABLE` 失败。依赖 CLI 的 Skill 推荐使用具备文件系统和网络策略的隔离 backend。超过 admission 上限时返回 `429 RESOURCE_EXHAUSTED`。
 
@@ -234,11 +239,57 @@ ov task status cmp_01abc
       "unchanged": [],
       "page_count": 1,
       "link_count": 0,
-      "warnings": []
+      "validation_passed": true,
+      "warnings": [],
+      "main_view": {
+        "single_source_of_truth": true,
+        "root_path": "knowledge",
+        "leaf_categories": ["what", "why", "how"],
+        "exempt_paths": ["index.md"]
+      },
+      "intermediate_artifacts": [
+        {
+          "kind": "evidence_ledger",
+          "path": "_mining/evidence-ledger.json",
+          "uri": "viking://resources/research-wiki/_mining/evidence-ledger.json"
+        }
+      ],
+      "investigation_status": "clear",
+      "question_count": 0,
+      "source_coverage": {
+        "uploaded": 30,
+        "inspected": 30,
+        "cited": 24,
+        "merged": 4,
+        "skipped": 2,
+        "artifact_uri": "viking://resources/research-wiki/_mining/source-coverage.json"
+      },
+      "views": [
+        {
+          "id": "domain",
+          "title": "知识域 · Domain",
+          "description": "按知识域组织页面",
+          "selection": "one_or_more",
+          "groups": [
+            {
+              "id": "products-and-systems",
+              "title": "产品与系统",
+              "description": "产品、服务和技术系统",
+              "tag": "view/domain/products-and-systems"
+            }
+          ]
+        }
+      ]
     }
   }
 }
 ```
+
+`main_view` 描述唯一事实源的物理目录约束；未配置时为 `null`。`views` 来自外部 OKF 配置；未配置派生视图时为空数组。客户端可按每个 group 的精确 `tag` 读取页面 frontmatter 并重组导航，实际文件结构仍由 `to` 目录表示。
+
+`intermediate_artifacts` 给出经过校验的运行清单、证据账本、调查报告、问卷、来源覆盖、候选知识、持久阅读账本和证据历史 URI。`source_coverage` 汇总通过真实 readlist 与证据门禁后的上传级来源已检查、已引用、已合并和已跳过数量。`investigation_status=needs_human_input` 表示存在未解决的冲突或证据缺口，`question_count` 给出问卷问题数。使用人工答案发起后续 Compile 时，应让 `from` 精确指向答案资源并保持同一个 `to`，以保留可验证的增量谱系。
+
+`stage=salvaged` 表示保留了阶段性工作区快照，而不是严格校验成功。此时 `result.validation_passed=false`；结果仍会返回已知 `main_view`、`views` 和可读取的 `intermediate_artifacts`，但客户端必须显示为“部分结果”，且不得自动以它作为下一轮 Memory 或人工答案增量 Compile 的成功基线。只有 `stage=completed` 且 `validation_passed=true` 才是可继续自动增量的最终结果。
 
 ### compile_cancel()
 

@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0
 """Bootstrap script for OpenViking HTTP Server."""
 
-import asyncio
 import argparse
+import asyncio
 import json
 import os
 import shutil
@@ -225,6 +225,7 @@ def main():
     # 🔍 Authentication health check - CRITICAL: will exit if check fails
     try:
         from openviking.server.auth.health_check import run_startup_health_check_or_exit
+
         asyncio.run(run_startup_health_check_or_exit(config))
     except Exception as e:
         # Don't fail startup if health check itself has issues
@@ -364,21 +365,23 @@ def _start_vikingbot_gateway(
     """Start vikingbot gateway as a subprocess."""
     print("Starting vikingbot gateway...")
 
-    # Check if vikingbot is available
+    # Prefer the module from the current interpreter.  A different Python
+    # installation may expose a stale ``vikingbot`` executable on PATH; using
+    # it would split OpenViking and VikingBot across environments even though
+    # the child is expected to inherit this server's runtime and dependencies.
     vikingbot_cmd = None
-    if shutil.which("vikingbot"):
+    python_cmd = sys.executable
+    try:
+        result = subprocess.run(
+            [python_cmd, "-m", "vikingbot", "--help"], capture_output=True, timeout=15
+        )
+        if result.returncode == 0:
+            vikingbot_cmd = [python_cmd, "-m", "vikingbot", "gateway"]
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    if vikingbot_cmd is None and shutil.which("vikingbot"):
         vikingbot_cmd = ["vikingbot", "gateway"]
-    else:
-        # Try python -m vikingbot
-        python_cmd = sys.executable
-        try:
-            result = subprocess.run(
-                [python_cmd, "-m", "vikingbot", "--help"], capture_output=True, timeout=15
-            )
-            if result.returncode == 0:
-                vikingbot_cmd = [python_cmd, "-m", "vikingbot", "gateway"]
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
 
     if vikingbot_cmd is None:
         print("Warning: vikingbot not found. Please install vikingbot first.")

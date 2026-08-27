@@ -87,7 +87,7 @@ const resources = {
     description: '上传本地文件到服务器，文件类型通过 magic bytes 自动检测。',
     dropzone: {
       title: '拖拽文件到此处，或点击选择文件',
-      hint: '每次最多上传 10 个文件。',
+      hint: '可一次选择多个文件，文件数量不限。',
       supportedFormats:
         '支持 PDF、Word、PPTX、Excel、Markdown、代码文件、图片等',
     },
@@ -122,7 +122,6 @@ const resources = {
     success: '资源添加成功',
     fileBlocked: '"{{name}}" 不是支持的文件类型。',
     fileTooLarge: '"{{name}}" 超过 {{size}} 文件大小限制。',
-    tooManyFiles: '仅保留前 {{count}} 个文件，其余已忽略。',
     error: '请求失败',
     dirPicker: {
       title: '选择目录',

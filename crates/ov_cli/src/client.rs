@@ -141,6 +141,16 @@ pub struct CompileResult {
     pub link_count: usize,
     #[serde(default)]
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub views: Vec<Value>,
+    #[serde(default)]
+    pub main_view: Option<Value>,
+    #[serde(default)]
+    pub intermediate_artifacts: Vec<Value>,
+    #[serde(default)]
+    pub investigation_status: Option<String>,
+    #[serde(default)]
+    pub question_count: usize,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -162,6 +172,8 @@ struct CompileCreateRequest<'a> {
     from_uris: &'a [String],
     to: &'a str,
     skill: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    okf_config: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -357,6 +369,7 @@ impl HttpClient {
         from_uris: &[String],
         to: &str,
         skill: &str,
+        okf_config: Option<&str>,
         reason: Option<&str>,
         runtime_timeout_seconds: Option<f64>,
     ) -> Result<CompileAccepted> {
@@ -364,6 +377,7 @@ impl HttpClient {
             from_uris,
             to,
             skill,
+            okf_config,
             reason,
             runtime_timeout_seconds,
         };
@@ -1843,7 +1857,7 @@ impl HttpClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{BaseClient, HttpClient, TimeoutConfig};
+    use super::{BaseClient, CompileResult, HttpClient, TimeoutConfig};
     use crate::base_client::api_error_from_envelope;
     use reqwest::StatusCode;
     use serde_json::{Map, json};
@@ -2270,6 +2284,9 @@ mod tests {
             let read = stream.read(&mut buffer).await.expect("request should read");
             let request = String::from_utf8_lossy(&buffer[..read]);
             assert!(request.contains(r#""runtime_timeout_seconds":86400.0"#));
+            assert!(
+                request.contains(r#""okf_config":"viking://resources/source/OKF_CONFIG.yaml""#)
+            );
             let body = r#"{"status":"ok","result":{"task_id":"cmp_1","status":"accepted","to":"viking://resources/wiki"}}"#;
             let response = format!(
                 "HTTP/1.1 202 Accepted\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
@@ -2296,12 +2313,44 @@ mod tests {
                 &["viking://resources/source".into()],
                 "viking://resources/wiki",
                 "viking://agent/skills/wiki",
+                Some("viking://resources/source/OKF_CONFIG.yaml"),
                 None,
                 Some(86_400.0),
             )
             .await
             .expect("202 response body should deserialize");
         assert_eq!(accepted.task_id, "cmp_1");
+    }
+
+    #[test]
+    fn compile_result_preserves_okf_views_intermediates_and_investigation() {
+        let result: CompileResult = serde_json::from_value(json!({
+            "from": ["viking://resources/source"],
+            "to": "viking://resources/wiki",
+            "skill": "viking://agent/skills/llm-wiki",
+            "okf_version": "1.0",
+            "created": [],
+            "updated": [],
+            "unchanged": [],
+            "page_count": 2,
+            "link_count": 1,
+            "warnings": [],
+            "views": [{"id": "domain"}],
+            "main_view": {"root_path": "knowledge"},
+            "intermediate_artifacts": [{"kind": "questionnaire"}],
+            "investigation_status": "needs_human_input",
+            "question_count": 3
+        }))
+        .expect("Compile result should deserialize");
+
+        assert_eq!(result.views.len(), 1);
+        assert_eq!(result.main_view.as_ref().unwrap()["root_path"], "knowledge");
+        assert_eq!(result.intermediate_artifacts.len(), 1);
+        assert_eq!(
+            result.investigation_status.as_deref(),
+            Some("needs_human_input")
+        );
+        assert_eq!(result.question_count, 3);
     }
 
     #[tokio::test]

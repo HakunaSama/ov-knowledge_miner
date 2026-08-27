@@ -1,0 +1,152 @@
+version: "1.0"
+
+frontmatter:
+  required:
+    - type
+    - title
+    - description
+    - tags
+    - status
+    - sources
+    - generated
+    - knowledge_links
+  allowed_types:
+    - entity
+    - concept
+    - synthesis
+  defaults:
+    status: stable
+  sources:
+    required_fields:
+      - resource
+      - title
+      - author
+      - kind
+      - stage
+    allowed_kinds:
+      - original
+      - team-memory
+      - human-answer
+      - intermediate
+    require_input: true
+    require_intermediate: true
+  generated:
+    required_fields:
+      - by
+      - at
+    by_template: "{skill}/{model}"
+
+# Rules are applied from top to bottom; the last matching rule wins.
+path_types:
+  - pattern: "index.md"
+    type: synthesis
+  - pattern: "knowledge/**/what/*.md"
+    type: entity
+  - pattern: "knowledge/**/why/*.md"
+    type: synthesis
+  - pattern: "knowledge/**/how/*.md"
+    type: concept
+
+# The physical tree is the canonical write model. Every non-index page ends in a
+# topic/<meta_id>/<what|why|how>/page.md path; tag views never copy or move pages.
+main_view:
+  single_source_of_truth: true
+  root_path: knowledge
+  leaf_categories:
+    - what
+    - why
+    - how
+  exempt_paths:
+    - index.md
+  # One meta-knowledge unit is three pages sharing one explicit frontmatter meta_id.
+  meta_knowledge:
+    group_by: frontmatter_field
+    id_field: meta_id
+    require_complete: true
+    shared_view_tags: true
+    require_id_directory: true
+  # index.md is navigation, not another knowledge file in derived views.
+  derived_views_include_exempt: false
+
+# Viewable mining artifacts are committed beside the canonical pages. The evidence
+# ledger connects every page to both its input evidence and this intermediate chain.
+intermediates:
+  required: true
+  root_path: _mining
+  run_manifest: run-manifest.json
+  evidence_ledger: evidence-ledger.json
+  investigation_report: investigation-report.json
+  questionnaire: questionnaire.json
+  source_coverage: source-coverage.json
+  candidate_knowledge: candidate-knowledge.json
+  # These two artifacts are generated and merged by Compile itself so an Agent
+  # cannot accidentally erase reading or evidence history in an incremental run.
+  readlist: readlist.json
+  evidence_history: evidence-history.json
+
+# Cross-knowledge-base references are explicit OpenViking URIs. A bidirectional
+# relation must be mirrored in the counterpart checkout when that checkout is writable.
+cross_knowledge:
+  frontmatter_field: knowledge_links
+  context_field: context
+  require_body_link: true
+  allowed_relations:
+    - related
+    - depends-on
+    - derived-from
+    - supersedes
+
+# Optional derived views. The main view always follows the physical path tree above;
+# these views reorganize the same pages by namespaced OKF frontmatter tags.
+views:
+  - id: domain
+    title: "知识域 · Domain"
+    description: "按页面描述的人、系统、方法或决策结论重新组织知识。"
+    tag_prefix: "view/domain/"
+    selection: exactly_one
+    groups:
+      - id: people-and-orgs
+        title: "人员与组织"
+        description: "团队、角色、客户、合作方及其他组织主体。"
+      - id: products-and-systems
+        title: "产品与系统"
+        description: "产品、项目、服务、工具、数据和技术系统。"
+      - id: processes-and-methods
+        title: "流程与方法"
+        description: "流程、规范、技能、机制和可复用方法。"
+      - id: decisions-and-insights
+        title: "决策与洞察"
+        description: "跨来源结论、关键决策、偏好、事件和经验洞察。"
+
+  - id: usage
+    title: "使用场景 · Usage"
+    description: "按团队成员使用知识时要完成的工作重新组织页面。"
+    tag_prefix: "view/usage/"
+    selection: exactly_one
+    groups:
+      - id: onboarding
+        title: "新人入门"
+        description: "帮助新成员建立背景、术语和边界认知。"
+      - id: planning-and-decisions
+        title: "规划与决策"
+        description: "支持方案比较、优先级判断和决策复盘。"
+      - id: execution
+        title: "执行与协作"
+        description: "支持日常执行、交接、协作和标准操作。"
+      - id: troubleshooting
+        title: "排障与风险"
+        description: "支持故障定位、风险识别和失败恢复。"
+      - id: reference
+        title: "参考查询"
+        description: "适合按实体、定义、事实或索引快速查阅。"
+
+wikilinks:
+  enabled: true
+  syntax: double-bracket
+  auto_link: true
+  catalog_only: true
+  first_occurrence_per_paragraph: true
+  exclude:
+    - headings
+    - tables
+    - code

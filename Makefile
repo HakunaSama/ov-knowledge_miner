@@ -160,8 +160,6 @@ build-studio:
 	@set -e; \
 	if [ "$$OV_SKIP_STUDIO_BUILD" = "1" ]; then \
 		echo "  [SKIP] web-studio build disabled by OV_SKIP_STUDIO_BUILD=1"; \
-	elif [ -f openviking/web_studio/dist/index.html ]; then \
-		echo "  [OK] web-studio bundle already present"; \
 	elif ! command -v npm > /dev/null 2>&1; then \
 		echo "  [SKIP] npm not found; install Node.js to enable /studio"; \
 	elif [ ! -f web-studio/package.json ]; then \

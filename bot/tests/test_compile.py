@@ -34,6 +34,7 @@ from vikingbot.compile.models import (
     WikiBundleDraft,
     utc_now,
 )
+from vikingbot.compile.okf_config import parse_okf_config
 from vikingbot.compile.readlist import (
     READLIST_PATH,
     ReadlistTracker,
@@ -159,16 +160,46 @@ def test_compile_limit_defaults_match_the_resource_envelope():
     assert DirectBackendConfig().allow_compile_exec is True
 
 
+def test_historical_salvaged_task_is_never_reported_as_validated():
+    task = CompileTask.model_validate(
+        {
+            "task_id": "cmp_historical",
+            "principal_scope": "local",
+            "sanitized_request": {
+                "from": ["viking://resources/source"],
+                "to": "viking://resources/wiki",
+                "reason": "Compile",
+                "skill": "viking://user/default/skills/llm-wiki",
+            },
+            "status": "completed",
+            "stage": "salvaged",
+            "created_at": "2026-08-27T00:00:00Z",
+            "updated_at": "2026-08-27T00:01:00Z",
+            "result": {
+                "from": ["viking://resources/source"],
+                "to": "viking://resources/wiki",
+                "skill": "viking://user/default/skills/llm-wiki",
+            },
+        }
+    )
+
+    assert task.result is not None
+    assert task.result.validation_passed is False
+    assert task.public_dict()["result"]["validation_passed"] is False
+
+
 def test_compile_request_schema_defers_runtime_max_but_requires_positive_finite_seconds():
     request = CompileRequest.model_validate(
         {
             "from": ["viking://resources/source"],
             "to": "viking://resources/wiki",
             "skill": "viking://agent/skills/wiki",
+            "okf_config": "viking://resources/source/OKF_CONFIG.yaml",
             "runtime_timeout_seconds": 24 * 60 * 60,
         }
     )
     assert request.runtime_timeout_seconds == 24 * 60 * 60
+    assert request.okf_config == "viking://resources/source/OKF_CONFIG.yaml"
 
     for invalid in (0, float("inf"), float("nan")):
         with pytest.raises(ValueError):
@@ -1796,7 +1827,7 @@ async def test_materialize_sources_exports_full_tree_and_writes_manifest():
         },
     ]
     sandbox = Sandbox()
-    warnings, manifest_path, language_sample = await service._materialize_sources(
+    warnings, manifest_path, language_sample, source_units = await service._materialize_sources(
         client=Client(),
         sources=sources,
         sandbox=sandbox,
@@ -1814,6 +1845,10 @@ async def test_materialize_sources_exports_full_tree_and_writes_manifest():
     assert "skipped:binary" in manifest
     assert "materialized" in manifest
     assert "# guide" in language_sample
+    assert {unit["resource"] for unit in source_units} == {
+        "viking://resources/dream-sessions/08",
+        "viking://resources/dream-memory-store/guide.md",
+    }
     assert '"message":"hi"' in language_sample
 
 
@@ -1841,7 +1876,7 @@ async def test_materialize_sources_records_download_failures_without_crashing():
         }
     ]
     sandbox = Sandbox()
-    warnings, manifest_path, language_sample = await service._materialize_sources(
+    warnings, manifest_path, language_sample, source_units = await service._materialize_sources(
         client=Client(),
         sources=sources,
         sandbox=sandbox,
@@ -1849,8 +1884,40 @@ async def test_materialize_sources_records_download_failures_without_crashing():
 
     assert manifest_path == "compile_resources/_manifest.tsv"
     assert language_sample == ""
+    assert source_units[0]["resource"] == "viking://resources/s/a.jsonl"
     assert any("failed to materialize" in warning for warning in warnings)
     assert "skipped:download-error" in sandbox.writes["compile_resources/_manifest.tsv"]
+
+
+def test_source_units_require_distributed_pdf_depth_including_exact_middle():
+    rows = [
+        (
+            "src_1",
+            f"viking://resources/source/paper/page-{index}.md",
+            f"compile_resources/src_1/source/paper/page-{index}.md",
+            100,
+            "materialized",
+        )
+        for index in range(1, 21)
+    ]
+    units = BotCompileService._build_source_units(
+        sources=[
+            {
+                "source_id": "src_1",
+                "directory_uri": "viking://resources/source",
+                "entries": [],
+            }
+        ],
+        rows=rows,
+    )
+
+    assert len(units) == 1
+    unit = units[0]
+    assert unit["inspection_strategy"] == "distributed_head_middle_tail"
+    assert len(unit["required_read_paths"]) == 8
+    assert unit["required_read_paths"][0].endswith("page-1.md")
+    assert unit["required_read_paths"][-1].endswith("page-20.md")
+    assert any(path.endswith("page-11.md") for path in unit["required_read_paths"])
 
 
 @pytest.mark.asyncio
@@ -1953,7 +2020,11 @@ async def test_materialize_target_checkout_preserves_paths_and_bytes():
     service = object.__new__(BotCompileService)
     service.limits = CompileLimits()
     payloads = {
-        "viking://resources/output/entities/callie.md": b"---\ntype: entity\n---\nCallie",
+        "viking://resources/output/entities/callie.md": (
+            b"---\ntype: entity\nsources:\n"
+            b"  - resource: viking://resources/document-source/file.md\n"
+            b"---\nCallie"
+        ),
         "viking://resources/output/relations.jsonl": b'{"from":"callie"}\n',
         "viking://resources/output/data.bin": b"\xff\x00",
     }
@@ -1972,7 +2043,7 @@ async def test_materialize_target_checkout_preserves_paths_and_bytes():
     inventory = {uri: {"uri": uri, "size": len(payload)} for uri, payload in payloads.items()}
     sandbox = Sandbox()
 
-    warnings = await service._materialize_target_checkout(
+    warnings, existing_sources = await service._materialize_target_checkout(
         client=Client(),
         target_uri="viking://resources/output",
         inventory=inventory,
@@ -1980,6 +2051,7 @@ async def test_materialize_target_checkout_preserves_paths_and_bytes():
     )
 
     assert warnings == []
+    assert existing_sources == {"viking://resources/document-source/file.md"}
     assert sandbox.writes == {
         "__compile_staging__/target_checkout/entities/callie.md": payloads[
             "viking://resources/output/entities/callie.md"
@@ -2042,10 +2114,36 @@ def test_compile_prompt_describes_editable_target_checkout():
     assert "`__compile_staging__/target_checkout/`" in system
     assert "editable output working tree" in system
     assert "update existing files in place" in system
+    assert "changed from X to Y" in system
+    assert "leaving stale values presented as current" in system
     assert "submit_wiki_bundle with no arguments" in system
     assert "complete UTF-8 OKF Markdown file" in system
     assert "commits only validated changes" in system
     assert "Inspect the editable target checkout" in user
+
+
+def test_compile_prompt_explains_derived_okf_views():
+    request = SanitizedCompileRequest.model_validate(
+        {
+            "from": ["viking://resources/source"],
+            "to": "viking://resources/output",
+            "skill": "viking://agent/skills/compiler",
+            "reason": "Build a tagged Wiki",
+        }
+    )
+
+    system, _user = BotCompileService._build_prompts(
+        request=request,
+        skill_name="compiler",
+        skill_content="Produce the required files.",
+        catalog=[],
+        capabilities=CompileCapabilities(exec_enabled=True),
+        okf_config_content="version: '1.0'\nviews: []\n",
+    )
+
+    assert "keep the physical file tree as the main view" in system
+    assert "configured namespaced tag selections for every view" in system
+    assert "do not duplicate pages" in system
 
 
 @pytest.mark.asyncio
@@ -2351,6 +2449,129 @@ async def test_submit_tool_checkout_writes_every_checkout_file_without_deleting_
     assert omitted_uri not in {operation["uri"] for operation in tool.bundle.operations}
     assert tool.page_count == 1
     assert tool.file_count == 1
+
+
+@pytest.mark.asyncio
+async def test_submit_tool_checkout_restores_omitted_baseline_pages():
+    current_page = b"---\ntype: entity\ntitle: Current\ndescription: Current page.\n---\n\nBody."
+    prior_page = b"---\ntype: concept\ntitle: Prior\ndescription: Prior page.\n---\n\nBody."
+    workspace_path = "__compile_staging__/target_checkout/entity/current.md"
+
+    class Sandbox:
+        async def list_files(self, path, *, max_entries):
+            del max_entries
+            assert path == "__compile_staging__/target_checkout"
+            return [SandboxFileInfo(path=workspace_path, size=len(current_page))]
+
+        async def read_file_bytes(self, path, *, max_bytes=None):
+            del max_bytes
+            assert path == workspace_path
+            return current_page
+
+    class Manager:
+        async def get_sandbox(self, session_key):
+            del session_key
+            return Sandbox()
+
+    tool = SubmitTargetCheckoutTool(
+        target_uri="viking://resources/wiki",
+        source_roots={},
+        limits=CompileLimits(),
+        baseline_checkout={"concept/prior.md": prior_page},
+    )
+
+    accepted = await tool.execute(
+        ToolContext(
+            session_key=SessionKey(type="compile", channel_id="cmp", chat_id="cmp"),
+            sandbox_manager=Manager(),
+        )
+    )
+
+    assert accepted.startswith("Target checkout accepted with 2 changed file(s)")
+    assert tool.bundle is not None
+    assert set(tool.bundle.wiki_uris) == {
+        "viking://resources/wiki/entity/current.md",
+        "viking://resources/wiki/concept/prior.md",
+    }
+    assert tool.page_count == 2
+    assert tool.file_count == 2
+
+
+@pytest.mark.asyncio
+async def test_submit_tool_persists_platform_repairs_before_strict_validation_failure():
+    root = Path(__file__).resolve().parents[2]
+    config = parse_okf_config(
+        (root / "examples/compile/ov-compile-skills/llm-wiki/OKF_CONFIG.yaml").read_text()
+    )
+    checkout_root = "__compile_staging__/target_checkout"
+    files = {
+        f"{checkout_root}/_mining/run-manifest.json": json.dumps(
+            {
+                "version": "1.0",
+                "target": "viking://resources/wiki",
+                "stage": "documents",
+                "source_roots": [],
+            }
+        ).encode(),
+        f"{checkout_root}/_mining/evidence-ledger.json": b'{"version":"1.0","pages":[]}',
+        f"{checkout_root}/_mining/source-coverage.json": (
+            b'{"version":"1.0","stage":"documents","sources":[]}'
+        ),
+        f"{checkout_root}/_mining/candidate-knowledge.json": (
+            b'{"version":"1.0","candidates":[}'
+        ),
+    }
+
+    class Sandbox:
+        async def list_files(self, path, *, max_entries):
+            assert path == checkout_root
+            assert len(files) <= max_entries
+            return [SandboxFileInfo(path=key, size=len(value)) for key, value in files.items()]
+
+        async def read_file_bytes(self, path, *, max_bytes=None):
+            assert max_bytes is None or len(files[path]) <= max_bytes
+            return files[path]
+
+        async def write_file_bytes(self, path, payload):
+            files[path] = payload
+
+    class Manager:
+        async def get_sandbox(self, session_key):
+            del session_key
+            return Sandbox()
+
+    tool = SubmitTargetCheckoutTool(
+        target_uri="viking://resources/wiki",
+        source_roots={},
+        limits=CompileLimits(),
+        okf_config=config,
+        task_id="cmp-repair",
+    )
+
+    result = await tool.execute(
+        ToolContext(
+            session_key=SessionKey(type="compile", channel_id="cmp", chat_id="cmp"),
+            sandbox_manager=Manager(),
+        )
+    )
+
+    assert "required Compile intermediate artifact is missing" in result
+    assert "investigation-report.json" in result
+    candidate = json.loads(files[f"{checkout_root}/_mining/candidate-knowledge.json"])
+    assert candidate == {
+        "version": "1.0",
+        "stage": "documents",
+        "candidates": [],
+        "summary": {
+            "total": 0,
+            "promoted": 0,
+            "merged": 0,
+            "deferred": 0,
+            "rejected": 0,
+        },
+    }
+    assert f"{checkout_root}/_mining/readlist.json" in files
+    assert f"{checkout_root}/_mining/evidence-history.json" in files
 
 
 @pytest.mark.asyncio
@@ -3235,12 +3456,14 @@ async def test_execute_skill_target_skips_recursive_catalog_and_completes(
         wiki_uri_resolver,
         target_checkout_enabled,
         source_roots,
+        existing_source_resources,
         capabilities,
         materialized=False,
         source_fallback=False,
         readlist=None,
+        source_units=None,
     ):
-        del request_loop, roots, source_ids, materialized, source_fallback, readlist
+        del request_loop, roots, source_ids, materialized, source_fallback, readlist, source_units
         assert capabilities == CompileCapabilities(exec_enabled=False)
         assert catalog_uris == set()
         assert file_catalog_uris == set()
@@ -3248,6 +3471,7 @@ async def test_execute_skill_target_skips_recursive_catalog_and_completes(
         assert callable(wiki_uri_resolver)
         assert target_checkout_enabled is False
         assert source_roots == {}
+        assert existing_source_resources == set()
         registry = ToolRegistry()
         registry.register(
             SubmitWikiBundleTool(
@@ -3317,7 +3541,7 @@ async def test_execute_skill_target_skips_recursive_catalog_and_completes(
 
 
 @pytest.mark.asyncio
-async def test_source_context_builds_bounded_compact_recursive_catalog():
+async def test_source_context_builds_complete_compact_recursive_catalog():
     class Client:
         client = None
 
@@ -3332,26 +3556,30 @@ async def test_source_context_builds_bounded_compact_recursive_catalog():
             return {"isDir": True}
 
         async def list_resources(self, *, path, recursive, node_limit):
-            assert path == "viking://resources/source"
-            assert recursive is True
-            assert node_limit == 5000
+            assert recursive is False
+            if path == "viking://resources/source":
+                assert node_limit == CompileLimits(source_catalog_entries=3).source_nodes + 1
+                return [
+                    {
+                        "uri": f"{path}/docs",
+                        "isDir": True,
+                        "summary": "Documentation",
+                    },
+                    {
+                        "name": ".overview.md",
+                        "uri": f"{path}/.overview.md",
+                        "isDir": False,
+                    },
+                ]
+            assert path == "viking://resources/source/docs"
+            assert node_limit == CompileLimits(source_catalog_entries=3).source_nodes - 1
             return [
                 {
                     "name": "guide.md",
                     "title": "Readable Guide",
-                    "uri": f"{path}/docs/guide.md",
+                    "uri": f"{path}/guide.md",
                     "isDir": False,
                     "abstract": "A" * 600,
-                },
-                {
-                    "uri": f"{path}/docs",
-                    "isDir": True,
-                    "summary": "Documentation",
-                },
-                {
-                    "name": ".overview.md",
-                    "uri": f"{path}/.overview.md",
-                    "isDir": False,
                 },
             ]
 
@@ -3368,14 +3596,6 @@ async def test_source_context_builds_bounded_compact_recursive_catalog():
             "total_bytes": 0,
             "entries": [
                 {
-                    "name": "guide.md",
-                    "title": "Readable Guide",
-                    "uri": "viking://resources/source/docs/guide.md",
-                    "is_dir": False,
-                    "size": 0,
-                    "summary": "A" * 500,
-                },
-                {
                     "name": "docs",
                     "title": "docs",
                     "uri": "viking://resources/source/docs",
@@ -3383,10 +3603,46 @@ async def test_source_context_builds_bounded_compact_recursive_catalog():
                     "size": 0,
                     "summary": "Documentation",
                 },
+                {
+                    "name": "guide.md",
+                    "title": "Readable Guide",
+                    "uri": "viking://resources/source/docs/guide.md",
+                    "is_dir": False,
+                    "size": 0,
+                    "summary": "A" * 500,
+                },
             ],
             "catalog_truncated": False,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_source_context_rejects_node_overflow_instead_of_truncating():
+    class Client:
+        client = None
+
+        def __init__(self):
+            self.client = self
+
+        async def overview(self, uri):
+            return "Source overview"
+
+        async def stat(self, uri):
+            return {"isDir": True}
+
+        async def list_resources(self, *, path, recursive, node_limit):
+            assert recursive is False
+            assert node_limit == 3
+            return [
+                {"uri": f"{path}/file-{index}.md", "isDir": False}
+                for index in range(3)
+            ]
+
+    service = object.__new__(BotCompileService)
+    service.limits = CompileLimits(source_nodes=2)
+    with pytest.raises(CompileFailure, match="exceeds 2 nodes"):
+        await service._build_sources(Client(), ["viking://resources/source"])
 
 
 @pytest.mark.asyncio
@@ -4523,6 +4779,16 @@ async def test_timeout_salvage_copies_workspace_and_repairs_links(tmp_path: Path
         request=_sanitized_compile_request(),
         sandbox=sandbox,
         workspace_baseline={"sandboxes/cmp-srt-settings.json"},
+        okf_config=SimpleNamespace(
+            version="1.0",
+            views=(
+                SimpleNamespace(
+                    public_dict=lambda: {"id": "domain", "title": "Domain", "groups": []}
+                ),
+            ),
+            main_view=None,
+            intermediates=None,
+        ),
     )
 
     assert result is not None
@@ -4561,6 +4827,8 @@ async def test_timeout_salvage_copies_workspace_and_repairs_links(tmp_path: Path
     assert "[Anchor](#local)" in topic
     assert "`[Code](missing.md)`" in topic
     assert result.warnings and "partial output" in result.warnings[0]
+    assert result.validation_passed is False
+    assert [view["id"] for view in result.views] == ["domain"]
     assert any("Skipped" in warning for warning in result.warnings)
 
 

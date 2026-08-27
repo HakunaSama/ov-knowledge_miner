@@ -13,9 +13,20 @@ class _FakeProcess:
         return None
 
 
+def _enable_current_environment_bot(monkeypatch, captured=None):
+    def _fake_run(cmd, capture_output=None, timeout=None):
+        if captured is not None:
+            captured["probe_cmd"] = cmd
+            captured["probe_timeout"] = timeout
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", _fake_run)
+
+
 def test_start_vikingbot_gateway_forces_localhost_host(monkeypatch):
     captured = {}
 
+    _enable_current_environment_bot(monkeypatch, captured)
     monkeypatch.setattr(bootstrap.shutil, "which", lambda name: "/usr/bin/vikingbot")
     monkeypatch.delenv(OPENVIKING_CLI_CONFIG_ENV, raising=False)
 
@@ -30,7 +41,13 @@ def test_start_vikingbot_gateway_forces_localhost_host(monkeypatch):
     process = bootstrap._start_vikingbot_gateway(enable_logging=False, log_dir="/tmp/logs")
 
     assert process is not None
-    assert captured["cmd"][:2] == ["vikingbot", "gateway"]
+    assert captured["probe_cmd"] == [bootstrap.sys.executable, "-m", "vikingbot", "--help"]
+    assert captured["cmd"][:4] == [
+        bootstrap.sys.executable,
+        "-m",
+        "vikingbot",
+        "gateway",
+    ]
     assert "--host" in captured["cmd"]
     assert captured["cmd"][captured["cmd"].index("--host") + 1] == "127.0.0.1"
     assert "--port" in captured["cmd"]
@@ -42,6 +59,7 @@ def test_start_vikingbot_gateway_forces_localhost_host(monkeypatch):
 def test_start_vikingbot_gateway_uses_custom_port(monkeypatch):
     captured = {}
 
+    _enable_current_environment_bot(monkeypatch)
     monkeypatch.setattr(bootstrap.shutil, "which", lambda name: "/usr/bin/vikingbot")
     monkeypatch.delenv(OPENVIKING_CLI_CONFIG_ENV, raising=False)
 
@@ -71,6 +89,7 @@ def test_start_vikingbot_gateway_prefers_colocated_ovcli_conf(monkeypatch, tmp_p
     config_path.write_text("{}", encoding="utf-8")
     cli_config_path.write_text("{}", encoding="utf-8")
 
+    _enable_current_environment_bot(monkeypatch)
     monkeypatch.setattr(bootstrap.shutil, "which", lambda name: "/usr/bin/vikingbot")
 
     def _fake_popen(cmd, stdout=None, stderr=None, text=None, env=None):
@@ -101,6 +120,7 @@ def test_start_vikingbot_gateway_preserves_explicit_cli_config_env(monkeypatch, 
     colocated_cli_config.write_text("{}", encoding="utf-8")
     explicit_cli_config.write_text("{}", encoding="utf-8")
 
+    _enable_current_environment_bot(monkeypatch)
     monkeypatch.setattr(bootstrap.shutil, "which", lambda name: "/usr/bin/vikingbot")
 
     def _fake_popen(cmd, stdout=None, stderr=None, text=None, env=None):
@@ -125,6 +145,7 @@ def test_start_vikingbot_gateway_preserves_explicit_cli_config_env(monkeypatch, 
 def test_start_vikingbot_gateway_passes_managed_server_runtime(monkeypatch):
     captured = {}
 
+    _enable_current_environment_bot(monkeypatch)
     monkeypatch.setattr(bootstrap.shutil, "which", lambda name: "/usr/bin/vikingbot")
 
     def _fake_popen(cmd, stdout=None, stderr=None, text=None, env=None):
@@ -169,3 +190,24 @@ def test_start_vikingbot_gateway_allows_slow_module_probe(monkeypatch):
     assert captured["probe_cmd"][1:] == ["-m", "vikingbot", "--help"]
     assert captured["probe_timeout"] == 15
     assert captured["cmd"][1:4] == ["-m", "vikingbot", "gateway"]
+
+
+def test_start_vikingbot_gateway_falls_back_to_path_command(monkeypatch):
+    captured = {}
+
+    def _fake_run(cmd, capture_output=None, timeout=None):
+        return type("Result", (), {"returncode": 1})()
+
+    def _fake_popen(cmd, stdout=None, stderr=None, text=None, env=None):
+        captured["cmd"] = cmd
+        return _FakeProcess()
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", _fake_run)
+    monkeypatch.setattr(bootstrap.shutil, "which", lambda name: "/usr/bin/vikingbot")
+    monkeypatch.setattr(bootstrap.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(bootstrap.time, "sleep", lambda _: None)
+
+    process = bootstrap._start_vikingbot_gateway(enable_logging=False, log_dir="/tmp/logs")
+
+    assert process is not None
+    assert captured["cmd"][:2] == ["vikingbot", "gateway"]

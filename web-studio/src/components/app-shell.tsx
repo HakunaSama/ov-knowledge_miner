@@ -10,6 +10,7 @@ import {
   HomeIcon,
   GithubIcon,
   KeyRoundIcon,
+  BrainCircuitIcon,
   MoonIcon,
   MonitorUpIcon,
   PlugZapIcon,
@@ -100,6 +101,13 @@ const NAV_ITEMS: readonly NavItem[] = [
     section: 'workspace',
     titleKey: 'navigation.retrieval.title',
     to: '/retrieval',
+  },
+  {
+    icon: BrainCircuitIcon,
+    id: 'knowledgeMining',
+    section: 'workspace',
+    titleKey: 'navigation.knowledgeMining.title',
+    to: '/knowledge-mining',
   },
   {
     icon: SparklesIcon,

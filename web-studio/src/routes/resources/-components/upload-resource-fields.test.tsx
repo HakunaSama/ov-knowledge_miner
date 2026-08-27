@@ -11,7 +11,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { UploadResourceFields } from './upload-resource-fields'
 import type { SelectedUploadFile } from './upload-resource-fields'
-import { MAX_UPLOAD_FILES } from '../-lib/upload'
 
 const mocks = vi.hoisted(() => ({
   onDrop: null as ((files: File[]) => void) | null,
@@ -76,9 +75,9 @@ describe('UploadResourceFields', () => {
     ])
   })
 
-  it('reports truncation when concurrent drops exceed the latest limit', async () => {
+  it('keeps every file when concurrent drops exceed the former limit', async () => {
     let current: SelectedUploadFile[] = Array.from(
-      { length: MAX_UPLOAD_FILES - 1 },
+      { length: 10 },
       (_, index) => ({
         id: `existing-${index}`,
         file: new File(['existing'], `existing-${index}.pdf`),
@@ -100,10 +99,8 @@ describe('UploadResourceFields', () => {
     mocks.pending.get('first.pdf')?.(null)
     mocks.pending.get('second.pdf')?.(null)
 
-    await waitFor(() => expect(current).toHaveLength(MAX_UPLOAD_FILES))
-    expect(mocks.toast).toHaveBeenCalledWith('tooManyFiles', {
-      duration: 2500,
-    })
+    await waitFor(() => expect(current).toHaveLength(12))
+    expect(mocks.toast).not.toHaveBeenCalled()
   })
 
   it('removes from the latest files after an asynchronous append', async () => {

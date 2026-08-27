@@ -44,6 +44,8 @@ The first two examples also give the complete `ov` commands from **importing sou
 
 ## Prerequisites
 
+Users who prefer a graphical workflow can use [Studio Knowledge Mining](./06-knowledge-mining-studio.md) to upload documents, compile an LLM Wiki, follow the task, and browse results on one page.
+
 - A running OpenViking service with Bot enabled (`--with-bot`). The default endpoint is `http://localhost:1933`; remote use needs an API Key — see [Authentication](../guides/04-authentication.md). No service yet? Start with the [Quick Start](../getting-started/02-quickstart.md).
 - The `ov` CLI configured with a connection (`~/.openviking/ovcli.conf` or `OPENVIKING_*` environment variables).
 - Python 3 for the visualization scripts; the LLM Wiki script also uses the `openviking` Python package to read Wiki pages straight from the service.

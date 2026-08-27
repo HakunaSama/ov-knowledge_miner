@@ -206,6 +206,26 @@ class AgentIterationLimitExceeded(RuntimeError):
         )
 
 
+class AgentRepeatedToolFailure(RuntimeError):
+    """A structured task repeated the same terminating-tool error without progress."""
+
+    def __init__(
+        self,
+        tool_name: str,
+        error: str,
+        repeats: int,
+        *,
+        usage: dict[str, Any] | None = None,
+    ):
+        self.tool_name = tool_name
+        self.error = error
+        self.repeats = repeats
+        self.usage = usage or {}
+        super().__init__(
+            f"Agent repeated the same {tool_name} validation failure {repeats} times: {error}"
+        )
+
+
 _BUDGET_REMINDER_CONSEQUENCE = (
     "若在轮次耗尽前未成功调用 submit_wiki_bundle，系统会把工作区所有文件"
     "（含中间临时文件）原样写入目标目录，且不经校验。"
@@ -1280,6 +1300,7 @@ class AgentLoop:
         context_compact_budget: int | None = None,
         status_note_provider: Any | None = None,
         skill_runtime: Any | None = None,
+        repeated_stop_error_limit: int | None = None,
     ) -> tuple[str | None, str | None, list[dict], dict[str, int], int]:
         """
         Run the core agent loop: call LLM, execute tools, repeat until done.
@@ -1341,6 +1362,7 @@ class AgentLoop:
         }
         write_exp_injected = False
         stop_tools = set(stop_tool_names or [])
+        stop_failure_state: dict[str, tuple[str, int]] = {}
 
         def accumulate_token_usage(response: Any) -> None:
             if not response.usage:
@@ -1645,6 +1667,27 @@ class AgentLoop:
                     final_content = ""
                     break
 
+                if repeated_stop_error_limit is not None and repeated_stop_error_limit > 0:
+                    for _idx, tool_call, outcome, _duration in results:
+                        if tool_call.name not in stop_tools:
+                            continue
+                        rendered_error = str(outcome.result).strip()
+                        if _is_tool_result_success(outcome.result):
+                            stop_failure_state.pop(tool_call.name, None)
+                            continue
+                        previous_error, previous_count = stop_failure_state.get(
+                            tool_call.name, ("", 0)
+                        )
+                        count = previous_count + 1 if rendered_error == previous_error else 1
+                        stop_failure_state[tool_call.name] = (rendered_error, count)
+                        if count >= repeated_stop_error_limit:
+                            raise AgentRepeatedToolFailure(
+                                tool_call.name,
+                                rendered_error,
+                                count,
+                                usage=token_usage,
+                            )
+
                 messages.append(
                     {"role": "user", "content": "Reflect on the results and decide next steps."}
                 )
@@ -1845,6 +1888,7 @@ class AgentLoop:
             inject_write_experience=False,
             context_compact_budget=context_compact_budget,
             status_note_provider=status_note_provider,
+            repeated_stop_error_limit=3,
         )
         submit_tool = tool_registry.get("submit_wiki_bundle")
         bundle = getattr(submit_tool, "bundle", None)

@@ -16,7 +16,11 @@ from typing import Any
 from loguru import logger
 
 from vikingbot.agent.tools.base import Tool
-from vikingbot.compile.models import COMPILE_MANIFEST_NAME, COMPILE_MATERIALIZED_ROOT
+from vikingbot.compile.models import (
+    COMPILE_MANIFEST_NAME,
+    COMPILE_MATERIALIZED_ROOT,
+    COMPILE_SOURCE_UNITS_NAME,
+)
 
 READLIST_PATH = "__compile_staging__/tmp/readlist.md"
 _READLIST_UNIVERSE_MAX_ENTRIES = 200_000
@@ -45,11 +49,12 @@ def _normalize_workspace_path(path: str) -> str | None:
 class ReadlistTracker:
     """Tracks which workspace files have been read and renders a compact summary."""
 
-    def __init__(self, *, sandbox: Any):
+    def __init__(self, *, sandbox: Any, required_paths: set[str] | None = None):
         self._sandbox = sandbox
         self._universe: set[str] = set()
         self._read: set[str] = set()
         self._read_order: list[str] = []
+        self._required = set(required_paths or set())
         self._lock = asyncio.Lock()
 
     @property
@@ -59,6 +64,10 @@ class ReadlistTracker:
     @property
     def universe(self) -> set[str]:
         return set(self._universe)
+
+    @property
+    def required_paths(self) -> set[str]:
+        return set(self._required)
 
     async def initialize(self, *, universe: set[str] | None = None) -> None:
         """Load the candidate source files and any pre-existing readlist content."""
@@ -79,9 +88,12 @@ class ReadlistTracker:
         return {
             entry.path
             for entry in entries
-            if entry.path.startswith(prefix) and not entry.path.endswith(
-                f"/{COMPILE_MANIFEST_NAME}"
-            )
+            if entry.path.startswith(prefix)
+            and entry.path
+            not in {
+                f"{COMPILE_MATERIALIZED_ROOT}/{COMPILE_MANIFEST_NAME}",
+                f"{COMPILE_MATERIALIZED_ROOT}/{COMPILE_SOURCE_UNITS_NAME}",
+            }
         }
 
     async def _reload(self) -> None:
@@ -132,9 +144,16 @@ class ReadlistTracker:
         total = len(self._universe)
         unread = sorted(self._universe - self._read)
         unread_count = len(unread)
+        required_read = self._required & self._read
+        required_total = len(self._required)
+        required_note = (
+            f"；必读探针 {len(required_read)}/{required_total}" if required_total else ""
+        )
         if read_count == 0:
-            return f"源文件共 {total} 个，尚未读取任何源文件；优先去读未读文件。"
-        lines = [f"已读 {read_count}/{total} 个源文件，未读 {unread_count} 个。"]
+            if not required_total:
+                return f"源文件共 {total} 个，尚未读取任何源文件；优先去读未读文件。"
+            return f"源文件共 {total} 个，尚未读取任何源文件{required_note}；优先完成必读探针。"
+        lines = [f"已读 {read_count}/{total} 个源文件，未读 {unread_count} 个{required_note}。"]
         recent = [path for path in self._read_order if path in self._universe][-recent_limit:]
         if recent:
             lines.append("最近已读: " + ", ".join(recent) + "。")

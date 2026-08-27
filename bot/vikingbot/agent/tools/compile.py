@@ -21,13 +21,16 @@ from openviking.utils.path_safety import (
 from openviking.utils.skill_processor import validate_skill_name
 from openviking_cli.exceptions import OpenVikingError
 from vikingbot.agent.tools.base import Tool, ToolContext
+from vikingbot.compile.intermediate_artifacts import prepare_persistent_intermediates
 from vikingbot.compile.models import (
     COMPILE_MATERIALIZED_ROOT,
     COMPILE_STAGING_ROOT,
     COMPILE_TARGET_CHECKOUT_ROOT,
     CompileLimits,
     WikiBundleDraft,
+    utc_now,
 )
+from vikingbot.compile.okf_config import OKFConfig
 from vikingbot.compile.renderer import (
     RenderedBundle,
     finalize_resource_checkout,
@@ -188,14 +191,37 @@ class SubmitTargetCheckoutTool(Tool):
         *,
         target_uri: str,
         source_roots: Mapping[str, str],
+        existing_source_resources: set[str] | None = None,
         limits: CompileLimits,
+        okf_config: OKFConfig | None = None,
+        control_uris: set[str] | None = None,
+        generated_by: str | None = None,
+        source_units: list[dict[str, Any]] | None = None,
+        readlist: Any | None = None,
+        task_id: str = "unknown",
+        baseline_intermediates: Mapping[str, bytes] | None = None,
+        baseline_checkout: Mapping[str, bytes] | None = None,
     ):
         self.target_uri = target_uri.rstrip("/")
         self.source_roots = dict(source_roots)
+        for index, resource in enumerate(sorted(existing_source_resources or set())):
+            self.source_roots[f"existing_target_{index}"] = resource
         self.limits = limits
+        self.okf_config = okf_config
+        self.control_uris = set(control_uris or set())
+        self.generated_by = generated_by
+        self.source_units = list(source_units or [])
+        self.readlist = readlist
+        self.task_id = task_id
+        self.baseline_intermediates = dict(baseline_intermediates or {})
+        self.baseline_checkout = dict(baseline_checkout or {})
         self.bundle: RenderedBundle | None = None
         self.page_count = 0
         self.file_count = 0
+        self.intermediate_artifacts: list[dict[str, Any]] = []
+        self.investigation_status: str | None = None
+        self.question_count = 0
+        self.source_coverage: dict[str, Any] | None = None
 
     @property
     def name(self) -> str:
@@ -224,6 +250,10 @@ class SubmitTargetCheckoutTool(Tool):
         self.bundle = None
         self.page_count = 0
         self.file_count = 0
+        self.intermediate_artifacts = []
+        self.investigation_status = None
+        self.question_count = 0
+        self.source_coverage = None
         if kwargs:
             return "Error: submit_wiki_bundle takes no arguments for a Resource checkout."
         if tool_context.sandbox_manager is None:
@@ -263,14 +293,63 @@ class SubmitTargetCheckoutTool(Tool):
                     raise ValueError("target checkout exceeds the materialization size limit")
                 checkout[relative] = payload
 
+            workspace_checkout = dict(checkout)
+            # Resource checkout semantics are intentionally upsert-only. Restore any
+            # pre-existing target file that the model omitted or deleted locally so a
+            # validation retry cannot silently discard earlier knowledge.
+            checkout = {**self.baseline_checkout, **checkout}
+            actual_total = sum(len(payload) for payload in checkout.values())
+            if actual_total > self.limits.target_total_bytes:
+                raise ValueError("target checkout exceeds the materialization size limit")
+
+            read_paths: set[str] = set()
+            if self.readlist is not None:
+                # Reload paths appended by exec/readtrace immediately before the
+                # coverage gate evaluates the agent's inspection claims.
+                await self.readlist.summary()
+                read_paths = self.readlist.read_paths
+            if self.okf_config is not None and self.okf_config.intermediates is not None:
+                checkout = prepare_persistent_intermediates(
+                    checkout,
+                    baseline=self.baseline_intermediates,
+                    config=self.okf_config,
+                    task_id=self.task_id,
+                    recorded_at=utc_now(),
+                    source_units=self.source_units,
+                    read_paths=read_paths,
+                    target_uri=self.target_uri,
+                    source_roots=self.source_roots,
+                )
+                # Persist platform-owned repairs before strict validation. A later
+                # validation failure or salvage therefore sees canonical JSON,
+                # immutable evidence history, the read ledger, and restored baseline
+                # pages instead of the model's transient raw files.
+                for relative, payload in checkout.items():
+                    if workspace_checkout.get(relative) == payload:
+                        continue
+                    workspace_path = f"{COMPILE_TARGET_CHECKOUT_ROOT}/{relative}"
+                    await sandbox.write_file_bytes(workspace_path, payload)
             finalized = finalize_resource_checkout(
                 checkout,
                 target_uri=self.target_uri,
                 source_roots=self.source_roots,
+                okf_config=self.okf_config,
+                control_uris=self.control_uris,
+                generated_metadata=(
+                    {"by": self.generated_by, "at": utc_now()}
+                    if self.generated_by is not None
+                    else None
+                ),
+                source_units=self.source_units,
+                read_paths=read_paths,
             )
             rendered = RenderedBundle(link_count=finalized.link_count)
             self.page_count = len(finalized.wiki_paths)
             self.file_count = len(finalized.files)
+            self.intermediate_artifacts = finalized.intermediate_artifacts
+            self.investigation_status = finalized.investigation_status
+            self.question_count = finalized.question_count
+            self.source_coverage = finalized.source_coverage
             artifact_count = self.file_count - self.page_count
             if self.page_count > self.limits.output_pages:
                 raise ValueError("Wiki page limit exceeded")

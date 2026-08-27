@@ -144,6 +144,7 @@ Start an asynchronous, Skill-driven Compile task. VikingBot loads the selected S
 | `from` | string[] | Yes | - | One or more source directories |
 | `to` | string | Yes | - | Target Resource or Memory directory, or a supported Skill namespace |
 | `skill` | string | Yes | - | Skill directory or its `SKILL.md` URI |
+| `okf_config` | string | No | - | External OKF YAML file URI; Resource Wiki submission validates frontmatter, path/type rules, and WikiLinks against it |
 | `reason` | string | No | Skill-driven default | Additional instructions for this Compile run |
 | `runtime_timeout_seconds` | number | No | 3600 | Positive finite runtime limit no greater than the server maximum (3600 seconds by default) |
 
@@ -161,6 +162,7 @@ curl -X POST http://localhost:1933/bot/v1/compile \
     "from": ["viking://resources/research"],
     "to": "viking://resources/research-wiki",
     "skill": "viking://user/default/skills/research-compiler",
+    "okf_config": "viking://resources/research/OKF_CONFIG.yaml",
     "reason": "Track the historical progress and preserve supporting evidence."
   }'
 ```
@@ -172,11 +174,14 @@ ov compile \
   --from viking://resources/research \
   --to viking://resources/research-wiki \
   --skill viking://user/default/skills/research-compiler \
+  --okf-config viking://resources/research/OKF_CONFIG.yaml \
   --reason "Track the historical progress and preserve supporting evidence." \
   --wait
 ```
 
-`--wait` polls the status endpoint until the task reaches a terminal state. `--timeout` limits only the local wait and does not cancel the server task. `--runtime-timeout` sets `runtime_timeout_seconds` for this run and can only shorten the server-owned runtime maximum; an excessive value is rejected with `429 RESOURCE_EXHAUSTED`. Reaching that deadline while the Agent is running, or reaching the configured AgentLoop iteration limit (`bot.agents.max_tool_iterations`, 50 by default), attempts to save eligible partial Resource output within a separate short grace period. The task fails if there is no eligible output to save; non-Resource targets and deadlines in later stages do not use this fallback.
+`--okf-config` points to a readable YAML file in OpenViking. VikingBot materializes it as `compile_config/OKF_CONFIG.yaml` and treats it as control data rather than knowledge; the external contract takes precedence over conflicting Skill format rules. Omitting it preserves existing Compile behavior.
+
+`--wait` polls the status endpoint until the task reaches a terminal state. `--timeout` limits only the local wait and does not cancel the server task. `--runtime-timeout` sets `runtime_timeout_seconds` for this run and can only shorten the server-owned runtime maximum; an excessive value is rejected with `429 RESOURCE_EXHAUSTED`. Reaching that deadline while the Agent is running, or reaching Compile's own tool-iteration limit (currently 60), attempts to save eligible partial Resource output within a separate short grace period. The task fails if there is no eligible output to save; non-Resource targets and deadlines in later stages do not use this fallback. Three consecutive submissions that fail with the exact same validation error enter partial salvage early instead of spending the remaining iterations on a retry loop that is not making progress.
 
 The `direct` backend runs Compile `exec` commands with the Bot host's permissions. `bot.sandbox.backends.direct.allow_compile_exec` defaults to `true`: the Compile toolchain is open source, so `exec` runs directly in the user's shell by default, and ordinary Wiki and artifact generation run through file tools as before. A Skill that declares `requires.bins` or `requires.env` still probes the commands; set the option to `false` to omit `exec` from Compile (then such Skills fail with `SKILL_CAPABILITY_UNAVAILABLE` before any command probe runs). Isolated backends with filesystem and network policies are recommended for CLI-dependent Skills. Admission overflow returns `429 RESOURCE_EXHAUSTED`.
 
@@ -237,11 +242,57 @@ ov task status cmp_01abc
       "unchanged": [],
       "page_count": 1,
       "link_count": 0,
-      "warnings": []
+      "validation_passed": true,
+      "warnings": [],
+      "main_view": {
+        "single_source_of_truth": true,
+        "root_path": "knowledge",
+        "leaf_categories": ["what", "why", "how"],
+        "exempt_paths": ["index.md"]
+      },
+      "intermediate_artifacts": [
+        {
+          "kind": "evidence_ledger",
+          "path": "_mining/evidence-ledger.json",
+          "uri": "viking://resources/research-wiki/_mining/evidence-ledger.json"
+        }
+      ],
+      "investigation_status": "clear",
+      "question_count": 0,
+      "source_coverage": {
+        "uploaded": 30,
+        "inspected": 30,
+        "cited": 24,
+        "merged": 4,
+        "skipped": 2,
+        "artifact_uri": "viking://resources/research-wiki/_mining/source-coverage.json"
+      },
+      "views": [
+        {
+          "id": "domain",
+          "title": "Knowledge Domain",
+          "description": "Organize pages by knowledge domain",
+          "selection": "one_or_more",
+          "groups": [
+            {
+              "id": "products-and-systems",
+              "title": "Products and systems",
+              "description": "Products, services, and technical systems",
+              "tag": "view/domain/products-and-systems"
+            }
+          ]
+        }
+      ]
     }
   }
 }
 ```
+
+`main_view` describes the physical single-source-of-truth constraint and is `null` when unconfigured. `views` comes from the external OKF config and is empty when no derived views are configured. Clients group page frontmatter by each exact group `tag`; the physical structure remains the tree under `to`.
+
+`intermediate_artifacts` lists the validated run manifest, evidence ledger, investigation report, questionnaire, source coverage, candidate knowledge, persisted read ledger, and evidence-history URIs. `source_coverage` summarizes upload-level inspected/cited/merged/skipped dispositions after the readlist and evidence gates pass. `investigation_status=needs_human_input` means unresolved conflicts or evidence gaps exist; `question_count` reports the questionnaire size. A follow-up Compile with human answers should point `from` at the exact answer resource while retaining the same `to`, preserving verifiable incremental provenance.
+
+`stage=salvaged` means Compile preserved a partial workspace snapshot; it is not a successful strict validation. Its `result.validation_passed` is `false`. The result still exposes known `main_view`, `views`, and readable `intermediate_artifacts`, but clients must present it as partial and must not automatically use it as a successful baseline for a Memory or human-answer incremental Compile. Only `stage=completed` with `validation_passed=true` is a final result eligible for automatic continuation.
 
 ### compile_cancel()
 

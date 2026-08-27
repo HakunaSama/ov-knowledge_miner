@@ -1040,6 +1040,9 @@ enum Commands {
         /// Skill directory or SKILL.md Viking URI
         #[arg(long, value_name = "uri")]
         skill: String,
+        /// External OKF YAML contract file in OpenViking
+        #[arg(long = "okf-config", value_name = "uri")]
+        okf_config: Option<String>,
         /// Description of this organization task
         #[arg(long, value_name = "text")]
         reason: Option<String>,
@@ -3424,6 +3427,7 @@ async fn main() {
             from_uris,
             to,
             skill,
+            okf_config,
             reason,
             wait,
             timeout,
@@ -3435,6 +3439,7 @@ async fn main() {
                 from_uris,
                 to,
                 skill,
+                okf_config,
                 reason,
                 wait,
                 timeout,
@@ -3833,6 +3838,8 @@ mod tests {
             "viking://resources/wiki",
             "--skill",
             "viking://agent/skills/wiki",
+            "--okf-config",
+            "viking://resources/source/OKF_CONFIG.yaml",
             "--wait",
             "--timeout",
             "10",
@@ -3844,6 +3851,7 @@ mod tests {
             Commands::Compile {
                 from_uris,
                 skill,
+                okf_config,
                 reason,
                 wait,
                 timeout,
@@ -3852,6 +3860,10 @@ mod tests {
             } => {
                 assert_eq!(from_uris.len(), 3);
                 assert_eq!(skill, "viking://agent/skills/wiki");
+                assert_eq!(
+                    okf_config.as_deref(),
+                    Some("viking://resources/source/OKF_CONFIG.yaml")
+                );
                 assert!(reason.is_none());
                 assert!(wait);
                 assert_eq!(timeout, Some(10.0));

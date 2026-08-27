@@ -39,6 +39,7 @@ import openviking as ov
 _T = TypeVar("_T")
 
 _LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\(\s*(<[^>]+>|[^)\s]+)(?:\s+[\"'][^)]*[\"'])?\s*\)")
+_WIKILINK_RE = re.compile(r"\[\[([^\[\]\r\n]+)\]\]")
 _FRONTMATTER_RE = re.compile(r"\A---\s*\r?\n(.*?)\r?\n---\s*(?:\r?\n|\Z)", re.DOTALL)
 _FENCE_RE = re.compile(r"^\s*```([^`]*)$")
 
@@ -54,7 +55,7 @@ _CATEGORY_ALIASES = {
     "comparisons": "comparison",
     "analysis": "analysis",
     "analyses": "analysis",
-    "synthesis": "analysis",
+    "synthesis": "synthesis",
     "summary": "summary",
     "summaries": "summary",
     "source": "source",
@@ -69,6 +70,7 @@ _CATEGORY_STYLE = {
     "method": ("方法", "#8b5cf6"),
     "comparison": ("比较", "#06b6d4"),
     "analysis": ("分析", "#f59e0b"),
+    "synthesis": ("综合", "#f97316"),
     "summary": ("摘要", "#ec4899"),
     "source": ("来源", "#64748b"),
     "audit": ("构建审计", "#a855f7"),
@@ -249,11 +251,11 @@ def _page_title(metadata: Mapping[str, str], body: str, relative_path: str) -> s
 
 
 def _page_category(metadata: Mapping[str, str], relative_path: str) -> str:
+    if posixpath.basename(relative_path).lower() == "index.md":
+        return "index"
     declared = metadata.get("type", "").strip().lower()
     if declared in _CATEGORY_ALIASES:
         return _CATEGORY_ALIASES[declared]
-    if posixpath.basename(relative_path).lower() == "index.md":
-        return "index"
     first_part = relative_path.strip("/").split("/", 1)[0].lower()
     return _CATEGORY_ALIASES.get(first_part, "other")
 
@@ -327,6 +329,23 @@ def _resolve_link(target: str, page: WikiPage, pages: Mapping[str, WikiPage]) ->
     return global_matches[0] if len(global_matches) == 1 else None
 
 
+def _resolve_wikilink(stem: str, page: WikiPage, pages: Mapping[str, WikiPage]) -> str | None:
+    filename = f"{stem.strip()}.md"
+    same_root = [
+        candidate.uri
+        for candidate in pages.values()
+        if candidate.root_uri == page.root_uri and posixpath.basename(candidate.uri) == filename
+    ]
+    if len(same_root) == 1:
+        return same_root[0]
+    global_matches = [
+        candidate.uri
+        for candidate in pages.values()
+        if posixpath.basename(candidate.uri) == filename
+    ]
+    return global_matches[0] if len(global_matches) == 1 else None
+
+
 def _plain_label(markdown_label: str) -> str:
     label = re.sub(r"[`*_~]", "", markdown_label)
     return html.unescape(label).strip()
@@ -334,6 +353,19 @@ def _plain_label(markdown_label: str) -> str:
 
 def _render_inline(text: str, page: WikiPage, pages: Mapping[str, WikiPage]) -> str:
     tokens: list[str] = []
+
+    def replace_wikilink(match: re.Match[str]) -> str:
+        label = match.group(1).strip()
+        node_uri = _resolve_wikilink(label, page, pages)
+        safe_label = html.escape(label)
+        rendered = (
+            f'<a href="#" class="xlink" data-node="{html.escape(node_uri, quote=True)}">'
+            f"{safe_label}</a>"
+            if node_uri is not None
+            else safe_label
+        )
+        tokens.append(rendered)
+        return f"\x00{len(tokens) - 1}\x00"
 
     def replace_link(match: re.Match[str]) -> str:
         label, raw_target = match.group(1), match.group(2)
@@ -359,7 +391,8 @@ def _render_inline(text: str, page: WikiPage, pages: Mapping[str, WikiPage]) -> 
         tokens.append(rendered)
         return f"\x00{len(tokens) - 1}\x00"
 
-    rendered = _LINK_RE.sub(replace_link, text)
+    rendered = _WIKILINK_RE.sub(replace_wikilink, text)
+    rendered = _LINK_RE.sub(replace_link, rendered)
     rendered = html.escape(rendered)
     rendered = re.sub(r"`([^`]+)`", r"<code>\1</code>", rendered)
     rendered = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", rendered)
@@ -488,6 +521,21 @@ def build_graph(pages: Sequence[WikiPage]) -> dict[str, list[dict[str, Any]]]:
     links: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for page in pages:
+        for match in _WIKILINK_RE.finditer(page.body):
+            target = _resolve_wikilink(match.group(1), page, page_lookup)
+            if target is None or target == page.uri:
+                continue
+            key = (page.uri, target)
+            if key in seen:
+                continue
+            seen.add(key)
+            links.append(
+                {
+                    "source": page.uri,
+                    "target": target,
+                    "label": match.group(1).strip(),
+                }
+            )
         for match in _LINK_RE.finditer(page.body):
             target = _resolve_link(match.group(2), page, page_lookup)
             if target is None or target == page.uri:

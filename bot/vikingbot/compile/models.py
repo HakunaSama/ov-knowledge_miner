@@ -17,7 +17,9 @@ DEFAULT_COMPILE_REASON = (
 COMPILE_STAGING_ROOT = "__compile_staging__"
 COMPILE_TARGET_CHECKOUT_ROOT = f"{COMPILE_STAGING_ROOT}/target_checkout"
 COMPILE_MATERIALIZED_ROOT = "compile_resources"
+COMPILE_CONFIG_ROOT = "compile_config"
 COMPILE_MANIFEST_NAME = "_manifest.tsv"
+COMPILE_SOURCE_UNITS_NAME = "_source-units.json"
 OKF_VERSION = "0.1"
 TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 WikiLanguage = Literal["en", "zh-CN"]
@@ -29,6 +31,7 @@ class CompileLimits(BaseModel):
     source_roots: int = 16
     source_catalog_entries: int = 200
     source_files: int = 5000
+    source_nodes: int = 40000
     source_total_bytes: int = 1024 * 1024 * 1024
     target_total_bytes: int = 1024 * 1024 * 1024
     skill_files: int = 128
@@ -64,6 +67,7 @@ class CompileRequest(BaseModel):
     to: str = Field(min_length=1)
     reason: str | None = None
     skill: str = Field(min_length=1)
+    okf_config: str | None = None
     runtime_timeout_seconds: float | None = Field(
         default=None,
         gt=0,
@@ -81,6 +85,7 @@ class SanitizedCompileRequest(BaseModel):
     reason: str
     reason_provided: bool = False
     skill: str
+    okf_config: str | None = None
     runtime_timeout_seconds: float | None = Field(
         default=None,
         gt=0,
@@ -212,7 +217,14 @@ class CompileResult(BaseModel):
     unchanged: list[str] = Field(default_factory=list)
     page_count: int = 0
     link_count: int = 0
+    validation_passed: bool = True
     warnings: list[str] = Field(default_factory=list)
+    views: list[dict[str, Any]] = Field(default_factory=list)
+    main_view: dict[str, Any] | None = None
+    intermediate_artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    investigation_status: Literal["clear", "needs_human_input"] | None = None
+    question_count: int = 0
+    source_coverage: dict[str, Any] | None = None
 
 
 class CompileTask(BaseModel):
@@ -235,6 +247,13 @@ class CompileTask(BaseModel):
     updated_at: str
     result: CompileResult | None = None
     error: CompileErrorInfo | None = None
+
+    @model_validator(mode="after")
+    def normalize_salvaged_validation(self) -> "CompileTask":
+        """Backfill the validation flag for task records created before it existed."""
+        if self.stage == "salvaged" and self.result is not None:
+            self.result.validation_passed = False
+        return self
 
     def public_dict(self) -> dict[str, Any]:
         data = self.model_dump(exclude={"principal_scope", "sanitized_request"}, exclude_none=True)

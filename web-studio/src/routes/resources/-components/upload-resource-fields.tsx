@@ -9,7 +9,6 @@ import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
 import { cn } from '#/lib/utils'
 import {
-  MAX_UPLOAD_FILES,
   MAX_UPLOAD_FILE_SIZE_BYTES,
   formatFileSize,
   isBlockedFile,
@@ -92,18 +91,7 @@ export function UploadResourceFields({
           })
         }
 
-        updateFiles((currentFiles) => {
-          const remainingSlots = Math.max(
-            MAX_UPLOAD_FILES - currentFiles.length,
-            0,
-          )
-          if (accepted.length > remainingSlots) {
-            toast(t('tooManyFiles', { count: MAX_UPLOAD_FILES }), {
-              duration: 2500,
-            })
-          }
-          return [...currentFiles, ...accepted.slice(0, remainingSlots)]
-        })
+        updateFiles((currentFiles) => [...currentFiles, ...accepted])
       })()
     },
     [t, updateFiles],

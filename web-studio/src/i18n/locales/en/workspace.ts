@@ -23,6 +23,9 @@ const workspace = {
       home: {
         title: 'Home',
       },
+      knowledgeMining: {
+        title: 'Knowledge Mining',
+      },
       crossDeviceVerify: {
         title: 'OAuth verify',
       },
@@ -64,6 +67,307 @@ const workspace = {
       loadingSessions: 'Loading...',
       noSessions: 'No sessions',
       workspaceGroupLabel: 'OpenViking Studio',
+    },
+  },
+  knowledgeMining: {
+    eyebrow: 'VikingBot · LLM Wiki',
+    title: 'Knowledge Mining',
+    description:
+      'Build every knowledge item as one meta-knowledge triplet of what / why / how pages, then incrementally update the same knowledge base from team Memory and human answers. Main, domain, and usage views always browse the same files.',
+    upload: {
+      title: 'Upload knowledge sources',
+      description:
+        'Each batch uses an isolated source directory and never overwrites another batch.',
+      dropzone: 'Drop files here, or click to choose',
+      formats:
+        'PDF / MD / DOC / DOCX / XLS / XLSX · unlimited files · {{size}} each',
+      folder: {
+        title: 'Import a complete resource folder',
+        choose: 'Choose resource folder',
+        hint: 'Recursively reads subfolders and classifies documents and team-memory automatically; unrelated manifest files are skipped.',
+        selected:
+          '{{documents}} documents and {{memory}} team Memory files selected',
+        summary:
+          'Folder loaded: {{documents}} documents, {{memory}} team Memory files, and {{skipped}} unrelated files skipped.',
+      },
+    },
+    okfConfig: {
+      label: 'OKF format config',
+      defaultName: 'Bundled OKF_CONFIG.yaml (default)',
+      choose: 'Choose config',
+      useDefault: 'Restore default OKF config',
+      hint: 'Optionally upload YAML that defines the single-source main view, what/why/how leaves, derived views, provenance, intermediate artifacts, cross-knowledge links, and WikiLink rules.',
+    },
+    memory: {
+      title: 'Team Memory (optional incremental source)',
+      description:
+        'Memory is not mixed into the first pass. After the document Compile completes, a second Compile automatically uses team Memory as from and the first knowledge base as to.',
+      dropzone: 'Drop team Memory files here, or click to choose',
+      formats: 'MD / TXT / JSON / YAML. Leave empty for a document-only run.',
+      incrementalReason:
+        'This is the team Memory incremental-update stage. Inspect the complete existing target knowledge base and use team Memory as new evidence to update, extend, or correct it. Language such as “now” or “changed from X to Y” supersedes old current facts: revise every affected current claim instead of only appending provenance or creating a separate insight while stale wording remains. Preserve still-accurate document knowledge, provenance, WikiLinks, and every configured view tag, and avoid duplicate pages.',
+      pipeline: {
+        documents: '1 · Documents build the main knowledge base',
+        incremental: '2 · Team Memory updates it incrementally',
+      },
+    },
+    reason: {
+      label: 'Mining objective',
+      default:
+        'Turn these documents into an OKF knowledge base the team can retrieve and reuse. Extract important entities, concepts, syntheses, and relationships, and keep provenance close to every material claim.',
+      placeholder:
+        'Describe the question, audience, scope, language, and priorities…',
+      hint: 'This becomes the ov compile reason. The llm-wiki Skill defines the output structure; this instruction steers this run.',
+    },
+    actions: {
+      start: 'Start knowledge mining',
+      running: 'Mining…',
+      cancel: 'Cancel Compile task',
+      newJob: 'New mining task',
+      removeFile: 'Remove {{name}}',
+    },
+    status: {
+      title: 'Task progress',
+      vikingBot:
+        'OpenViking runs the knowledge work in VikingBot’s task-scoped AgentLoop.',
+      taskId: 'Task ID',
+      documentTaskId: 'Document task',
+      memoryTaskId: 'Memory task',
+      humanTaskId: 'Human input',
+      pending: 'Waiting for document task',
+      skipped: 'Not configured',
+      skill: 'Skill',
+      okfConfig: 'OKF config',
+      output: 'Output',
+      cancelledDescription:
+        'The task was cancelled. Writes already completed are not rolled back.',
+    },
+    phases: {
+      idle: 'Ready',
+      preparing: 'Preparing',
+      uploading: 'Parsing files',
+      compiling_documents: 'Mining documents',
+      compiling_memory: 'Updating from Memory',
+      compiling_human: 'Updating from human input',
+      awaiting_human: 'Waiting for human evidence',
+      partial: 'Partial result · validation failed',
+      completed: 'Completed',
+      failed: 'Failed',
+      cancelled: 'Cancelled',
+    },
+    stages: {
+      idle: 'Waiting for files',
+      preparing: 'Checking VikingBot and preparing the llm-wiki Skill',
+      uploading: 'Uploading, parsing, and generating semantic indexes',
+      compiling: 'Waiting for VikingBot',
+      compiling_documents: 'Waiting for the document Compile',
+      compiling_memory: 'Waiting for the team Memory incremental Compile',
+      compiling_human: 'Waiting for the human-answer incremental Compile',
+      awaiting_human:
+        'Conflicts or evidence gaps found; waiting for human evidence before completion',
+      loading_skill: 'Loading the llm-wiki Skill',
+      collecting_context: 'Collecting source and target context',
+      agent: 'VikingBot is reading, synthesizing, and writing',
+      rendering: 'Validating and rendering Wiki outputs',
+      writing: 'Writing to the OpenViking target',
+      refreshing: 'Generating semantic sidecars and refreshing indexes',
+      salvaging: 'Saving usable partial outputs',
+      completed: 'Knowledge Wiki is ready',
+      cancelled: 'Task cancelled',
+      failed: 'Task execution failed',
+    },
+    results: {
+      title: 'Mining results',
+      description:
+        'Browse the navigation, entity, concept, and synthesis pages produced by llm-wiki.',
+      completed: '{{count}} Wiki pages created or updated.',
+      awaitingHuman:
+        'A reviewable provisional knowledge base is ready and paused at the human-evidence gate. It becomes final only after the answers are applied.',
+      partialTitle: 'This is a salvaged partial result',
+      partial:
+        'The task did not pass the complete OKF validation, so later Memory and human incremental stages were stopped. Saved pages, audit artifacts, and derived views remain reviewable, but this is not a final knowledge base.',
+      waitingTitle: 'VikingBot is working',
+      waitingDescription:
+        'Document parsing and long-running Agent work can take several minutes. Keep this page open and status will refresh automatically.',
+      emptyTitle: 'No mining result yet',
+      emptyDescription:
+        'Choose documents, describe the objective, and start. The result is persisted as an OpenViking Resource.',
+    },
+    views: {
+      label: 'Knowledge organization views',
+      main: 'Main view',
+      mainDescription:
+        'The main view mirrors the real OpenViking target directory. Derived views reorganize the same pages by OKF tags without copying knowledge.',
+      mainStructure: 'Enforced leaf structure: {{categories}}.',
+      metaSummary:
+        '{{units}} meta-knowledge units and {{files}} knowledge files. Main, domain, and usage views always have exactly the same file total.',
+      incompleteMetaSummary:
+        '{{count}} meta-knowledge units in this legacy result are missing what / why / how pages. Missing pages are not fabricated; rerun mining to produce complete triplets.',
+      emptyGroup: 'No page is assigned to this group yet.',
+      leafLabels: {
+        what: 'what it is',
+        why: 'why it matters',
+        how: 'how to do it',
+      },
+      guides: {
+        contentLabel: 'What is here',
+        useLabel: 'When to use it',
+        main: {
+          title: 'Main view: physical files grouped by meta-knowledge',
+          purpose:
+            'This is the single source of truth and mirrors the folders and files actually stored in OpenViking, not a tag-generated copy.',
+          content:
+            'Every meta-knowledge unit contains exactly three physical files: what, why, and how. The root navigation page is not counted as knowledge.',
+          use: 'Use it to understand scope, browse the complete hierarchy, or locate the physical home of a claim.',
+        },
+        domain: {
+          title: 'Knowledge domain: primary subject of a meta-knowledge unit',
+          purpose:
+            'Answers which subject area primarily owns the unit. It moves the whole what / why / how triplet without creating, copying, or splitting files. Every unit selects one primary domain.',
+          content:
+            'People and organizations, products and systems, processes and methods, and decisions and insights.',
+          use: 'Use it when you know the business or technical area you want to explore.',
+        },
+        usage: {
+          title: 'Usage: grouped by the job to be done',
+          purpose:
+            'Answers what job the unit primarily supports. Every unit selects one primary scenario and moves as one complete what / why / how triplet without duplicated files.',
+          content:
+            'Onboarding, planning and decisions, execution, troubleshooting, and reference lookup.',
+          use: 'Use it when you have a concrete task and want directly applicable knowledge.',
+        },
+        graph: {
+          title: 'Knowledge cloud: a spatial view of units and relations',
+          purpose:
+            'Directly reuses the KG Explorer HTML from OpenViking’s knowledge-graph example and adapts meta-knowledge, what/why/how pages, WikiLinks, and cross-knowledge references to its graph data.',
+          content:
+            'Preserves the official D3 force layout, type filters, relation legend, search, neighbor focus, evidence chains, and entity inspector. Colors and shapes distinguish units and facets.',
+          use: 'Use it to discover clusters, isolated pages, cross-unit connections, and the overall shape of the knowledge base.',
+        },
+        coverage: {
+          title: 'Source coverage: disposition of every upload',
+          purpose:
+            'Reconciles uploaded, actually inspected, cited, merged, and skipped sources as a hard Compile submission gate.',
+          content:
+            'Each upload-level source status, output pages, merge target, or specific skip reason.',
+          use: 'Use it to find unread files, explain output counts, or audit why a source did not become an independent meta-knowledge unit.',
+        },
+        intermediates: {
+          title: 'Intermediates: the mining audit trail',
+          purpose:
+            'These are not final knowledge pages. They expose how VikingBot read evidence, formed conclusions, and found conflicts or gaps.',
+          content:
+            'Run manifest, per-page evidence ledger, investigation report, and structured questionnaire.',
+          use: 'Use it to trace provenance, audit generation, inspect omissions, or understand why a question was asked.',
+        },
+        questionnaire: {
+          title: 'Human investigation: the pre-completion evidence gate',
+          purpose:
+            'The workflow pauses here when evidence conflicts or is incomplete; VikingBot does not guess and declare the run complete.',
+          content:
+            'Only questions that materially affect reliability, linked to their conflict or evidence-gap impact.',
+          use: 'A knowledgeable teammate supplies verifiable answers; VikingBot then revises and completes the knowledge base.',
+        },
+      },
+    },
+    graph: {
+      title: 'Knowledge cloud',
+      legend: 'Knowledge legend',
+      interactionHint:
+        'Official KG Explorer: drag, zoom, search entities, and click nodes to inspect relations and evidence.',
+      nodeCount: '{{count}} nodes',
+      edgeCount: '{{count}} relations',
+      reset: 'Reset view',
+      openPage: 'Open knowledge page',
+      emptyTitle: 'No knowledge nodes to draw',
+      emptyDescription:
+        'The knowledge cloud appears here after mining produces meta-knowledge pages.',
+      types: {
+        meta: 'Meta-knowledge',
+        what: 'What',
+        why: 'Why',
+        how: 'How',
+        external: 'External knowledge',
+      },
+    },
+    intermediates: {
+      title: 'Intermediates',
+      description:
+        'Inspect knowledge candidates, per-document read coverage, cross-stage evidence history, evidence gaps, and the human-input questionnaire.',
+      kinds: {
+        run_manifest: 'Run manifest',
+        evidence_ledger: 'Evidence ledger',
+        investigation_report: 'Investigation report',
+        questionnaire: 'Questionnaire',
+        source_coverage: 'Source coverage',
+        candidate_knowledge: 'Candidate knowledge',
+        readlist: 'Per-document read ledger',
+        evidence_history: 'Cross-stage evidence history',
+      },
+      candidates: 'Knowledge candidates',
+      promoted: 'Promoted to meta-knowledge',
+      readCoverage: 'Required fragment reads',
+      documentCoverage: 'Documents fully inspected',
+    },
+    coverage: {
+      title: 'Source coverage',
+      uploaded: 'Uploaded',
+      inspected: 'Inspected',
+      cited: 'Cited',
+      merged: 'Merged',
+      skipped: 'Skipped',
+      reason: 'Reason',
+      mergedInto: 'Merged into',
+      outputs: 'Outputs',
+      loadError: 'Could not load source coverage',
+      legacyTitle: 'No source coverage record for this legacy result',
+      legacyDescription:
+        'This result predates the source coverage gate. Run knowledge mining again to record every uploaded source.',
+    },
+    provenance: {
+      sources: 'Sources and intermediate evidence',
+      knowledgeLinks: 'Contextual cross-knowledge relations (many-to-many)',
+      knowledgeLinksHint:
+        'Different passages may reference different knowledge targets, and the same target may be cited by many pages. Body links show the actual reference position.',
+      linkContext: 'Reference position: {{context}}',
+      noKnowledgeLinks: 'This page body declares no cross-knowledge relation.',
+    },
+    questionnaire: {
+      title: 'Human investigation',
+      description:
+        'VikingBot does not silently arbitrate unresolved conflicts or invent missing evidence. Answer the questionnaire to incrementally write verified human evidence back to the same knowledge base.',
+      incrementalReason:
+        'This is the human-knowledge incremental stage. Treat questionnaire answers as new human-answer evidence; resolve the linked conflicts or evidence gaps and update affected pages, the evidence ledger, investigation report, and questionnaire status while keeping the same target.',
+      needsInput: 'Human knowledge required',
+      clear: 'No open knowledge gaps',
+      conflict: 'Evidence conflict',
+      evidenceGap: 'Evidence gap',
+      loadError: 'Could not load the questionnaire',
+      formTitle: 'Knowledge supplement questionnaire',
+      formDescription:
+        'The knowledge base is still awaiting evidence. Answers are stored as human evidence and applied through an incremental Compile; the run completes only after conflicts and gaps are handled.',
+      answerPlaceholder:
+        'Provide a verifiable answer, time scope, and supporting basis…',
+      submit: 'Submit answers and update',
+      answered: 'Human questions resolved',
+      answeredDescription:
+        'Question history is retained; answers were written as a human-answer source and the investigation report was updated.',
+      noQuestions: 'No human input is currently required',
+      noQuestionsDescription:
+        'The investigation report is clear and has no unresolved questions.',
+    },
+    errors: {
+      title: 'Task failed',
+      botUnavailable:
+        'Could not connect to VikingBot. Start OpenViking with --with-bot and check the model configuration.',
+      unsupportedFile: '{{name}} is not a supported document format.',
+      unsupportedMemoryFile: '{{name}} is not a supported team Memory format.',
+      fileTooLarge: '{{name}} exceeds the {{size}} per-file limit.',
+      compileFailed: 'VikingBot Compile failed.',
+      resultLoad: 'Could not load the result directory',
+      pageLoad: 'Could not load the Wiki page',
+      missingJob:
+        'The current mining job is unavailable, so human answers cannot be submitted.',
     },
   },
   monitoringPage: {

@@ -561,11 +561,16 @@ class VikingClient:
         limit: int = 10,
     ):
         """搜索资源"""
-        kwargs: Dict[str, Any] = {"limit": limit}
+        options: Dict[str, Any] = {}
         if context_type is not None:
-            kwargs["context_type"] = context_type
+            options["context_type"] = context_type
         if filter is not None:
-            kwargs["filter"] = filter
+            options["filter"] = filter
+        kwargs: Dict[str, Any] = {"limit": limit}
+        if options:
+            # Newer SDKs route optional Find fields through the typed options
+            # mapping rather than accepting them as top-level keyword arguments.
+            kwargs["options"] = options
         if target_uri:
             return await self.client.find(query, target_uri=target_uri, **kwargs)
         return await self.client.find(query, **kwargs)
@@ -606,7 +611,11 @@ class VikingClient:
         await self.client.mkdir(uri)
 
     async def tree(self, uri: str, *, node_limit: int = 1000) -> List[Dict[str, Any]]:
-        return await self.client.tree(uri, node_limit=node_limit)
+        # The SDK/server default depth is only three levels. Compile knowledge
+        # pages live at knowledge/<topic>/<meta_id>/<facet>/<page>, so using the
+        # default silently omitted the canonical Wiki tree from incremental
+        # checkouts. Node count remains the primary bounded inventory guard.
+        return await self.client.tree(uri, node_limit=node_limit, level_limit=128)
 
     async def read_raw(self, uri: str, offset: int = 0, limit: int = -1) -> str:
         return await self.client.read_raw(uri, offset=offset, limit=limit)

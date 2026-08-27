@@ -11,6 +11,7 @@ pub async fn run(
     from_uris: Vec<String>,
     to: String,
     skill: String,
+    okf_config: Option<String>,
     reason: Option<String>,
     wait: bool,
     timeout: Option<f64>,
@@ -29,7 +30,14 @@ pub async fn run(
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let accepted = client
-        .create_compile(&sources, to.trim(), skill.trim(), reason, runtime_timeout)
+        .create_compile(
+            &sources,
+            to.trim(),
+            skill.trim(),
+            okf_config.as_deref().map(str::trim),
+            reason,
+            runtime_timeout,
+        )
         .await?;
     if !wait {
         render_accepted(&accepted, output_format, compact);
@@ -133,6 +141,11 @@ fn render_completed(value: &CompileTaskStatus, format: OutputFormat, compact: bo
             page_count: 0,
             link_count: 0,
             warnings: Vec::new(),
+            views: Vec::new(),
+            main_view: None,
+            intermediate_artifacts: Vec::new(),
+            investigation_status: None,
+            question_count: 0,
         });
     println!("to: {}", result.to);
     println!("created: {}", result.created.len());
@@ -140,6 +153,18 @@ fn render_completed(value: &CompileTaskStatus, format: OutputFormat, compact: bo
     println!("unchanged: {}", result.unchanged.len());
     println!("page_count: {}", result.page_count);
     println!("link_count: {}", result.link_count);
+    println!(
+        "investigation_status: {}",
+        result
+            .investigation_status
+            .as_deref()
+            .unwrap_or("not_configured")
+    );
+    println!("question_count: {}", result.question_count);
+    println!(
+        "intermediate_artifacts: {}",
+        result.intermediate_artifacts.len()
+    );
     for warning in result.warnings {
         eprintln!("warning: {warning}");
     }

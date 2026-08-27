@@ -47,6 +47,7 @@ class _DummyHTTPClient:
         self.kwargs = kwargs
         self.find_calls = []
         self.ls_calls = []
+        self.tree_calls = []
         self.read_calls = []
         self.closed = False
         _DummyHTTPClient.instances.append(self)
@@ -85,6 +86,10 @@ class _DummyHTTPClient:
 
     async def ls(self, path, recursive=False):
         self.ls_calls.append((path, recursive))
+        return []
+
+    async def tree(self, *_args, **_kwargs):
+        self.tree_calls.append((_args, _kwargs))
         return []
 
     async def search(self, *_args, **_kwargs):
@@ -156,6 +161,39 @@ def test_viking_client_init_root_mode_sets_account_and_user(monkeypatch):
     assert first.kwargs["user"] == "admin"
     assert first.kwargs["profile_enabled"] is False
     assert "agent_id" not in first.kwargs
+
+
+@pytest.mark.asyncio
+async def test_viking_client_uses_deep_tree_and_sdk_find_options(monkeypatch):
+    monkeypatch.setattr(ov_server_module, "load_config", lambda: _make_config("root"))
+    client = VikingClient()
+    first = _DummyHTTPClient.instances[0]
+
+    await client.tree("viking://resources/wiki", node_limit=2001)
+    await client.find(
+        "Atlas",
+        target_uri="viking://resources/wiki",
+        context_type="resource",
+        filter={"tags": ["atlas"]},
+        limit=10,
+    )
+
+    assert first.tree_calls == [
+        (("viking://resources/wiki",), {"node_limit": 2001, "level_limit": 128})
+    ]
+    assert first.find_calls == [
+        (
+            ("Atlas",),
+            {
+                "target_uri": "viking://resources/wiki",
+                "limit": 10,
+                "options": {
+                    "context_type": "resource",
+                    "filter": {"tags": ["atlas"]},
+                },
+            },
+        )
+    ]
 
 
 def test_viking_client_uses_injected_config_without_reloading(monkeypatch):

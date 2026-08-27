@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from vikingbot.agent import loop as loop_module
 from vikingbot.agent.context import ContextBuilder
-from vikingbot.agent.loop import AgentLoop
+from vikingbot.agent.loop import AgentLoop, AgentRepeatedToolFailure
 from vikingbot.bus.events import InboundMessage, OutboundEventType
 from vikingbot.bus.queue import MessageBus
 from vikingbot.config.schema import AgentsConfig, Config, SessionKey
@@ -98,6 +98,78 @@ def test_agents_config_temperature_schema_caps_at_two():
     assert temperature["default"] == 0.7
     assert temperature["minimum"] == 0.0
     assert temperature["maximum"] == 2.0
+
+
+@pytest.mark.asyncio
+async def test_structured_stop_tool_aborts_after_three_identical_validation_failures(
+    temp_dir: Path,
+):
+    class Provider(LLMProvider):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        async def chat(self, *args, **kwargs):
+            del args, kwargs
+            self.calls += 1
+            return LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCallRequest(
+                        id=f"submit-{self.calls}",
+                        name="submit_wiki_bundle",
+                        arguments={},
+                        tokens=1,
+                    )
+                ],
+                usage={"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+            )
+
+        def get_default_model(self) -> str:
+            return "fake-model"
+
+    class Registry:
+        def get_definitions(self, **kwargs):
+            del kwargs
+            return [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "submit_wiki_bundle",
+                        "description": "Submit",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ]
+
+        async def execute(self, tool_name, arguments, **kwargs):
+            del arguments, kwargs
+            assert tool_name == "submit_wiki_bundle"
+            return "Error: Invalid target checkout: evidence ledger mismatch"
+
+    provider = Provider()
+    loop = AgentLoop(
+        bus=MessageBus(),
+        provider=provider,
+        workspace=temp_dir / "workspace",
+        config=Config(storage_workspace=str(temp_dir)),
+        max_iterations=60,
+    )
+
+    with pytest.raises(AgentRepeatedToolFailure) as raised:
+        await loop._run_agent_loop(
+            messages=[{"role": "user", "content": "submit"}],
+            session_key=SessionKey(type="compile", channel_id="cmp", chat_id="cmp"),
+            publish_events=False,
+            tool_registry=Registry(),
+            stop_tool_names=["submit_wiki_bundle"],
+            allow_final_fallback=False,
+            repeated_stop_error_limit=3,
+        )
+
+    assert raised.value.repeats == 3
+    assert raised.value.usage["total_tokens"] == 9
+    assert provider.calls == 3
 
 
 def test_agents_config_enables_subagents_by_default():
