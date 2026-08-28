@@ -6,15 +6,18 @@ import type { MetaKnowledgeUnit } from './meta-knowledge'
 const root = 'viking://resources/wiki'
 const unit: MetaKnowledgeUnit = {
   entries: {
-    how: {
+    execution: {
       name: 'configure.md',
-      uri: `${root}/knowledge/rag/how/configure.md`,
+      uri: `${root}/configured-root/execution/rag/configure.md`,
     },
-    what: {
+    definition: {
       name: 'retrieval.md',
-      uri: `${root}/knowledge/rag/what/retrieval.md`,
+      uri: `${root}/configured-root/definition/rag/retrieval.md`,
     },
-    why: { name: 'benefits.md', uri: `${root}/knowledge/rag/why/benefits.md` },
+    rationale: {
+      name: 'benefits.md',
+      uri: `${root}/configured-root/rationale/rag/benefits.md`,
+    },
   },
   entryPaths: {},
   id: 'knowledge/rag/retrieval',
@@ -38,11 +41,11 @@ describe('knowledge graph', () => {
     const graph = buildKnowledgeGraph(
       [unit],
       {
-        [unit.entries.what!.uri]: metadata('Retrieval', ['configure']),
-        [unit.entries.why!.uri]: metadata('Benefits'),
-        [unit.entries.how!.uri]: metadata('Configure'),
+        [unit.entries.definition!.uri]: metadata('Retrieval', ['configure']),
+        [unit.entries.rationale!.uri]: metadata('Benefits'),
+        [unit.entries.execution!.uri]: metadata('Configure'),
       },
-      ['what', 'why', 'how'],
+      ['definition', 'rationale', 'execution'],
     )
 
     expect(graph.nodes.filter((node) => node.kind === 'meta')).toHaveLength(1)
@@ -57,7 +60,7 @@ describe('knowledge graph', () => {
     const graph = buildKnowledgeGraph(
       [unit],
       {
-        [unit.entries.what!.uri]: {
+        [unit.entries.definition!.uri]: {
           ...metadata('Retrieval'),
           knowledgeLinks: [
             {
@@ -69,10 +72,10 @@ describe('knowledge graph', () => {
             },
           ],
         },
-        [unit.entries.why!.uri]: metadata('Benefits'),
-        [unit.entries.how!.uri]: metadata('Configure'),
+        [unit.entries.rationale!.uri]: metadata('Benefits'),
+        [unit.entries.execution!.uri]: metadata('Configure'),
       },
-      ['what', 'why', 'how'],
+      ['definition', 'rationale', 'execution'],
     )
     const edge = graph.edges.find((item) => item.relation === 'depends-on')
 

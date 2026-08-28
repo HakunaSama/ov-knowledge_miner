@@ -2,11 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { fetchFileContent, fetchFsTree } from '#/routes/resources/-lib/api'
 
-import {
-  importedMiningJob,
-  inferCompileViewsFromTags,
-  inspectCliResult,
-} from './result-import'
+import { importedMiningJob, inspectCliResult } from './result-import'
 
 vi.mock('#/routes/resources/-lib/api', () => ({
   fetchFileContent: vi.fn(),
@@ -35,13 +31,13 @@ describe('CLI knowledge result import', () => {
     vi.mocked(fetchFsTree).mockReset()
   })
 
-  it('reconstructs rendering metadata from a CLI Wiki directory', async () => {
+  it('does not invent rendering metadata from a CLI Wiki directory', async () => {
     vi.mocked(fetchFsTree).mockResolvedValue({
       nodes: [
         node('index.md'),
-        node('knowledge/what/products/rag/rag.md'),
-        node('knowledge/why/compliance/rag/rag.md'),
-        node('knowledge/how/technology/backend/rag/rag.md'),
+        node('configured-root/definition/catalog/rag/rag.md'),
+        node('configured-root/rationale/policy/rag/rag.md'),
+        node('configured-root/execution/runtime/rag/rag.md'),
         node('_mining/run-manifest.json'),
         node('_mining/source-coverage.json'),
         node('_mining/investigation-report.json'),
@@ -85,16 +81,7 @@ describe('CLI knowledge result import', () => {
     expect(inspected.result).toMatchObject({
       from: ['viking://resources/source'],
       investigation_status: 'clear',
-      main_view: {
-        directory_routes: {
-          how: ['technology/backend'],
-          what: ['products'],
-          why: ['compliance'],
-        },
-        facet_categories: ['what', 'why', 'how'],
-        path_structure: ['facet', 'route', 'meta_id', 'filename'],
-        root_path: 'knowledge',
-      },
+      main_view: null,
       page_count: 4,
       source_coverage: {
         cited: 8,
@@ -106,6 +93,73 @@ describe('CLI knowledge result import', () => {
       to: target,
     })
     expect(inspected.result.intermediate_artifacts).toHaveLength(4)
+    expect(inspected.result.warnings).toContain(
+      'The imported result has no OKF main_view metadata. Studio will not infer a directory schema.',
+    )
+  })
+
+  it('preserves custom main-view and derived-view metadata from Compile', async () => {
+    vi.mocked(fetchFsTree).mockResolvedValue({
+      nodes: [
+        node('index.md'),
+        node('configured-root/definition/catalog/rag/rag.md'),
+      ],
+      rootUri: target,
+    })
+    const hint = {
+      created: [],
+      from: [],
+      link_count: 0,
+      main_view: {
+        derived_views_include_exempt: false,
+        exempt_paths: ['index.md'],
+        facet_categories: ['definition'],
+        meta_knowledge: {
+          group_by: 'frontmatter_field' as const,
+          id_field: 'meta_id',
+          require_complete: true,
+          shared_view_tags: true,
+        },
+        path_structure: [
+          'facet' as const,
+          'route' as const,
+          'meta_id' as const,
+          'filename' as const,
+        ],
+        root_path: 'configured-root',
+        single_source_of_truth: true,
+      },
+      okf_version: '1.2',
+      page_count: 1,
+      skill: 'llm-wiki',
+      to: target,
+      unchanged: [],
+      updated: [],
+      validation_passed: true,
+      views: [
+        {
+          description: 'Configured view',
+          groups: [
+            {
+              description: 'Configured group',
+              id: 'catalog',
+              tag: 'view/catalog/catalog',
+              title: 'Catalog',
+            },
+          ],
+          id: 'catalog',
+          selection: 'exactly_one' as const,
+          title: 'Catalog',
+        },
+      ],
+      warnings: [],
+    }
+
+    const inspected = await inspectCliResult(target, hint)
+
+    expect(inspected.result.main_view).toEqual(hint.main_view)
+    expect(inspected.result.views).toEqual(hint.views)
+    expect(inspected.result.warnings).toEqual([])
   })
 
   it('rejects a directory that is not a rendered Wiki result', async () => {
@@ -147,54 +201,5 @@ describe('CLI knowledge result import', () => {
         targetUri: target,
       }).phase,
     ).toBe('awaiting_human')
-  })
-
-  it('infers derived views from namespaced page tags', () => {
-    expect(
-      inferCompileViewsFromTags([
-        'view/domain/products-and-systems',
-        'view/domain/processes-and-methods',
-        'view/usage/reference',
-        'unrelated',
-      ]),
-    ).toMatchObject([
-      {
-        id: 'domain',
-        groups: [
-          { id: 'processes-and-methods' },
-          { id: 'products-and-systems' },
-        ],
-      },
-      { id: 'usage', groups: [{ id: 'reference' }] },
-    ])
-  })
-
-  it('infers a two-level perspective path from nested tags', () => {
-    expect(
-      inferCompileViewsFromTags([
-        'view/perspective/topic/operations',
-        'view/perspective/synthesis/technology-data',
-      ]),
-    ).toMatchObject([
-      {
-        id: 'perspective',
-        groups: [
-          {
-            id: 'synthesis/technology-data',
-            path: [
-              { id: 'synthesis', title: 'SYNTHESIS' },
-              { id: 'technology-data', title: 'technology-data' },
-            ],
-          },
-          {
-            id: 'topic/operations',
-            path: [
-              { id: 'topic', title: 'TOPIC' },
-              { id: 'operations', title: 'operations' },
-            ],
-          },
-        ],
-      },
-    ])
   })
 })

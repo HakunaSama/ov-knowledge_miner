@@ -73,7 +73,7 @@ const workspace = {
     eyebrow: 'VikingBot · LLM Wiki',
     title: 'Knowledge Mining',
     description:
-      'Build every knowledge item as one meta-knowledge triplet of what / why / how pages, then incrementally update the same knowledge base from team Memory and human answers. Main, domain, and usage views always browse the same files.',
+      'Mine knowledge using the directory levels, facets, and derived views declared by the current OKF configuration, then incrementally update the same knowledge base from team Memory and human answers.',
     history: {
       current: 'Viewing',
       description:
@@ -265,55 +265,33 @@ const workspace = {
       mainStructure:
         'Configured path levels: {{structure}}. Facet must be one of {{categories}}; extra directories are rejected.',
       legacyStructure: 'legacy result without path_structure',
+      missingConfig:
+        'This result does not include OKF main-view metadata. Studio will not guess directories, facets, or views; import a task that includes Compile result metadata.',
       metaSummary:
-        '{{units}} meta-knowledge units and {{files}} knowledge files. Main, domain, and usage views always have exactly the same file total.',
+        '{{units}} meta-knowledge units and {{files}} knowledge files. The main view and every configured derived view reference the same physical files.',
       incompleteMetaSummary:
-        '{{count}} meta-knowledge units in this legacy result are missing what / why / how pages. Missing pages are not fabricated; rerun mining to produce complete triplets.',
+        '{{count}} meta-knowledge units do not cover every configured facet ({{categories}}). Missing pages are not fabricated.',
       emptyGroup: 'No page is assigned to this group yet.',
-      leafLabels: {
-        what: 'what it is',
-        why: 'why it matters',
-        how: 'how to do it',
-      },
       guides: {
         contentLabel: 'What is here',
         useLabel: 'When to use it',
         main: {
-          title: 'Main view: physical files grouped by what / why / how',
+          title: 'Main view: physical files organized by OKF configuration',
           purpose:
             'This is the single source of truth and mirrors the folders and files actually stored in OpenViking, not a tag-generated copy.',
           content:
-            'The top level is split into what, why, and how. Each facet enters an OKF-configured business route before the meta_id and filename; the root navigation page is not counted as knowledge.',
+            'The root, facets, directory routes, meta_id position, and filename level all come from the current OKF configuration. Studio adds no preset directories.',
           use: 'Use it to understand scope, browse the complete hierarchy, or locate the physical home of a claim.',
         },
-        perspective: {
-          title: 'Enterprise perspective: knowledge form by business domain',
-          purpose:
-            'This virtual view does not copy physical files. Tags map each complete meta-knowledge unit into one two-level directory.',
-          content:
-            'The first level is TOPIC, REFERENCE, PROCEDURE, or SYNTHESIS. The second is operations, product-service, customer-market, technology-data, management-finance, people-organization, compliance-risk, or corporate-brand.',
-          use: 'Use it to locate knowledge by both its form and its enterprise business domain.',
-        },
-        domain: {
-          title: 'Knowledge domain: primary subject of a meta-knowledge unit',
-          purpose:
-            'Answers which subject area primarily owns the unit. It moves the whole what / why / how triplet without creating, copying, or splitting files. Every unit selects one primary domain.',
-          content:
-            'People and organizations, products and systems, processes and methods, and decisions and insights.',
-          use: 'Use it when you know the business or technical area you want to explore.',
-        },
-        usage: {
-          title: 'Usage: grouped by the job to be done',
-          purpose:
-            'Answers what job the unit primarily supports. Every unit selects one primary scenario and moves as one complete what / why / how triplet without duplicated files.',
-          content:
-            'Onboarding, planning and decisions, execution, troubleshooting, and reference lookup.',
-          use: 'Use it when you have a concrete task and want directly applicable knowledge.',
+        configured: {
+          empty:
+            'The configuration does not declare any displayable group paths.',
+          use: 'Browse the same physical knowledge files through the group hierarchy declared by the current OKF configuration.',
         },
         graph: {
           title: 'Knowledge cloud: a spatial view of units and relations',
           purpose:
-            'Directly reuses the KG Explorer HTML from OpenViking’s knowledge-graph example and adapts meta-knowledge, what/why/how pages, WikiLinks, and cross-knowledge references to its graph data.',
+            'Directly reuses the KG Explorer HTML from OpenViking’s knowledge-graph example and adapts configured facets, WikiLinks, and cross-knowledge references to its graph data.',
           content:
             'Preserves the official D3 force layout, type filters, relation legend, search, neighbor focus, evidence chains, and entity inspector. Colors and shapes distinguish units and facets.',
           use: 'Use it to discover clusters, isolated pages, cross-unit connections, and the overall shape of the knowledge base.',
@@ -356,13 +334,6 @@ const workspace = {
       emptyTitle: 'No knowledge nodes to draw',
       emptyDescription:
         'The knowledge cloud appears here after mining produces meta-knowledge pages.',
-      types: {
-        meta: 'Meta-knowledge',
-        what: 'What',
-        why: 'Why',
-        how: 'How',
-        external: 'External knowledge',
-      },
     },
     intermediates: {
       title: 'Intermediates',

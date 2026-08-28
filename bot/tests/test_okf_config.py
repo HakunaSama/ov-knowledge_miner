@@ -224,6 +224,18 @@ def test_default_okf_config_maps_paths_with_last_match_winning():
     assert config.cross_knowledge.require_body_link is True
 
 
+def test_llm_wiki_skill_does_not_embed_default_facet_paths_or_triplets():
+    skill = (ROOT / "examples/compile/ov-compile-skills/llm-wiki/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Do not assume a root directory, facet name, facet count" in skill
+    assert "what/why/how" not in skill.casefold()
+    assert "knowledge/what/" not in skill.casefold()
+    assert "knowledge/why/" not in skill.casefold()
+    assert "knowledge/how/" not in skill.casefold()
+
+
 def test_configured_checkout_applies_defaults_and_literal_wikilinks():
     config = parse_okf_config(DEFAULT_CONFIG)
     pages = {

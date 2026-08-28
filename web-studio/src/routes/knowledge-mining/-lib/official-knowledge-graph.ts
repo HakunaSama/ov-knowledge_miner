@@ -8,13 +8,26 @@ type OfficialNodeStyle = {
   symbol: 'circle' | 'diamond' | 'hexagon' | 'square' | 'star' | 'triangle'
 }
 
-const NODE_STYLES: Record<string, OfficialNodeStyle> = {
+const BASE_NODE_STYLES: Record<string, OfficialNodeStyle> = {
   external: { color: '#ffbd59', label: '外部知识', symbol: 'star' },
-  how: { color: '#a88bff', label: 'How · 怎么做', symbol: 'triangle' },
   meta: { color: '#39f7ff', label: '元知识', symbol: 'hexagon' },
-  what: { color: '#6df7b1', label: 'What · 是什么', symbol: 'circle' },
-  why: { color: '#ff6b7f', label: 'Why · 为什么', symbol: 'diamond' },
 }
+const FACET_COLORS = [
+  '#6df7b1',
+  '#ff6b7f',
+  '#a88bff',
+  '#58a6ff',
+  '#f7c95c',
+  '#ff8f5c',
+  '#5ce1d3',
+  '#d97cff',
+]
+const FACET_SYMBOLS: OfficialNodeStyle['symbol'][] = [
+  'circle',
+  'diamond',
+  'triangle',
+  'square',
+]
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => {
@@ -52,10 +65,34 @@ export function extractOfficialKnowledgeGraphTemplate(source: string): string {
 
 function nodeType(node: KnowledgeGraphNode): string {
   if (node.kind !== 'page') return node.kind
-  return ['what', 'why', 'how'].includes(node.facet) ? node.facet : 'external'
+  return `facet:${node.facet || 'unclassified'}`
 }
 
-function officialGraphData(graph: KnowledgeGraphData) {
+function nodeStyles(
+  graph: KnowledgeGraphData,
+): Record<string, OfficialNodeStyle> {
+  const styles = { ...BASE_NODE_STYLES }
+  const facets = [
+    ...new Set(
+      graph.nodes
+        .filter((node) => node.kind === 'page')
+        .map((node) => node.facet || 'unclassified'),
+    ),
+  ]
+  facets.forEach((facet, index) => {
+    styles[`facet:${facet}`] = {
+      color: FACET_COLORS[index % FACET_COLORS.length],
+      label: facet,
+      symbol: FACET_SYMBOLS[index % FACET_SYMBOLS.length],
+    }
+  })
+  return styles
+}
+
+function officialGraphData(
+  graph: KnowledgeGraphData,
+  styles: Record<string, OfficialNodeStyle>,
+) {
   const degree = new Map<string, number>()
   const relationCounts = new Map<string, { count: number; label: string }>()
   for (const edge of graph.edges) {
@@ -78,7 +115,7 @@ function officialGraphData(graph: KnowledgeGraphData) {
     nodes: graph.nodes
       .map((node) => {
         const entityType = nodeType(node)
-        const style = NODE_STYLES[entityType]
+        const style = styles[entityType]
         return {
           aliases: [],
           body_html: '',
@@ -101,7 +138,10 @@ function officialGraphData(graph: KnowledgeGraphData) {
   }
 }
 
-function typeFilters(graph: KnowledgeGraphData): string {
+function typeFilters(
+  graph: KnowledgeGraphData,
+  styles: Record<string, OfficialNodeStyle>,
+): string {
   const counts = new Map<string, number>()
   for (const node of graph.nodes) {
     const type = nodeType(node)
@@ -115,7 +155,7 @@ function typeFilters(graph: KnowledgeGraphData): string {
   for (const [type, count] of [...counts.entries()].sort(
     (left, right) => right[1] - left[1],
   )) {
-    const style = NODE_STYLES[type]
+    const style = styles[type]
     filters.push(
       `<button class="type-filter" type="button" data-type="${escapeHtml(type)}">` +
         `<span class="type-dot" style="--type-color:${style.color}"></span>` +
@@ -146,7 +186,8 @@ export function renderOfficialKnowledgeGraphHtml({
   sourceName: string
   title: string
 }): string {
-  const data = officialGraphData(graph)
+  const styles = nodeStyles(graph)
+  const data = officialGraphData(graph, styles)
   const replacements: Record<string, string> = {
     __LINK_COUNT__: String(graph.edges.length),
     __NODE_COUNT__: String(graph.nodes.length),
@@ -154,7 +195,7 @@ export function renderOfficialKnowledgeGraphHtml({
     __SOURCE_NAME__: escapeHtml(sourceName),
     __TITLE__: escapeHtml(title),
     __TYPE_COUNT__: String(new Set(graph.nodes.map(nodeType)).size),
-    __TYPE_FILTERS__: typeFilters(graph),
+    __TYPE_FILTERS__: typeFilters(graph, styles),
   }
   let document = extractOfficialKnowledgeGraphTemplate(
     officialKnowledgeGraphSource,

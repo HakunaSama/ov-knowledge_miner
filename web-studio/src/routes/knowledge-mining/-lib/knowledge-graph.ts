@@ -50,6 +50,7 @@ export function buildKnowledgeGraph(
     pageEntries.map(({ entry }) => [entry.uri, `page:${entry.uri}`]),
   )
   const stemTargets = new Map<string, string[]>()
+  const facetSummary = facets.join('、')
 
   const addEdge = (
     source: string,
@@ -66,7 +67,9 @@ export function buildKnowledgeGraph(
   for (const unit of units) {
     const metaNodeId = `meta:${unit.id}`
     nodes.set(metaNodeId, {
-      description: `由 What、Why、How 三个知识切面组成的元知识：${unit.name}`,
+      description: facetSummary
+        ? `由配置切面（${facetSummary}）组成的元知识：${unit.name}`
+        : `由配置定义的知识切面组成的元知识：${unit.name}`,
       facet: '',
       id: metaNodeId,
       kind: 'meta',

@@ -73,7 +73,7 @@ const workspace = {
     eyebrow: 'VikingBot · LLM Wiki',
     title: '知识挖掘',
     description:
-      '把每项知识构造成一个由 what / why / how 三页组成的元知识，再用团队 Memory 和人工问卷答案增量更新同一知识库；主视图、知识域和使用场景始终浏览同一批知识文件。',
+      '按照本次 OKF 配置定义的目录层级、知识切面和派生视图挖掘知识，再用团队 Memory 和人工问卷答案增量更新同一知识库。',
     history: {
       current: '当前查看',
       description:
@@ -257,54 +257,32 @@ const workspace = {
       mainStructure:
         '配置路径层级：{{structure}}；facet 只能是 {{categories}}，不允许增加配置外目录。',
       legacyStructure: '旧结果未记录 path_structure',
+      missingConfig:
+        '该结果没有携带 OKF 主视图结构元数据。界面不会猜测目录、切面或视图；请导入包含 Compile 结果元数据的任务。',
       metaSummary:
-        '当前共 {{units}} 个元知识、{{files}} 个知识文件；主视图、知识域和使用场景的文件总数严格一致。',
+        '当前共 {{units}} 个元知识、{{files}} 个知识文件；主视图与配置声明的派生视图引用同一批真实文件。',
       incompleteMetaSummary:
-        '这个旧结果中有 {{count}} 个元知识缺少 what / why / how 页面。界面不会伪造缺失页；请重新执行挖掘以生成完整三元组。',
+        '有 {{count}} 个元知识没有覆盖配置要求的全部切面（{{categories}}）。界面不会伪造缺失页。',
       emptyGroup: '该分组暂时没有页面。',
-      leafLabels: {
-        what: '是什么',
-        why: '为什么',
-        how: '怎么做',
-      },
       guides: {
         contentLabel: '这里包含什么',
         useLabel: '什么时候使用',
         main: {
-          title: '主视图：按 what / why / how 浏览真实文件',
+          title: '主视图：按 OKF 配置浏览真实文件',
           purpose:
             '这是唯一事实源，直接对应 OpenViking 中真正保存的文件夹和文件，不是按标签生成的副本。',
           content:
-            '顶层分为 what（是什么）、why（为什么）和 how（怎么做），每个分区先进入 OKF 配置的业务目录路由，再进入 meta_id 与文件名；根导航页不计入知识文件。',
+            '根目录、知识切面、目录路由、meta_id 位置和文件名层级均来自本次 OKF 配置，界面不会补充任何预设目录。',
           use: '需要理解知识边界、浏览完整目录，或确认某条知识实际保存在哪里时使用。',
         },
-        perspective: {
-          title: '企业知识透视图：按知识形态与企业知识域浏览',
-          purpose:
-            '透视图不复制物理文件，而是用标签将完整元知识映射到一个两级目录。',
-          content:
-            '第一级为 TOPIC、REFERENCE、PROCEDURE、SYNTHESIS，第二级为 operations、product-service、customer-market、technology-data、management-finance、people-organization、compliance-risk、corporate-brand。',
-          use: '需要从知识形态和企业业务领域两个维度定位知识时使用。',
-        },
-        domain: {
-          title: '知识域：元知识的主要主题归属',
-          purpose:
-            '知识域回答“这项元知识主要属于哪个主题领域”。它只改变整组 what / why / how 的展示位置，不新增、复制或拆散任何文件。每个元知识只选一个主要知识域。',
-          content: '人员与组织、产品与系统、流程与方法、决策与洞察等主题分组。',
-          use: '已知自己想了解哪个业务或技术领域，希望横向浏览相关知识时使用。',
-        },
-        usage: {
-          title: '使用场景：按要完成的工作重新分组',
-          purpose:
-            '它回答“这项元知识主要用于完成什么工作”。每个元知识只选一个主要场景，并整体移动同一组 what / why / how，不会重复显示文件。',
-          content:
-            '新人入门、规划与决策、执行与协作、排障与风险、参考查询等任务分组。',
-          use: '面对具体任务，希望快速找到能直接帮助当前工作的知识时使用。',
+        configured: {
+          empty: '配置中尚未声明可展示的分组路径。',
+          use: '按照当前 OKF 配置声明的分组层级浏览同一批知识文件。',
         },
         graph: {
           title: '知识点阵云图：元知识与关系的空间视图',
           purpose:
-            '直接复用 OpenViking knowledge-graph 示例的 KG Explorer HTML，把元知识、what/why/how 页面、WikiLink 和跨知识引用适配成官方图谱数据。',
+            '直接复用 OpenViking knowledge-graph 示例的 KG Explorer HTML，把配置声明的知识切面、WikiLink 和跨知识引用适配成官方图谱数据。',
           content:
             '保留官方的 D3 力导向布局、类型筛选、关系图例、检索、邻居聚焦、证据链和实体检查器；颜色与形状区分元知识及各知识切面。',
           use: '需要发现知识簇、孤立页面、跨元知识联系和知识库整体结构时使用。',
@@ -347,13 +325,6 @@ const workspace = {
       emptyTitle: '暂无可绘制的知识节点',
       emptyDescription:
         '完成知识挖掘并生成元知识页面后，这里会显示知识点阵关系图。',
-      types: {
-        meta: '元知识',
-        what: 'What · 是什么',
-        why: 'Why · 为什么',
-        how: 'How · 怎么做',
-        external: '外部知识',
-      },
     },
     intermediates: {
       title: '中间产物',

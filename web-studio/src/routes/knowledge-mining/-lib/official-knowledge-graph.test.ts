@@ -9,10 +9,10 @@ import {
 const graph: KnowledgeGraphData = {
   edges: [
     {
-      evidence: ['meta-1 的 what 切面'],
-      id: 'meta|what|contains_what',
-      label: '包含 What',
-      relation: 'contains_what',
+      evidence: ['meta-1 的 definition 切面'],
+      id: 'meta|definition|contains_definition',
+      label: '包含 Definition',
+      relation: 'contains_definition',
       source: 'meta:1',
       target: 'page:1',
     },
@@ -29,14 +29,14 @@ const graph: KnowledgeGraphData = {
       uri: null,
     },
     {
-      description: 'What retrieval means',
-      facet: 'what',
+      description: 'A configured definition facet',
+      facet: 'definition',
       id: 'page:1',
       kind: 'page',
-      label: 'What is retrieval?',
+      label: 'Retrieval definition',
       metaId: 'meta-1',
       sources: ['viking://resources/source.pdf'],
-      uri: 'viking://resources/wiki/what.md',
+      uri: 'viking://resources/wiki/definition.md',
     },
   ],
 }
@@ -59,8 +59,9 @@ describe('official knowledge graph renderer', () => {
 
     expect(document).toContain('OPENVIKING // KG EXPLORER')
     expect(document).toContain('d3.forceSimulation(DATA.nodes)')
-    expect(document).toContain('包含 What')
-    expect(document).toContain('What · 是什么')
+    expect(document).toContain('包含 Definition')
+    expect(document).toContain('definition')
+    expect(document).not.toContain('What · 是什么')
     expect(document).toContain('A \\u003csafe\\u003e meta knowledge unit')
     expect(document).not.toMatch(/__(?:DATA_JSON|NODE_COUNT|TYPE_FILTERS)__/)
   })

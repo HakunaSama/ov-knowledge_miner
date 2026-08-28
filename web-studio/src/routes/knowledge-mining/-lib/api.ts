@@ -12,7 +12,7 @@ import {
 export const LLM_WIKI_SKILL_NAME = 'llm-wiki'
 export const DEFAULT_OKF_CONFIG = defaultOkfConfig
 const LLM_WIKI_SKILL_VERSION_MARKER =
-  'OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 4.5'
+  'OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 4.6'
 
 export type CompileStatus =
   | 'accepted'

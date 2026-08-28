@@ -3,7 +3,7 @@ name: llm-wiki
 description: Compile heterogeneous documents, notes, spreadsheets, reports, and code into an evidence-grounded OKF knowledge base with entity, concept, and synthesis pages; deterministic path/type rules; source metadata; and literal cross-page WikiLinks. Use with ov compile for new or incremental knowledge mining.
 ---
 
-<!-- OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 4.5 -->
+<!-- OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 4.6 -->
 
 # LLM Wiki
 
@@ -40,7 +40,7 @@ The default contract uses these knowledge types:
 | Type | Retrieval purpose |
 | --- | --- |
 | `entity` | A named person, organization, product, project, system, service, event, case, or other subject with a stable identity or boundary |
-| `concept` | A reusable idea, tool mechanism, skill, protocol, method, trajectory, policy, or mental model that explains what, why, or how |
+| `concept` | A reusable idea, tool mechanism, skill, protocol, method, trajectory, policy, or mental model with a clear scope and mechanism |
 | `synthesis` | A cross-source overview, preference, event digest, insight, or other conclusion that combines evidence around a clear scope or question |
 
 Use `entity` and `concept` by default. Use `synthesis` only when the page genuinely
@@ -93,30 +93,26 @@ Every new Markdown knowledge page must match one `path_types` rule in the effect
 configuration, and its frontmatter `type` must equal the last matching rule. Later exact
 rules therefore override earlier directory-wide rules.
 
-The bundled default makes the physical main view the single source of truth. Except
-for root `index.md`, every page must follow `main_view.path_structure` exactly. The
-default structure is `facet/route/meta_id/filename`. The configured `what`, `why`, and
-`how` facets are at the top of the tree, while `route` expands to one exact path from
-that facet's `directory_routes` list:
+The effective configuration is the only authority for the physical directory tree.
+Do not assume a root directory, facet name, facet count, route, level order, navigation
+filename, or page type from this Skill. Read `main_view.root_path`,
+`main_view.path_structure`, `main_view.facet_categories`, optional
+`main_view.directory_routes`, `main_view.meta_knowledge`, `main_view.exempt_paths`, and
+`path_types`, then construct every path from those exact values.
 
-| Path | Type |
-| --- | --- |
-| `index.md` | `synthesis` |
-| `knowledge/what/<what-route>/<meta_id>/*.md` | `entity` — definitions, identities, components, current facts |
-| `knowledge/why/<why-route>/<meta_id>/*.md` | `synthesis` — rationale, decisions, tradeoffs, evidence-backed conclusions |
-| `knowledge/how/<how-route>/<meta_id>/*.md` | `concept` — procedures, mechanisms, runbooks, reusable methods |
-
-Treat every `path_structure` level as an exact ordered schema. `facet` must be one value
-from `facet_categories`; `route` must exactly match one configured relative path for
-that facet; `meta_id` must equal the page's configured frontmatter id; and `filename`
-is the Markdown filename. Never add an unconfigured directory level. Preserve an
-existing path only when it still matches the effective structure; tag-derived views
-never create duplicate copies of the page.
+Treat every configured `path_structure` level as an exact ordered schema. A `facet`
+segment must be one configured category; a `route` segment must be a route declared for
+that category; a `meta_id` segment must equal the configured frontmatter identity field;
+and `filename` is the Markdown filename. Never add, omit, reorder, or rename a configured
+level. Preserve an existing path only when it still matches the effective structure;
+tag-derived views never create duplicate copies of the page.
 
 ### Maintain `index.md`
 
-Always create or update root `index.md`. It is a compact navigation synthesis, not a
-duplicate domain article.
+When the effective contract declares a navigation page such as `index.md`, create or
+update it at its configured path and type. It is a compact navigation synthesis, not a
+duplicate domain article. Do not create a conventional index when the contract does not
+declare one.
 
 - Open with the knowledge base's domain and scope in one or two sentences.
 - Organize pages into useful domain clusters.
@@ -187,33 +183,22 @@ not duplicate or move pages to implement it.
 
 ### Build atomic meta-knowledge units
 
-With the bundled contract, one meta-knowledge unit is **exactly one complete
-what/why/how triplet**. The three pages share the same explicit frontmatter `meta_id`;
-the configured facet is the first path level, followed by one configured route and the
-meta id:
+When `main_view.meta_knowledge` is configured, one meta-knowledge unit is the complete
+set of pages required by the configured facets and grouped by the configured identity
+field. Use one stable, non-empty identity value for the whole unit. If
+`require_complete` is true, create exactly one page for every configured facet; otherwise
+create only evidence-supported facet pages. Never assume a fixed facet count or semantic
+role, and do not treat the facet pages as independent knowledge subjects.
 
-```text
-knowledge/what/<what-route>/<meta_id>/<descriptive-what-page>.md
-knowledge/why/<why-route>/<meta_id>/<descriptive-why-page>.md
-knowledge/how/<how-route>/<meta_id>/<descriptive-how-page>.md
-```
-
-The what page defines the unit, the why page explains its rationale or significance,
-and the how page makes it actionable. Do not create a standalone what, why, or how page
-without its two siblings. Give the three pages one stable, non-empty `meta_id`; filenames
-may differ so WikiLinks stay unambiguous. Do not treat the three facet pages as three
-independent knowledge subjects.
-
-All three pages in a unit must carry the same configured
-`view/perspective/<knowledge-form>/<enterprise-domain>` tag. The bundled perspective
-view uses `exactly_one`, so choose exactly one of TOPIC, REFERENCE, PROCEDURE, or
-SYNTHESIS and exactly one configured enterprise domain for the whole unit. Other useful
-non-view tags may still differ by facet. `index.md` is navigation only: do not assign it
-derived-view tags and never count it as another meta-knowledge unit.
+When `shared_view_tags` is true, every page in a unit must carry the same configured
+selection for each derived view. For each view, obey its declared hierarchy, tag prefix,
+leaf tags, and `selection` rule. Exempt navigation pages are not meta-knowledge units and
+must follow `derived_views_include_exempt`.
 
 - For every non-exempt knowledge page, select the configured group tags that describe
   its whole meta-knowledge unit and place their exact values in the frontmatter `tags`
-  list. Keep the configured view tags identical across its what/why/how triplet.
+  list. When required by the contract, keep configured view tags identical across all
+  facet pages in the unit.
 - Select at least one group per view. If a view uses `selection: exactly_one`, select
   one and only one group; `one_or_more` permits multiple well-supported groups.
 - Use only group tags declared by the effective contract under that view's
@@ -222,12 +207,12 @@ derived-view tags and never count it as another meta-knowledge unit.
 - During an incremental Compile, preserve still-valid view tags and revise them when
   new team Memory changes the page's scope or use.
 
-With the bundled contract, every page in one triplet might include:
+For example, a page may use a leaf tag copied verbatim from the effective contract:
 
 ```yaml
 tags:
-  - view/perspective/procedure/operations
-  - deployment
+  - <configured-view-leaf-tag>
+  - <optional-subject-tag>
 ```
 
 These tags are valid OKF frontmatter and are deterministically checked before the
@@ -241,7 +226,7 @@ structured `knowledge_links` entry:
 
 ```yaml
 knowledge_links:
-  - resource: viking://resources/another-wiki/knowledge/what/payment-adapter/adapter.md
+  - resource: viking://resources/another-wiki/<exact-configured-page-path>.md
     title: Payment adapter
     relation: depends-on
     direction: bidirectional
@@ -382,7 +367,7 @@ The same input and intermediate resources must appear in that page's frontmatter
 {
   "version": "1.0",
   "pages": [{
-    "path": "knowledge/what/authentication-boundary/page.md",
+    "path": "<exact-configured-page-path>.md",
     "source_resources": ["viking://resources/exact-supplied-source/file"],
     "intermediate_resources": ["viking://resources/exact-compile-target/_mining/evidence-ledger.json"],
     "claims": []
@@ -430,11 +415,7 @@ still-valid candidates; the platform merges candidates by id and recomputes the 
     "source_resources": ["viking://resources/source/uploaded-document"],
     "disposition": "promoted",
     "meta_id": "authentication-boundary",
-    "page_paths": [
-      "knowledge/what/authentication-boundary/authentication-boundary.md",
-      "knowledge/why/authentication-boundary/authentication-boundary-rationale.md",
-      "knowledge/how/authentication-boundary/authentication-boundary-procedure.md"
-    ],
+    "page_paths": ["<exact-configured-page-path>.md"],
     "stage": "documents"
   }],
   "summary": {
@@ -496,7 +477,7 @@ this file manually. Compile likewise owns `_mining/evidence-history.json`.
     "resource": "viking://resources/source/uploaded-document",
     "status": "cited",
     "inspected": true,
-    "page_paths": ["knowledge/what/meta-id/page.md"],
+    "page_paths": ["<exact-configured-page-path>.md"],
     "evidence_resources": ["viking://resources/source/uploaded-document/content.md"]
   }],
   "summary": {
@@ -579,13 +560,15 @@ Before calling `submit_wiki_bundle`, verify all of the following:
   `submit_candidate_knowledge` passed before any final page was generated or modified;
 
 - the effective OKF config was read and no config file was treated as knowledge;
-- `index.md` exists, is typed by its configured path rule, and catalogs active pages;
+- every navigation page required by the effective contract exists, matches its configured
+  path/type rule, and catalogs the applicable active pages;
 - every Wiki file matches a configured path and allowed type;
 - every non-exempt page follows the configured `main_view.path_structure` exactly,
   with no model-invented directory levels;
-- every meta-knowledge unit contains exactly one what, why, and how page sharing one
-  explicit `meta_id`, at the configured `meta_id` path level;
-- all three pages in a meta-knowledge unit use the same configured perspective leaf tag;
+- every meta-knowledge unit contains the exact configured facet-page set and shares one
+  explicit configured identity value at the configured `meta_id` path level;
+- every page in a meta-knowledge unit uses the configured per-view selections required
+  by `shared_view_tags` and each view's `selection` rule;
 - every `view/...` tag, group, and resulting derived-view branch is declared by the
   effective config; no undeclared view namespace is present;
 - exempt navigation pages never appear as files in derived knowledge views;

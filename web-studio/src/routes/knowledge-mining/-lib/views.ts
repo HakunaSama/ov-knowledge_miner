@@ -89,7 +89,10 @@ function objectList(
   return result
 }
 
-export function parseWikiPageMetadata(markdown: string): WikiPageMetadata {
+export function parseWikiPageMetadata(
+  markdown: string,
+  metaIdField = 'meta_id',
+): WikiPageMetadata {
   const match = markdown.match(
     /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/,
   )
@@ -137,7 +140,7 @@ export function parseWikiPageMetadata(markdown: string): WikiPageMetadata {
       if (topLevel[1] === 'title') metadata.title = unquote(value)
       if (topLevel[1] === 'description') metadata.description = unquote(value)
       if (topLevel[1] === 'type') metadata.type = unquote(value)
-      if (topLevel[1] === 'meta_id') metadata.metaId = unquote(value)
+      if (topLevel[1] === metaIdField) metadata.metaId = unquote(value)
       if (readingTags && value.trim()) metadata.tags.push(...inlineTags(value))
       continue
     }

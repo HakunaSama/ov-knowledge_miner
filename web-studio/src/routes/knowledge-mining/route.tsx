@@ -131,11 +131,7 @@ import type {
 } from './-lib/meta-knowledge'
 import { parseWikiPageMetadata } from './-lib/views'
 import type { WikiPageMetadata } from './-lib/views'
-import {
-  importedMiningJob,
-  inferCompileViewsFromTags,
-  inspectCliResult,
-} from './-lib/result-import'
+import { importedMiningJob, inspectCliResult } from './-lib/result-import'
 import { transitionAfterCompletedCompile } from './-lib/workflow'
 import {
   findWikiLinkTarget,
@@ -372,7 +368,6 @@ function FacetFirstKnowledgeTreeBranch({
 }
 
 function MetaKnowledgeTreeView({
-  categoryLabels,
   facets,
   metadata,
   rootPath,
@@ -381,7 +376,6 @@ function MetaKnowledgeTreeView({
   onSelect,
   selectedUri,
 }: {
-  categoryLabels: Record<string, string>
   facets: string[]
   metadata: Partial<Record<string, WikiPageMetadata>>
   rootPath: string
@@ -390,20 +384,15 @@ function MetaKnowledgeTreeView({
   onSelect: (uri: string) => void
   selectedUri: string | null
 }) {
-  const categoryLabelKey = facets
-    .map((facet) => `${facet}:${categoryLabels[facet] || ''}`)
-    .join('|')
+  const facetKey = facets.join('|')
   const tree = React.useMemo(
     () =>
       sections
         ? buildPerspectiveMetaKnowledgeTree(sections, facets)
         : buildFacetFirstMetaKnowledgeTree(units, facets, {
-            categoryLabels,
             rootPath,
           }),
-    // categoryLabelKey tracks language changes without rebuilding for a new
-    // object literal containing the same translated labels on every render.
-    [categoryLabelKey, facets, rootPath, sections, units],
+    [facetKey, facets, rootPath, sections, units],
   )
   const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(
     () => new Set(),
@@ -1081,15 +1070,19 @@ function KnowledgeMiningRoute() {
   const mainViewFacets = React.useMemo(
     () =>
       effectiveCompileResult?.main_view?.facet_categories ||
-      effectiveCompileResult?.main_view?.leaf_categories || [
-        'what',
-        'why',
-        'how',
-      ],
+      effectiveCompileResult?.main_view?.leaf_categories ||
+      [],
     [
       effectiveCompileResult?.main_view?.facet_categories,
       effectiveCompileResult?.main_view?.leaf_categories,
     ],
+  )
+  const mainViewRoot = effectiveCompileResult?.main_view?.root_path || ''
+  const hasConfiguredMainView = Boolean(
+    effectiveCompileResult?.main_view &&
+    mainViewFacets.length > 0 &&
+    mainViewRoot &&
+    effectiveCompileResult.main_view.path_structure?.length,
   )
   const metadataQuery = useQuery({
     enabled: hasVisibleResults && wikiEntries.length > 0,
@@ -1097,7 +1090,13 @@ function KnowledgeMiningRoute() {
       const pages = await Promise.all(
         wikiEntries.map(async (entry) => {
           const page = await fetchFileContent(entry.uri, { raw: true })
-          return [entry.uri, parseWikiPageMetadata(page.content)] as const
+          return [
+            entry.uri,
+            parseWikiPageMetadata(
+              page.content,
+              effectiveCompileResult?.main_view?.meta_knowledge?.id_field,
+            ),
+          ] as const
         }),
       )
       return Object.fromEntries(pages) as Record<string, WikiPageMetadata>
@@ -1106,6 +1105,7 @@ function KnowledgeMiningRoute() {
       'knowledge-mining-page-metadata',
       identityScopeKey,
       job?.targetUri,
+      effectiveCompileResult?.main_view?.meta_knowledge?.id_field,
       wikiEntries.map((entry) => entry.uri).join('|'),
     ],
   })
@@ -1114,14 +1114,12 @@ function KnowledgeMiningRoute() {
       buildMetaKnowledgeUnits(
         job?.targetUri || '',
         wikiEntries.map((entry) => ({ name: entry.name, uri: entry.uri })),
-        mainViewFacets,
+        effectiveCompileResult?.main_view,
         metadataQuery.data || {},
-        effectiveCompileResult?.main_view?.root_path || 'knowledge',
       ),
     [
-      effectiveCompileResult?.main_view?.root_path,
+      effectiveCompileResult?.main_view,
       job?.targetUri,
-      mainViewFacets,
       metadataQuery.data,
       wikiEntries,
     ],
@@ -1155,13 +1153,8 @@ function KnowledgeMiningRoute() {
     [mainViewFacets, metadataQuery.data, metaKnowledgeUnits],
   )
   const compileViews = React.useMemo<CompileView[]>(() => {
-    const configured = effectiveCompileResult?.views || []
-    if (configured.length > 0) return configured
-    const tags = Object.values(metadataQuery.data || {}).flatMap(
-      (item) => item.tags,
-    )
-    return inferCompileViewsFromTags(tags)
-  }, [effectiveCompileResult?.views, metadataQuery.data])
+    return effectiveCompileResult?.views || []
+  }, [effectiveCompileResult?.views])
   const intermediateArtifacts = React.useMemo<CompileIntermediateArtifact[]>(
     () => effectiveCompileResult?.intermediate_artifacts || [],
     [effectiveCompileResult?.intermediate_artifacts],
@@ -1266,7 +1259,7 @@ function KnowledgeMiningRoute() {
     ),
   )
   const selectedView = compileViews.find((view) => view.id === selectedViewId)
-  const viewGuideKey =
+  const systemViewGuideKey =
     selectedViewId === 'intermediates'
       ? 'intermediates'
       : selectedViewId === 'coverage'
@@ -1275,13 +1268,18 @@ function KnowledgeMiningRoute() {
           ? 'questionnaire'
           : selectedViewId === 'graph'
             ? 'graph'
-            : selectedViewId === 'domain'
-              ? 'domain'
-              : selectedViewId === 'perspective'
-                ? 'perspective'
-                : selectedViewId === 'usage'
-                  ? 'usage'
-                  : 'main'
+            : 'main'
+  const selectedViewPaths = React.useMemo(
+    () =>
+      selectedView?.groups
+        .map((group) =>
+          group.path?.length
+            ? group.path.map((segment) => segment.title).join(' / ')
+            : group.title,
+        )
+        .join(' · ') || '',
+    [selectedView],
+  )
   const viewSections = React.useMemo(
     () =>
       selectedView
@@ -2366,10 +2364,12 @@ function KnowledgeMiningRoute() {
                   </div>
                   <div className="rounded-xl border bg-muted/15 p-4">
                     <p className="text-sm font-semibold">
-                      {t(`views.guides.${viewGuideKey}.title`)}
+                      {selectedView?.title ||
+                        t(`views.guides.${systemViewGuideKey}.title`)}
                     </p>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                      {t(`views.guides.${viewGuideKey}.purpose`)}
+                      {selectedView?.description ||
+                        t(`views.guides.${systemViewGuideKey}.purpose`)}
                     </p>
                     <div className="mt-3 grid gap-3 text-xs sm:grid-cols-2">
                       <div>
@@ -2377,7 +2377,10 @@ function KnowledgeMiningRoute() {
                           {t('views.guides.contentLabel')}
                         </p>
                         <p className="mt-1 leading-5 text-muted-foreground">
-                          {t(`views.guides.${viewGuideKey}.content`)}
+                          {selectedView
+                            ? selectedViewPaths ||
+                              t('views.guides.configured.empty')
+                            : t(`views.guides.${systemViewGuideKey}.content`)}
                         </p>
                       </div>
                       <div>
@@ -2385,11 +2388,13 @@ function KnowledgeMiningRoute() {
                           {t('views.guides.useLabel')}
                         </p>
                         <p className="mt-1 leading-5 text-muted-foreground">
-                          {t(`views.guides.${viewGuideKey}.use`)}
+                          {selectedView
+                            ? t('views.guides.configured.use')
+                            : t(`views.guides.${systemViewGuideKey}.use`)}
                         </p>
                       </div>
                     </div>
-                    {viewGuideKey === 'main' &&
+                    {selectedViewId === 'main' &&
                     effectiveCompileResult?.main_view ? (
                       <div className="mt-3 space-y-2">
                         <p className="rounded-md bg-primary/8 px-3 py-2 text-xs font-medium text-primary">
@@ -2410,6 +2415,7 @@ function KnowledgeMiningRoute() {
                         {incompleteMetaKnowledgeCount > 0 ? (
                           <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
                             {t('views.incompleteMetaSummary', {
+                              categories: mainViewFacets.join(' / '),
                               count: incompleteMetaKnowledgeCount,
                             })}
                           </p>
@@ -2515,22 +2521,20 @@ function KnowledgeMiningRoute() {
                       <ScrollArea className="max-h-[680px] border-b bg-muted/20 lg:border-b-0 lg:border-r">
                         <div className="space-y-1 p-2">
                           {selectedViewId === 'main' ? (
-                            <MetaKnowledgeTreeView
-                              categoryLabels={{
-                                how: t('views.leafLabels.how'),
-                                what: t('views.leafLabels.what'),
-                                why: t('views.leafLabels.why'),
-                              }}
-                              facets={mainViewFacets}
-                              metadata={metadataQuery.data || {}}
-                              rootPath={
-                                effectiveCompileResult?.main_view?.root_path ||
-                                'knowledge'
-                              }
-                              units={metaKnowledgeUnits}
-                              onSelect={setSelectedUri}
-                              selectedUri={selectedUri}
-                            />
+                            hasConfiguredMainView ? (
+                              <MetaKnowledgeTreeView
+                                facets={mainViewFacets}
+                                metadata={metadataQuery.data || {}}
+                                rootPath={mainViewRoot}
+                                units={metaKnowledgeUnits}
+                                onSelect={setSelectedUri}
+                                selectedUri={selectedUri}
+                              />
+                            ) : (
+                              <p className="p-3 text-xs leading-5 text-muted-foreground">
+                                {t('views.missingConfig')}
+                              </p>
+                            )
                           ) : selectedViewId === 'intermediates' ? (
                             intermediateArtifacts.map((artifact) => (
                               <button
@@ -2605,23 +2609,19 @@ function KnowledgeMiningRoute() {
                             <div className="flex justify-center p-6">
                               <LoaderCircleIcon className="size-5 animate-spin text-primary" />
                             </div>
-                          ) : (
+                          ) : hasConfiguredMainView ? (
                             <MetaKnowledgeTreeView
-                              categoryLabels={{
-                                how: t('views.leafLabels.how'),
-                                what: t('views.leafLabels.what'),
-                                why: t('views.leafLabels.why'),
-                              }}
                               facets={mainViewFacets}
                               metadata={metadataQuery.data || {}}
-                              rootPath={
-                                effectiveCompileResult?.main_view?.root_path ||
-                                'knowledge'
-                              }
+                              rootPath={mainViewRoot}
                               sections={viewSections}
                               onSelect={setSelectedUri}
                               selectedUri={selectedUri}
                             />
+                          ) : (
+                            <p className="p-3 text-xs leading-5 text-muted-foreground">
+                              {t('views.missingConfig')}
+                            </p>
                           )}
                         </div>
                       </ScrollArea>

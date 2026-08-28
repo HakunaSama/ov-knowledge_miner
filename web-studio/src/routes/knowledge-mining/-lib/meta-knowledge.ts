@@ -1,4 +1,4 @@
-import type { CompileView } from './api'
+import type { CompileMainView, CompileView } from './api'
 import type { TaggedWikiEntry, WikiPageMetadata, ViewSection } from './views'
 
 export type MetaKnowledgeUnit = {
@@ -34,59 +34,75 @@ function relativePath(rootUri: string, entry: TaggedWikiEntry): string {
 export function buildMetaKnowledgeUnits(
   rootUri: string,
   entries: TaggedWikiEntry[],
-  facets: string[],
+  mainView: CompileMainView | null | undefined,
   metadataByUri: Partial<Record<string, WikiPageMetadata>> = {},
-  mainViewRootPath = '',
 ): MetaKnowledgeUnit[] {
+  if (!mainView?.path_structure?.length || !mainView.root_path) return []
+  const facets = mainView.facet_categories || mainView.leaf_categories || []
+  if (facets.length === 0) return []
   const facetSet = new Set(facets)
   const units = new Map<string, MetaKnowledgeUnit>()
-  const configuredRoot = mainViewRootPath.split('/').filter(Boolean)
+  const configuredRoot = mainView.root_path.split('/').filter(Boolean)
+  const structure = mainView.path_structure
+  const routeIndex = structure.indexOf('route')
+  const fixedSegmentCount = structure.length - (routeIndex >= 0 ? 1 : 0)
 
   for (const entry of entries) {
     const segments = relativePath(rootUri, entry).split('/').filter(Boolean)
-    if (segments.length < 3) continue
-    const configuredFacetIndex = configuredRoot.length
-    const configuredRootMatches = configuredRoot.every(
-      (segment, index) => segments[index] === segment,
+    if (!configuredRoot.every((segment, index) => segments[index] === segment))
+      continue
+    const relativeSegments = segments.slice(configuredRoot.length)
+    const routeLength = relativeSegments.length - fixedSegmentCount
+    if (
+      (routeIndex < 0 && relativeSegments.length !== structure.length) ||
+      (routeIndex >= 0 && routeLength < 1)
     )
-    const facetFirstIndex =
-      configuredRootMatches && facetSet.has(segments[configuredFacetIndex])
-        ? configuredFacetIndex
-        : facetSet.has(segments[1])
-          ? 1
-          : -1
-    const legacyFacet = segments.at(-2) || ''
-    const facet = facetFirstIndex >= 0 ? segments[facetFirstIndex] : legacyFacet
-    if (!facetSet.has(facet)) continue
-    const filename = segments.at(-1) || entry.name
-    const stem = filename.replace(/\.md$/i, '')
-    const metaId = metadataByUri[entry.uri]?.metaId || stem
-    const viewSegments =
-      facetFirstIndex >= 0
-        ? [
-            ...segments.slice(0, facetFirstIndex),
-            ...segments.slice(facetFirstIndex + 1, -1),
-          ]
-        : segments.slice(0, -2)
-    const physicalMetaDirectory = viewSegments.at(-1) === metaId
-    const path = physicalMetaDirectory
-      ? viewSegments.join('/')
-      : [...viewSegments, metaId].join('/')
-    const unitKey = metaId
-    const entryPath =
-      facetFirstIndex >= 0
-        ? segments.slice(facetFirstIndex + 1, -1)
-        : segments.slice(configuredRootMatches ? configuredRoot.length : 0, -2)
-    const unit = units.get(unitKey) || {
+      continue
+
+    let cursor = 0
+    let facet = ''
+    let facetSegmentIndex = -1
+    let configuredMetaId = ''
+    let configuredRoute = ''
+    for (const level of structure) {
+      if (level === 'route') {
+        configuredRoute = relativeSegments
+          .slice(cursor, cursor + routeLength)
+          .join('/')
+        cursor += routeLength
+        continue
+      }
+      const value = relativeSegments[cursor] || ''
+      if (level === 'facet') {
+        facet = value
+        facetSegmentIndex = cursor
+      } else if (level === 'meta_id') {
+        configuredMetaId = value
+      }
+      cursor += 1
+    }
+    if (!facetSet.has(facet) || facetSegmentIndex < 0) continue
+    if (
+      routeIndex >= 0 &&
+      !(mainView.directory_routes?.[facet] || []).includes(configuredRoute)
+    )
+      continue
+    const metaId = metadataByUri[entry.uri]?.metaId || configuredMetaId
+    if (!metaId) continue
+    const hierarchy = relativeSegments
+      .slice(0, -1)
+      .filter((_segment, index) => index !== facetSegmentIndex)
+    const path = [...configuredRoot, ...hierarchy].join('/')
+    const unit = units.get(metaId) || {
       entries: {},
       entryPaths: {},
-      id: unitKey,
+      id: metaId,
       name: metaId,
       path,
     }
     unit.entries[facet] = entry
-    unit.entryPaths[facet] = entryPath
-    units.set(unitKey, unit)
+    unit.entryPaths[facet] = hierarchy
+    units.set(metaId, unit)
   }
 
   return [...units.values()].sort((left, right) =>
@@ -219,11 +235,10 @@ export function buildPerspectiveMetaKnowledgeTree(
   const roots: FacetFirstMetaKnowledgeTreeNode[] = []
   const rootsById = new Map<string, FacetFirstMetaKnowledgeTreeNode>()
 
-  const insert = (
+  const ensurePath = (
     root: FacetFirstMetaKnowledgeTreeNode,
     segments: Array<{ id: string; title: string }>,
-    unit: MetaKnowledgeUnit,
-  ) => {
+  ): FacetFirstMetaKnowledgeTreeNode => {
     let parent = root
     for (const segment of segments) {
       const path = `${parent.path}/${segment.id}`
@@ -236,6 +251,15 @@ export function buildPerspectiveMetaKnowledgeTree(
       }
       parent = child
     }
+    return parent
+  }
+
+  const insert = (
+    root: FacetFirstMetaKnowledgeTreeNode,
+    segments: Array<{ id: string; title: string }>,
+    unit: MetaKnowledgeUnit,
+  ) => {
+    const parent = ensurePath(root, segments)
     const unitPath = `${parent.path}/${unit.id}`
     let unitNode = parent.children.find(
       (candidate) => candidate.path === unitPath && !candidate.entry,
@@ -278,10 +302,11 @@ export function buildPerspectiveMetaKnowledgeTree(
       rootsById.set(rootSegment.id, root)
       roots.push(root)
     }
+    ensurePath(root, children)
     for (const unit of section.units) insert(root, children, unit)
   }
 
-  return roots.filter((root) => root.children.length > 0)
+  return roots
 }
 
 export function buildMetaKnowledgeViewSections(
