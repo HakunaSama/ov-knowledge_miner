@@ -98,6 +98,7 @@ def load_layout(config_path: Path | None) -> Layout:
 def _contains_direct_page(directory: Path) -> bool:
     return any(
         child.is_file()
+        and not child.is_symlink()
         and child.suffix.lower() == ".md"
         and not child.name.startswith(".")
         for child in directory.iterdir()
@@ -118,7 +119,7 @@ def plan_migration(wiki_root: Path, layout: Layout) -> list[PlannedMove]:
     facet_order = {facet: index for index, facet in enumerate(layout.facets)}
     candidates: list[Path] = []
     for directory in knowledge_root.rglob("*"):
-        if not directory.is_dir() or directory.name not in facet_order:
+        if not directory.is_dir() or directory.is_symlink() or directory.name not in facet_order:
             continue
         relative = directory.relative_to(knowledge_root)
         # knowledge/<facet>/... is already facet-first.
@@ -162,7 +163,7 @@ def _text_updates(
     updates: list[tuple[Path, bytes, bytes, int]] = []
     ordered = sorted(replacements, key=lambda item: len(item[0]), reverse=True)
     for path in wiki_root.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
+        if not path.is_file() or path.is_symlink() or path.suffix.lower() not in TEXT_SUFFIXES:
             continue
         original = path.read_bytes()
         try:
@@ -216,9 +217,7 @@ def apply_migration(wiki_root: Path, moves: Sequence[PlannedMove]) -> MigrationS
     if not moves:
         return MigrationSummary(moved_directories=0, rewritten_files=0)
 
-    staging_root = Path(
-        tempfile.mkdtemp(prefix=".okf-facet-migration-", dir=wiki_root.parent)
-    )
+    staging_root = Path(tempfile.mkdtemp(prefix=".okf-facet-migration-", dir=wiki_root.parent))
     staged: list[tuple[PlannedMove, Path]] = []
     installed: list[PlannedMove] = []
     rewritten: list[tuple[Path, bytes, bytes, int]] = []

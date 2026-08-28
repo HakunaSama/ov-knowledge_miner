@@ -6,6 +6,7 @@ from scripts.maintenance.migrate_okf_facet_layout import (
     Layout,
     MigrationError,
     apply_migration,
+    load_layout,
     plan_migration,
 )
 
@@ -78,3 +79,23 @@ def test_topic_named_what_is_not_mistaken_for_a_legacy_facet(tmp_path: Path):
     (topic / "page.md").write_text("already migrated", encoding="utf-8")
 
     assert plan_migration(wiki, Layout("knowledge", ("what", "why", "how"))) == []
+
+
+def test_load_layout_uses_the_okf_main_view_configuration(tmp_path: Path):
+    config = tmp_path / "OKF_CONFIG.yaml"
+    config.write_text(
+        """
+main_view:
+  root_path: docs/knowledge
+  leaf_categories:
+    - what
+    - why
+    - how
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    assert load_layout(config) == Layout(
+        root_path="docs/knowledge",
+        facets=("what", "why", "how"),
+    )
