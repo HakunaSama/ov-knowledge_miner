@@ -299,8 +299,7 @@ function FacetFirstKnowledgeTreeBranch({
         type="button"
         className={cn(
           'flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left text-xs transition-colors hover:bg-muted',
-          selectedUri === node.entry.uri &&
-            'bg-primary/10 text-primary',
+          selectedUri === node.entry.uri && 'bg-primary/10 text-primary',
         )}
         style={{ paddingLeft: `${28 + depth * 14}px` }}
         onClick={() => onSelect(node.entry?.uri || '')}
@@ -312,7 +311,9 @@ function FacetFirstKnowledgeTreeBranch({
   }
 
   const expanded = expandedPaths.has(node.path)
-  const descendantFiles = (candidate: FacetFirstMetaKnowledgeTreeNode): number =>
+  const descendantFiles = (
+    candidate: FacetFirstMetaKnowledgeTreeNode,
+  ): number =>
     candidate.entry
       ? 1
       : candidate.children.reduce(
@@ -376,7 +377,7 @@ function MetaKnowledgeTreeView({
   metadata,
   rootPath,
   sections,
-  units,
+  units = [],
   onSelect,
   selectedUri,
 }: {
@@ -385,18 +386,27 @@ function MetaKnowledgeTreeView({
   metadata: Partial<Record<string, WikiPageMetadata>>
   rootPath: string
   sections?: MetaKnowledgeViewSection[]
-  units: MetaKnowledgeUnit[]
+  units?: MetaKnowledgeUnit[]
   onSelect: (uri: string) => void
   selectedUri: string | null
 }) {
+  const categoryLabelKey = facets
+    .map((facet) => `${facet}:${categoryLabels[facet] || ''}`)
+    .join('|')
   const tree = React.useMemo(
     () =>
-      buildFacetFirstMetaKnowledgeTree(units, facets, {
-        categoryLabels,
-        rootPath,
-        sections,
-      }),
-    [categoryLabels, facets, rootPath, sections, units],
+      buildFacetFirstMetaKnowledgeTree(
+        sections ? sections.flatMap((section) => section.units) : units,
+        facets,
+        {
+          categoryLabels,
+          rootPath,
+          sections,
+        },
+      ),
+    // categoryLabelKey tracks language changes without rebuilding for a new
+    // object literal containing the same translated labels on every render.
+    [categoryLabelKey, facets, rootPath, sections, units],
   )
   const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(
     () => new Set(),
@@ -410,7 +420,10 @@ function MetaKnowledgeTreeView({
         for (const child of node.children) expand(child, depth + 1)
       }
       for (const root of tree) expand(root, 0)
-      return next
+      return next.size === current.size &&
+        [...next].every((path) => current.has(path))
+        ? current
+        : next
     })
   }, [tree])
 
@@ -2589,40 +2602,22 @@ function KnowledgeMiningRoute() {
                               <LoaderCircleIcon className="size-5 animate-spin text-primary" />
                             </div>
                           ) : (
-                            viewSections.map((section) => (
-                              <div key={section.id} className="pb-3">
-                                <div className="px-3 pb-1 pt-2">
-                                  <p className="text-xs font-semibold">
-                                    {section.title}
-                                  </p>
-                                  <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
-                                    {section.description}
-                                  </p>
-                                </div>
-                                {section.units.length > 0 ? (
-                                  <MetaKnowledgeTreeView
-                                    categoryLabels={{
-                                      how: t('views.leafLabels.how'),
-                                      what: t('views.leafLabels.what'),
-                                      why: t('views.leafLabels.why'),
-                                    }}
-                                    facets={mainViewFacets}
-                                    metadata={metadataQuery.data || {}}
-                                    rootPath={
-                                      effectiveCompileResult?.main_view
-                                        ?.root_path || 'knowledge'
-                                    }
-                                    units={section.units}
-                                    onSelect={setSelectedUri}
-                                    selectedUri={selectedUri}
-                                  />
-                                ) : (
-                                  <p className="px-3 py-2 text-[11px] text-muted-foreground">
-                                    {t('views.emptyGroup')}
-                                  </p>
-                                )}
-                              </div>
-                            ))
+                            <MetaKnowledgeTreeView
+                              categoryLabels={{
+                                how: t('views.leafLabels.how'),
+                                what: t('views.leafLabels.what'),
+                                why: t('views.leafLabels.why'),
+                              }}
+                              facets={mainViewFacets}
+                              metadata={metadataQuery.data || {}}
+                              rootPath={
+                                effectiveCompileResult?.main_view?.root_path ||
+                                'knowledge'
+                              }
+                              sections={viewSections}
+                              onSelect={setSelectedUri}
+                              selectedUri={selectedUri}
+                            />
                           )}
                         </div>
                       </ScrollArea>

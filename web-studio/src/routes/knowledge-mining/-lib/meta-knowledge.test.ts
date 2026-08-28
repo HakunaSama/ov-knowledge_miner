@@ -185,9 +185,7 @@ describe('meta-knowledge views', () => {
 
     expect(tree.map((node) => node.name)).toEqual(['what', 'why', 'how'])
     expect(tree[0].children[0].path).toBe('what/platform')
-    expect(tree[0].children[0].children[0].path).toBe(
-      'what/platform/retrieval',
-    )
+    expect(tree[0].children[0].children[0].path).toBe('what/platform/retrieval')
     expect(tree[0].children[0].children[0].children[0].entry?.name).toBe(
       'what.md',
     )

@@ -254,7 +254,8 @@ const workspace = {
       main: '主视图',
       mainDescription:
         '主视图严格对应 OpenViking 目标目录中的真实文件结构；其他视图只按 OKF tags 重组同一批页面，不复制知识。',
-      mainStructure: '当前强制末层结构：{{categories}}。',
+      mainStructure:
+        '当前顶层按 {{categories}} 分区，各分区下保持视图目录结构。',
       metaSummary:
         '当前共 {{units}} 个元知识、{{files}} 个知识文件；主视图、知识域和使用场景的文件总数严格一致。',
       incompleteMetaSummary:
@@ -269,11 +270,11 @@ const workspace = {
         contentLabel: '这里包含什么',
         useLabel: '什么时候使用',
         main: {
-          title: '主视图：按元知识浏览真实文件',
+          title: '主视图：按 what / why / how 浏览真实文件',
           purpose:
             '这是唯一事实源，直接对应 OpenViking 中真正保存的文件夹和文件，不是按标签生成的副本。',
           content:
-            '每个元知识固定包含 what（是什么）、why（为什么）和 how（怎么做）三个真实文件；根导航页不计入知识文件。',
+            '顶层固定分为 what（是什么）、why（为什么）和 how（怎么做），每个顶层目录下继续遵循 OKF 视图目录结构；根导航页不计入知识文件。',
           use: '需要理解知识边界、浏览完整目录，或确认某条知识实际保存在哪里时使用。',
         },
         domain: {

@@ -262,7 +262,8 @@ const workspace = {
       main: 'Main view',
       mainDescription:
         'The main view mirrors the real OpenViking target directory. Derived views reorganize the same pages by OKF tags without copying knowledge.',
-      mainStructure: 'Enforced leaf structure: {{categories}}.',
+      mainStructure:
+        'Top-level facets: {{categories}}. Each facet keeps the configured view hierarchy below it.',
       metaSummary:
         '{{units}} meta-knowledge units and {{files}} knowledge files. Main, domain, and usage views always have exactly the same file total.',
       incompleteMetaSummary:
@@ -277,11 +278,11 @@ const workspace = {
         contentLabel: 'What is here',
         useLabel: 'When to use it',
         main: {
-          title: 'Main view: physical files grouped by meta-knowledge',
+          title: 'Main view: physical files grouped by what / why / how',
           purpose:
             'This is the single source of truth and mirrors the folders and files actually stored in OpenViking, not a tag-generated copy.',
           content:
-            'Every meta-knowledge unit contains exactly three physical files: what, why, and how. The root navigation page is not counted as knowledge.',
+            'The top level is split into what, why, and how. Each facet keeps the configured OKF view hierarchy below it. The root navigation page is not counted as knowledge.',
           use: 'Use it to understand scope, browse the complete hierarchy, or locate the physical home of a claim.',
         },
         domain: {

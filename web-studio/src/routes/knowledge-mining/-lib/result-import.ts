@@ -71,7 +71,10 @@ function inferMainView(
   pagePaths: string[],
 ): NonNullable<CompileResult['main_view']> {
   const observedFacets = ['what', 'why', 'how'].filter((facet) =>
-    pagePaths.some((path) => path.split('/').at(-2) === facet),
+    pagePaths.some((path) => {
+      const segments = path.split('/').filter(Boolean)
+      return segments.at(-2) === facet || segments[1] === facet
+    }),
   )
   const rootPath = pagePaths.some((path) => path.startsWith('knowledge/'))
     ? 'knowledge'

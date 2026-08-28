@@ -132,7 +132,9 @@ export function buildFacetFirstMetaKnowledgeTree(
           path,
         }
         parent.children.push(child)
-        parent.children.sort((left, right) => left.name.localeCompare(right.name))
+        parent.children.sort((left, right) =>
+          left.name.localeCompare(right.name),
+        )
       }
       parent = child
     }
@@ -143,7 +145,8 @@ export function buildFacetFirstMetaKnowledgeTree(
       path: `${parent.path}/${entry.name}`,
     })
     parent.children.sort((left, right) => {
-      if (Boolean(left.entry) !== Boolean(right.entry)) return left.entry ? 1 : -1
+      if (Boolean(left.entry) !== Boolean(right.entry))
+        return left.entry ? 1 : -1
       return left.name.localeCompare(right.name)
     })
   }
@@ -157,9 +160,7 @@ export function buildFacetFirstMetaKnowledgeTree(
       : unitSegments
     const section = sectionByUnit.get(unit.id)
     const hierarchy = [
-      ...(section
-        ? [{ label: section.title, name: section.id }]
-        : []),
+      ...(section ? [{ label: section.title, name: section.id }] : []),
       ...relativeUnitSegments.map((name) => ({ name })),
     ]
     for (const facet of facets) {
