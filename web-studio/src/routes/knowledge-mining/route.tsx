@@ -26,6 +26,7 @@ import {
   RotateCcwIcon,
   SparklesIcon,
   TriangleAlertIcon,
+  TerminalIcon,
   UploadCloudIcon,
   XIcon,
 } from 'lucide-react'
@@ -65,6 +66,7 @@ import {
   DEFAULT_OKF_CONFIG,
   ensureLlmWikiSkill,
   getCompileTask,
+  importCliResultOvpack,
   isCompileTerminal,
   listCompileTasks,
   resumeCompile,
@@ -128,12 +130,18 @@ import type {
 } from './-lib/meta-knowledge'
 import { parseWikiPageMetadata } from './-lib/views'
 import type { WikiPageMetadata } from './-lib/views'
+import {
+  importedMiningJob,
+  inferCompileViewsFromTags,
+  inspectCliResult,
+} from './-lib/result-import'
 import { transitionAfterCompletedCompile } from './-lib/workflow'
 import {
   findWikiLinkTarget,
   renderDoubleBracketWikiLinks,
 } from './-lib/wiki-links'
 import { KnowledgeCloudGraph } from './-components/knowledge-cloud-graph'
+import { CliResultImportCard } from './-components/cli-result-import-card'
 import { buildKnowledgeGraph } from './-lib/knowledge-graph'
 
 export const Route = createFileRoute('/knowledge-mining')({
@@ -197,6 +205,7 @@ function newJob(
     reason,
     result: null,
     okfConfigUri: null,
+    origin: 'studio',
     skillUri: null,
     targetUri,
     taskId: null,
@@ -644,6 +653,61 @@ function KnowledgeMiningRoute() {
     ],
     [history.jobs, serverHistoryQuery.data],
   )
+  const discoveredCliJobCount = React.useMemo(
+    () =>
+      jobsFromCompileTasks(serverHistoryQuery.data || []).filter(
+        (candidate) => candidate.origin === 'cli',
+      ).length,
+    [serverHistoryQuery.data],
+  )
+
+  const showImportedResult = React.useCallback(
+    (nextJob: MiningJob) => {
+      setSelectedUri(null)
+      setSelectedViewId('main')
+      setQuestionnaireAnswers({})
+      addJob(nextJob)
+    },
+    [addJob],
+  )
+
+  const attachCliResultMutation = useMutation({
+    mutationFn: async (targetUri: string) => {
+      const inspected = await inspectCliResult(targetUri)
+      return importedMiningJob({
+        origin: 'cli',
+        result: inspected.result,
+        scopeSummary: inspected.scopeSummary,
+        targetUri: inspected.result.to,
+      })
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+    onSuccess: (nextJob) => {
+      showImportedResult(nextJob)
+      toast.success(t('cliImport.success.uri'))
+    },
+  })
+
+  const importCliOvpackMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const targetUri = await importCliResultOvpack(file)
+      const inspected = await inspectCliResult(targetUri)
+      return importedMiningJob({
+        label: file.name.replace(/\.ovpack$/i, ''),
+        origin: 'imported',
+        result: inspected.result,
+        scopeSummary: inspected.scopeSummary,
+        targetUri,
+      })
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+    onSuccess: (nextJob) => {
+      showImportedResult(nextJob)
+      toast.success(t('cliImport.success.ovpack'))
+    },
+  })
+  const cliImportBusy =
+    attachCliResultMutation.isPending || importCliOvpackMutation.isPending
 
   const addDocumentFiles = React.useCallback(
     (incoming: File[]) => {
@@ -810,6 +874,9 @@ function KnowledgeMiningRoute() {
   const humanAnswerMutation = useMutation({
     mutationFn: async (questionnaire: Questionnaire) => {
       if (!job) throw new Error(t('errors.missingJob'))
+      if (job.origin !== 'studio') {
+        throw new Error(t('cliImport.readOnly'))
+      }
       const jobId = job.id
       const answeredAt = new Date().toISOString()
       const content = buildHumanAnswersMarkdown(
@@ -1089,10 +1156,14 @@ function KnowledgeMiningRoute() {
       ),
     [mainViewFacets, metadataQuery.data, metaKnowledgeUnits],
   )
-  const compileViews = React.useMemo<CompileView[]>(
-    () => effectiveCompileResult?.views || [],
-    [effectiveCompileResult?.views],
-  )
+  const compileViews = React.useMemo<CompileView[]>(() => {
+    const configured = effectiveCompileResult?.views || []
+    if (configured.length > 0) return configured
+    const tags = Object.values(metadataQuery.data || {}).flatMap(
+      (item) => item.tags,
+    )
+    return inferCompileViewsFromTags(tags)
+  }, [effectiveCompileResult?.views, metadataQuery.data])
   const intermediateArtifacts = React.useMemo<CompileIntermediateArtifact[]>(
     () => effectiveCompileResult?.intermediate_artifacts || [],
     [effectiveCompileResult?.intermediate_artifacts],
@@ -1483,6 +1554,13 @@ function KnowledgeMiningRoute() {
           ) : null}
         </header>
 
+        <CliResultImportCard
+          busy={cliImportBusy}
+          discoveredCount={discoveredCliJobCount}
+          onAttachUri={(uri) => attachCliResultMutation.mutate(uri)}
+          onImportOvpack={(file) => importCliOvpackMutation.mutate(file)}
+        />
+
         {history.jobs.length > 0 ? (
           <Card>
             <CardHeader className="pb-3">
@@ -1564,11 +1642,18 @@ function KnowledgeMiningRoute() {
                               })
                             : t(`phases.${historyJob.phase}`)}
                         </Badge>
-                        {selected ? (
-                          <span className="text-[10px] font-medium text-primary">
-                            {t('history.current')}
-                          </span>
-                        ) : null}
+                        <span className="flex items-center gap-1.5">
+                          {historyJob.origin !== 'studio' ? (
+                            <Badge variant="outline">
+                              {t(`cliImport.origins.${historyJob.origin}`)}
+                            </Badge>
+                          ) : null}
+                          {selected ? (
+                            <span className="text-[10px] font-medium text-primary">
+                              {t('history.current')}
+                            </span>
+                          ) : null}
+                        </span>
                       </div>
                       <p className="mt-2 line-clamp-2 min-h-10 text-sm font-medium leading-5">
                         {historyJob.reason || t('history.untitled')}
@@ -2105,6 +2190,11 @@ function KnowledgeMiningRoute() {
                     {t('results.partialBadge')}
                   </Badge>
                 ) : null}
+                {job && job.origin !== 'studio' ? (
+                  <Badge variant="outline">
+                    {t(`cliImport.origins.${job.origin}`)}
+                  </Badge>
+                ) : null}
               </CardTitle>
               <CardDescription>
                 {hasVisibleResults
@@ -2573,6 +2663,17 @@ function KnowledgeMiningRoute() {
                                   {t('questionnaire.formDescription')}
                                 </p>
                               </div>
+                              {job?.origin !== 'studio' ? (
+                                <Alert>
+                                  <TerminalIcon />
+                                  <AlertTitle>
+                                    {t('cliImport.readOnlyTitle')}
+                                  </AlertTitle>
+                                  <AlertDescription>
+                                    {t('cliImport.readOnly')}
+                                  </AlertDescription>
+                                </Alert>
+                              ) : null}
                               {questionnaireQuery.data.questions.map(
                                 (question, index) => {
                                   const answer =
@@ -2592,7 +2693,9 @@ function KnowledgeMiningRoute() {
                                       </div>
                                       {question.kind === 'free_text' ? (
                                         <Textarea
-                                          disabled={isActive}
+                                          disabled={
+                                            isActive || job?.origin !== 'studio'
+                                          }
                                           value={
                                             typeof answer === 'string'
                                               ? answer
@@ -2630,7 +2733,10 @@ function KnowledgeMiningRoute() {
                                                     ? 'default'
                                                     : 'outline'
                                                 }
-                                                disabled={isActive}
+                                                disabled={
+                                                  isActive ||
+                                                  job?.origin !== 'studio'
+                                                }
                                                 onClick={() =>
                                                   setQuestionnaireAnswers(
                                                     (current) => {
@@ -2683,7 +2789,8 @@ function KnowledgeMiningRoute() {
                                 disabled={
                                   !questionnaireComplete ||
                                   humanAnswerMutation.isPending ||
-                                  isActive
+                                  isActive ||
+                                  job?.origin !== 'studio'
                                 }
                                 onClick={() => {
                                   if (questionnaireQuery.data) {

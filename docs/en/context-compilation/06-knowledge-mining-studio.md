@@ -33,6 +33,22 @@ curl http://localhost:1933/bot/v1/health
 10. **Source coverage** shows uploaded, inspected, cited, merged, and skipped materials with reasons. Missing sources, unread sources, unjustified skips, or citations that disagree with the evidence ledger reject submission so VikingBot continues working.
 11. When conflicts or evidence gaps exist, Studio switches the workflow to **Waiting for human evidence** and immediately exposes the provisional pages and questionnaire without declaring the run complete. Answers become a `human-answer` source and trigger an incremental Compile against the same target. The workflow completes only after the open issues are handled.
 
+## Display CLI mining results
+
+The **Import and display CLI mining results** area reuses exactly the same Main, derived-view, source-coverage, intermediate, questionnaire, and knowledge-cloud renderers as a Studio run. It does not run VikingBot again. Three connection paths are supported:
+
+1. **Automatic same-server discovery**: when the CLI and Studio use the same OpenViking server and identity, Studio recognizes Compile-history tasks that use `llm-wiki`. Their `to` URI may be outside `viking://resources/knowledge-mining/`; they still appear in Mining history with a **CLI result** badge.
+2. **Attach an existing result URI**: when Compile history has expired but the target still exists, enter the CLI command's `--to` URI. Studio recursively validates `index.md`, knowledge pages, and `_mining/` artifacts, then reconstructs display metadata from the run manifest, coverage ledger, investigation report, questionnaire, directory structure, and page tags.
+3. **Upload an OVPack**: to display a result from another server, export the target in the original CLI environment and upload the resulting file in Studio:
+
+```bash
+ov export viking://resources/research-wiki ./research-wiki.ovpack
+```
+
+Studio uses the official OVPack import endpoint to verify the manifest, file set, and checksums. It imports under an isolated `viking://resources/knowledge-mining-imports/<batch-id>/...` directory so existing knowledge bases cannot be overwritten, then adds the result to Mining history and opens it immediately. If the OVPack does not contain the Compile response, Studio derives page counts, What/Why/How layout, source coverage, human gate, and derived views from the Wiki tree and mining ledgers.
+
+Imported results are review-only by default. Questionnaires remain fully visible, but Studio does not guess source or Skill settings and start a human incremental Compile. To continue mining, supply new evidence as `from` in the original CLI environment and incrementally Compile the same `to` URI.
+
 ## Data and execution model
 
 Each run creates an isolated directory:

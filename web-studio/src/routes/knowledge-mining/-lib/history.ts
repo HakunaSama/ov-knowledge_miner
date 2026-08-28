@@ -32,6 +32,7 @@ export type MiningJob = {
   memorySourceUri: string
   memoryTaskId: string | null
   okfConfigUri: string | null
+  origin: 'cli' | 'imported' | 'studio'
   phase: MiningPhase
   reason: string
   result: CompileResult | null
@@ -83,6 +84,7 @@ function phaseValue(value: unknown): MiningPhase | null {
 }
 
 function jobIdForTarget(targetUri: string): string {
+  if (!targetUri.startsWith(KNOWLEDGE_MINING_ROOT)) return `cli:${targetUri}`
   const root = targetUri.replace(/\/wiki\/?$/, '')
   return root.split('/').filter(Boolean).at(-1) || targetUri
 }
@@ -153,6 +155,10 @@ export function normalizeMiningJob(value: unknown): MiningJob | null {
       `${documentSourceUri.replace(/\/document-sources\/?$/, '')}/team-memory`,
     memoryTaskId: nullableString(value.memoryTaskId),
     okfConfigUri: nullableString(value.okfConfigUri),
+    origin:
+      value.origin === 'cli' || value.origin === 'imported'
+        ? value.origin
+        : 'studio',
     phase,
     reason: stringValue(value.reason),
     result: isRecord(value.result) ? (value.result as CompileResult) : null,
@@ -232,7 +238,15 @@ export function jobsFromCompileTasks(
 ): MiningJob[] {
   const grouped = new Map<string, CompileTaskHistoryItem[]>()
   for (const task of tasks) {
-    if (!task.request.to.startsWith(KNOWLEDGE_MINING_ROOT)) continue
+    const isStudioTask = task.request.to.startsWith(KNOWLEDGE_MINING_ROOT)
+    const isLlmWikiTask =
+      task.request.skill
+        .replace(/\/SKILL\.md\/?$/i, '')
+        .split('/')
+        .filter(Boolean)
+        .at(-1) === 'llm-wiki' ||
+      Boolean(task.result?.main_view?.meta_knowledge)
+    if (!isStudioTask && !isLlmWikiTask) continue
     const current = grouped.get(task.request.to) || []
     current.push(task)
     grouped.set(task.request.to, current)
@@ -241,7 +255,8 @@ export function jobsFromCompileTasks(
     group.sort((left, right) => left.created_at.localeCompare(right.created_at))
     const latest = group.at(-1)!
     const first = group[0]
-    const root = targetUri.replace(/\/wiki\/?$/, '')
+    const isStudioTask = targetUri.startsWith(KNOWLEDGE_MINING_ROOT)
+    const root = isStudioTask ? targetUri.replace(/\/wiki\/?$/, '') : targetUri
     const documents = group.filter((task) => taskKind(task) === 'documents')
     const memory = group.filter((task) => taskKind(task) === 'memory')
     const human = group.filter((task) => taskKind(task) === 'human')
@@ -254,7 +269,8 @@ export function jobsFromCompileTasks(
     return {
       createdAt: first.created_at,
       documentFiles: [],
-      documentSourceUri: `${root}/document-sources`,
+      documentSourceUri:
+        documents[0]?.request.from[0] || `${root}/document-sources`,
       documentTaskId: documentTask?.task_id || null,
       error: latest.error
         ? `${latest.error.code}: ${latest.error.message}`
@@ -262,9 +278,10 @@ export function jobsFromCompileTasks(
       humanTaskId: humanTask?.task_id || null,
       id: jobIdForTarget(targetUri),
       memoryFiles: [],
-      memorySourceUri: `${root}/team-memory`,
+      memorySourceUri: memory.at(-1)?.request.from[0] || `${root}/team-memory`,
       memoryTaskId: memoryTask?.task_id || null,
       okfConfigUri: latest.request.okf_config || null,
+      origin: isStudioTask ? 'studio' : 'cli',
       phase: phaseForTask(latest),
       reason: documents[0]?.request.reason || latest.request.reason,
       result: latest.result || latestResult || null,

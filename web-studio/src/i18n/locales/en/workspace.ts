@@ -84,6 +84,44 @@ const workspace = {
       title: 'Mining history',
       untitled: 'Untitled knowledge-mining job',
     },
+    cliImport: {
+      title: 'Import and display CLI mining results',
+      description:
+        'Render ov compile outputs through the complete result interface without mining again. Discover llm-wiki CLI tasks on this server, attach an existing Viking URI, or upload an OVPack exported from another server.',
+      discoveredBadge: '{{count}} CLI results discovered',
+      discovery: {
+        title: 'Automatic same-server discovery',
+        description:
+          'Studio recognizes llm-wiki CLI tasks in Compile history and adds them to Mining history automatically, including live updates for running tasks.',
+      },
+      uri: {
+        title: 'Attach an existing result URI',
+        description:
+          'Use this when the result is still on the current OpenViking server but its Compile history is no longer available. Studio validates index.md, knowledge pages, and intermediates.',
+        label: 'CLI result Viking URI',
+        placeholder: 'viking://resources/research-wiki',
+        action: 'Validate and display result',
+      },
+      ovpack: {
+        title: 'Upload a CLI result OVPack',
+        description:
+          'Use this to move a result from another OpenViking server. Export the target directory with the CLI, then upload it here into an isolated directory.',
+        command: 'ov export <to-uri> result.ovpack',
+        action: 'Choose and import .ovpack',
+      },
+      origins: {
+        cli: 'CLI result',
+        imported: 'Imported result',
+      },
+      success: {
+        uri: 'The CLI result was validated and added to Mining history.',
+        ovpack:
+          'The OVPack was imported and its CLI mining result is ready to browse.',
+      },
+      readOnlyTitle: 'Imported result shown in review mode',
+      readOnly:
+        'The questionnaire is fully visible, but Studio does not start a human incremental Compile for an imported result. Continue against the same to URI from the original CLI environment when needed.',
+    },
     upload: {
       title: 'Upload knowledge sources',
       description:

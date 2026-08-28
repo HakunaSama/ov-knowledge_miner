@@ -109,6 +109,41 @@ describe('knowledge mining history', () => {
     expect(jobs[0].result?.page_count).toBe(9)
   })
 
+  it('discovers an llm-wiki result created by the CLI outside Studio roots', () => {
+    const cliTask = task('cmp_cli', 'viking://resources/cli-sources', {
+      request: {
+        from: ['viking://resources/cli-sources'],
+        okf_config: 'viking://resources/contracts/OKF_CONFIG.yaml',
+        reason: 'CLI mining',
+        skill: 'viking://user/default/skills/llm-wiki',
+        to: 'viking://resources/cli-wiki',
+      },
+    })
+
+    const jobs = jobsFromCompileTasks([cliTask])
+
+    expect(jobs).toHaveLength(1)
+    expect(jobs[0]).toMatchObject({
+      documentSourceUri: 'viking://resources/cli-sources',
+      id: 'cli:viking://resources/cli-wiki',
+      origin: 'cli',
+      targetUri: 'viking://resources/cli-wiki',
+    })
+  })
+
+  it('does not mix unrelated Compile outputs into knowledge mining history', () => {
+    const dailyReport = task('cmp_daily', 'viking://resources/daily-sources', {
+      request: {
+        from: ['viking://resources/daily-sources'],
+        reason: 'Daily report',
+        skill: 'viking://user/default/skills/daily-report',
+        to: 'viking://resources/daily-report',
+      },
+    })
+
+    expect(jobsFromCompileTasks([dailyReport])).toEqual([])
+  })
+
   it('keeps local upload details while applying authoritative server state', () => {
     const server = jobsFromCompileTasks([
       task('cmp_1', 'viking://resources/knowledge-mining/run/document-sources'),

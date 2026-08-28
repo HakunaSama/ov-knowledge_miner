@@ -84,6 +84,43 @@ const workspace = {
       title: '挖掘历史',
       untitled: '未命名的知识挖掘任务',
     },
+    cliImport: {
+      title: '导入并展示 CLI 挖掘结果',
+      description:
+        '复用当前完整结果界面渲染 ov compile 产物，无需重新挖掘。支持自动发现同一服务上的 llm-wiki CLI 任务、挂载已有 Viking URI，或上传从其他服务导出的 OVPack。',
+      discoveredBadge: '已发现 {{count}} 个 CLI 结果',
+      discovery: {
+        title: '同一服务自动发现',
+        description:
+          '网页会从 Compile 历史中识别 llm-wiki CLI 任务，并自动加入上方挖掘历史；运行中结果也会持续更新。',
+      },
+      uri: {
+        title: '挂载已有结果 URI',
+        description:
+          '适用于结果仍在当前 OpenViking 服务、但 Compile 历史已不可见的情况。系统会校验 index.md、知识页面和中间产物。',
+        label: 'CLI 结果 Viking URI',
+        placeholder: 'viking://resources/research-wiki',
+        action: '校验并展示这个结果',
+      },
+      ovpack: {
+        title: '上传 CLI 结果 OVPack',
+        description:
+          '适用于从另一套 OpenViking 服务迁移结果。先用 CLI 导出目标目录，再在这里上传；文件会导入独立目录。',
+        command: 'ov export <to-uri> result.ovpack',
+        action: '选择并导入 .ovpack',
+      },
+      origins: {
+        cli: 'CLI 结果',
+        imported: '已导入结果',
+      },
+      success: {
+        uri: 'CLI 结果已校验并加入挖掘历史。',
+        ovpack: 'OVPack 已导入，CLI 挖掘结果可以开始浏览。',
+      },
+      readOnlyTitle: '导入结果以审阅模式展示',
+      readOnly:
+        '当前页面会完整展示问卷，但不会直接对导入结果发起人工增量 Compile。需要继续处理时，请在原 CLI 环境中对同一 to URI 执行增量挖掘。',
+    },
     upload: {
       title: '上传知识来源',
       description: '同一批文档会放入独立的来源目录，不会覆盖其他批次。',

@@ -21,6 +21,7 @@ function job(id: string, phase: MiningPhase, createdAt: string): MiningJob {
     memorySourceUri: `viking://resources/knowledge-mining/${id}/team-memory`,
     memoryTaskId: null,
     okfConfigUri: `${id}/OKF_CONFIG.yaml`,
+    origin: 'studio',
     phase,
     reason: id,
     result: null,

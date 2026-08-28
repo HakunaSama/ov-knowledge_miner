@@ -33,6 +33,22 @@ curl http://localhost:1933/bot/v1/health
 10. “来源覆盖”逐项展示已上传、已检查、已引用、已合并和已跳过的材料及原因。缺失来源、未实际读取、无理由跳过或引用与证据账本不一致都会拒绝提交，让 VikingBot 继续处理。
 11. 当报告发现来源冲突或证据缺口时，Studio 将整次工作流切换到“等待人工知识补证”，立即展示阶段性知识与问卷，但不会宣布挖掘完成。提交答案后，答案作为新的 `human-answer` 来源触发同目标增量 Compile；只有问题处理完成后才进入“已完成”。
 
+## 展示 CLI 挖掘结果
+
+Studio 的“导入并展示 CLI 挖掘结果”区域复用与网页挖掘完全相同的主视图、派生视图、来源覆盖、中间产物、调查问卷和知识点阵渲染器，不会再次运行 VikingBot。支持三种接入方式：
+
+1. **同一服务自动发现**：只要 CLI 和 Studio 连接的是同一 OpenViking 服务与身份，页面就会从 Compile 历史中识别使用 `llm-wiki` 的任务。即使 `to` 不在 `viking://resources/knowledge-mining/` 下，也会自动进入“挖掘历史”，并标记为“CLI 结果”。
+2. **挂载已有结果 URI**：当 Compile 历史已经过期但目标目录仍存在时，输入 CLI 命令中的 `--to` URI。Studio 会递归检查 `index.md`、知识页面和 `_mining/` 产物，从运行清单、覆盖账本、调查报告、问卷、目录结构与页面 tags 重建展示元数据。
+3. **上传 OVPack**：跨服务展示时，在原 CLI 环境导出结果目录，然后在 Studio 上传生成的文件：
+
+```bash
+ov export viking://resources/research-wiki ./research-wiki.ovpack
+```
+
+Studio 使用官方 OVPack 导入接口校验 manifest、文件集合与 checksum，并把结果写到独立的 `viking://resources/knowledge-mining-imports/<batch-id>/...` 目录，避免覆盖当前知识库。导入完成后会立即加入挖掘历史并打开结果视图。OVPack 中没有 Compile 响应元数据时，页面会从知识目录和中间账本确定页面数量、What/Why/How 结构、来源覆盖、人工门禁和派生视图。
+
+导入结果默认是审阅模式：问卷仍会完整显示，但 Studio 不会使用推断的来源或 Skill 配置擅自发起人工增量 Compile。如需继续挖掘，应在原 CLI 环境中以新证据作为 `from`，保持同一个 `to` URI 执行增量 Compile。
+
 ## 数据与执行模型
 
 每次运行会创建一个隔离目录：

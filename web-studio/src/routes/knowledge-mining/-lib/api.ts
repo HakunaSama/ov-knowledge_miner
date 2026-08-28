@@ -1,7 +1,13 @@
 import llmWikiSkill from '../../../../../examples/compile/ov-compile-skills/llm-wiki/SKILL.md?raw'
 import defaultOkfConfig from '../../../../../examples/compile/ov-compile-skills/llm-wiki/OKF_CONFIG.yaml?raw'
 
-import { getOvResult, ovClient, postResourcesTempUpload } from '#/lib/ov-client'
+import {
+  getOvResult,
+  ovClient,
+  postFsMkdir,
+  postPackImport,
+  postResourcesTempUpload,
+} from '#/lib/ov-client'
 
 export const LLM_WIKI_SKILL_NAME = 'llm-wiki'
 export const DEFAULT_OKF_CONFIG = defaultOkfConfig
@@ -157,6 +163,10 @@ type TempUploadResult = {
   temp_file_id: string
 }
 
+type ImportOvpackResult = {
+  uri?: string
+}
+
 function isString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
@@ -300,6 +310,50 @@ export async function uploadKnowledgeFile(
     )
   }
   return imported.root_uri || parentUri
+}
+
+function importedResultParentUri(): string {
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[-:TZ.]/g, '')
+    .slice(0, 14)
+  const suffix = Math.random().toString(36).slice(2, 8)
+  return `viking://resources/knowledge-mining-imports/${timestamp}-${suffix}`
+}
+
+export async function importCliResultOvpack(file: File): Promise<string> {
+  const uploaded = await getOvResult<TempUploadResult>(
+    postResourcesTempUpload({
+      body: { file, telemetry: true },
+    }),
+  )
+  if (!isString(uploaded.temp_file_id)) {
+    throw new Error('Temporary upload did not return a file ID.')
+  }
+
+  const parent = importedResultParentUri()
+  await getOvResult(
+    postFsMkdir({
+      body: {
+        description: 'Imported CLI knowledge-mining result',
+        uri: parent,
+      },
+    }),
+  )
+  const imported = await getOvResult<ImportOvpackResult>(
+    postPackImport({
+      body: {
+        on_conflict: 'fail',
+        parent,
+        temp_file_id: uploaded.temp_file_id,
+        vector_mode: 'auto',
+      },
+    }),
+  )
+  if (!isString(imported.uri)) {
+    throw new Error('OVPack import did not return a result URI.')
+  }
+  return imported.uri.replace(/\/$/, '')
 }
 
 export type StartCompileInput = {
