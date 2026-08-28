@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildFacetFirstMetaKnowledgeTree,
   buildMetaKnowledgeUnits,
   buildMetaKnowledgeTree,
   buildMetaKnowledgeViewSections,
@@ -111,6 +112,84 @@ describe('meta-knowledge views', () => {
     expect(tree[0].children[0].path).toBe('knowledge/platform')
     expect(tree[0].children[0].children[0].unit?.id).toBe(
       'knowledge/platform/retrieval',
+    )
+  })
+
+  it('groups facet-first paths into the same meta-knowledge unit', () => {
+    const entries = ['what', 'why', 'how'].map((facet) => ({
+      name: `${facet}.md`,
+      uri: `${root}/knowledge/${facet}/platform/retrieval/${facet}.md`,
+    }))
+    const metadata = Object.fromEntries(
+      entries.map((item) => [
+        item.uri,
+        {
+          description: '',
+          knowledgeLinks: [],
+          metaId: 'retrieval',
+          sources: [],
+          tags: [],
+          title: item.name,
+          type: 'concept',
+          wikiLinks: [],
+        },
+      ]),
+    )
+
+    const units = buildMetaKnowledgeUnits(
+      root,
+      entries,
+      ['what', 'why', 'how'],
+      metadata,
+      'knowledge',
+    )
+
+    expect(units).toHaveLength(1)
+    expect(units[0].path).toBe('knowledge/platform/retrieval')
+    expect(Object.keys(units[0].entries).sort()).toEqual(['how', 'what', 'why'])
+  })
+
+  it('renders facets above the configured view hierarchy without triplet cards', () => {
+    const entries = ['what', 'why', 'how'].map((facet) => ({
+      name: `${facet}.md`,
+      uri: `${root}/knowledge/${facet}/platform/retrieval/${facet}.md`,
+    }))
+    const metadata = Object.fromEntries(
+      entries.map((item) => [
+        item.uri,
+        {
+          description: '',
+          knowledgeLinks: [],
+          metaId: 'retrieval',
+          sources: [],
+          tags: [],
+          title: item.name,
+          type: 'concept',
+          wikiLinks: [],
+        },
+      ]),
+    )
+    const units = buildMetaKnowledgeUnits(
+      root,
+      entries,
+      ['what', 'why', 'how'],
+      metadata,
+      'knowledge',
+    )
+
+    const tree = buildFacetFirstMetaKnowledgeTree(
+      units,
+      ['what', 'why', 'how'],
+      { rootPath: 'knowledge' },
+    )
+
+    expect(tree.map((node) => node.name)).toEqual(['what', 'why', 'how'])
+    expect(tree[0].children[0].path).toBe('what/platform')
+    expect(tree[0].children[0].children[0].path).toBe(
+      'what/platform/retrieval',
+    )
+    expect(tree[0].children[0].children[0].children[0].entry?.name).toBe(
+      'what.md',
     )
   })
 })

@@ -120,13 +120,14 @@ import type {
   SourceCoverage,
 } from './-lib/intermediates'
 import {
+  buildFacetFirstMetaKnowledgeTree,
   buildMetaKnowledgeUnits,
-  buildMetaKnowledgeTree,
   buildMetaKnowledgeViewSections,
 } from './-lib/meta-knowledge'
 import type {
-  MetaKnowledgeTreeNode,
+  FacetFirstMetaKnowledgeTreeNode,
   MetaKnowledgeUnit,
+  MetaKnowledgeViewSection,
 } from './-lib/meta-knowledge'
 import { parseWikiPageMetadata } from './-lib/views'
 import type { WikiPageMetadata } from './-lib/views'
@@ -274,44 +275,50 @@ function phaseProgress(phase: MiningPhase, compileTask?: CompileTask): number {
   return 38
 }
 
-function MetaKnowledgeTreeBranch({
-  categoryLabels,
+function FacetFirstKnowledgeTreeBranch({
   depth,
   expandedPaths,
-  facets,
   metadata,
   node,
   onSelect,
   selectedUri,
   toggleExpanded,
 }: {
-  categoryLabels: Record<string, string>
   depth: number
   expandedPaths: Set<string>
-  facets: string[]
   metadata: Partial<Record<string, WikiPageMetadata>>
-  node: MetaKnowledgeTreeNode
+  node: FacetFirstMetaKnowledgeTreeNode
   onSelect: (uri: string) => void
   selectedUri: string | null
   toggleExpanded: (path: string) => void
 }) {
+  if (node.entry) {
+    const title = metadata[node.entry.uri]?.title || node.entry.name
+    return (
+      <button
+        type="button"
+        className={cn(
+          'flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left text-xs transition-colors hover:bg-muted',
+          selectedUri === node.entry.uri &&
+            'bg-primary/10 text-primary',
+        )}
+        style={{ paddingLeft: `${28 + depth * 14}px` }}
+        onClick={() => onSelect(node.entry?.uri || '')}
+      >
+        <FileTextIcon className="size-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{title}</span>
+      </button>
+    )
+  }
+
   const expanded = expandedPaths.has(node.path)
-  const unit = node.unit
-  const firstEntry = unit
-    ? facets.map((facet) => unit.entries[facet]).find(Boolean)
-    : undefined
-  const title = firstEntry
-    ? metadata[firstEntry.uri]?.title || unit?.name || node.name
-    : node.name
-  const presentCount = unit
-    ? facets.filter((facet) => unit.entries[facet]).length
-    : 0
-  const descendantUnits = unit
-    ? 1
-    : node.children.reduce(
-        (count, child) => count + (child.unit ? 1 : child.children.length),
-        0,
-      )
+  const descendantFiles = (candidate: FacetFirstMetaKnowledgeTreeNode): number =>
+    candidate.entry
+      ? 1
+      : candidate.children.reduce(
+          (count, child) => count + descendantFiles(child),
+          0,
+        )
 
   return (
     <div>
@@ -331,31 +338,25 @@ function MetaKnowledgeTreeBranch({
         ) : (
           <FolderIcon className="size-4 shrink-0 text-primary" />
         )}
-        <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
-        {unit ? (
-          <Badge
-            variant={
-              presentCount === facets.length ? 'secondary' : 'destructive'
-            }
-            className="h-5 shrink-0 px-1.5 text-[9px]"
-          >
-            {presentCount}/{facets.length}
-          </Badge>
-        ) : (
-          <span className="shrink-0 text-[10px] text-muted-foreground">
-            {descendantUnits}
-          </span>
-        )}
+        <span className="min-w-0 flex-1 truncate font-medium">
+          {node.name}
+          {node.label ? (
+            <span className="ml-1 font-normal text-muted-foreground">
+              {node.label}
+            </span>
+          ) : null}
+        </span>
+        <span className="shrink-0 text-[10px] text-muted-foreground">
+          {descendantFiles(node)}
+        </span>
       </button>
       {expanded ? (
         <div>
           {node.children.map((child) => (
-            <MetaKnowledgeTreeBranch
+            <FacetFirstKnowledgeTreeBranch
               key={child.path}
-              categoryLabels={categoryLabels}
               depth={depth + 1}
               expandedPaths={expandedPaths}
-              facets={facets}
               metadata={metadata}
               node={child}
               onSelect={onSelect}
@@ -363,41 +364,6 @@ function MetaKnowledgeTreeBranch({
               toggleExpanded={toggleExpanded}
             />
           ))}
-          {unit ? (
-            <div
-              className="grid grid-cols-3 gap-1 pb-2 pr-2"
-              style={{ paddingLeft: `${28 + depth * 14}px` }}
-            >
-              {facets.map((facet) => {
-                const entry = unit.entries[facet]
-                return entry ? (
-                  <button
-                    key={`${unit.id}-${facet}`}
-                    type="button"
-                    className={cn(
-                      'rounded-md border px-1.5 py-1.5 text-left text-[10px] transition-colors hover:bg-muted',
-                      selectedUri === entry.uri &&
-                        'border-primary bg-primary/10 text-primary',
-                    )}
-                    onClick={() => onSelect(entry.uri)}
-                  >
-                    <span className="block font-semibold">{facet}</span>
-                    <span className="block truncate opacity-70">
-                      {categoryLabels[facet] || facet}
-                    </span>
-                  </button>
-                ) : (
-                  <div
-                    key={`${unit.id}-${facet}`}
-                    className="rounded-md border border-dashed px-1.5 py-1.5 text-[10px] text-muted-foreground"
-                  >
-                    <span className="block font-semibold">{facet}</span>
-                    <span className="block truncate">—</span>
-                  </div>
-                )
-              })}
-            </div>
-          ) : null}
         </div>
       ) : null}
     </div>
@@ -408,6 +374,8 @@ function MetaKnowledgeTreeView({
   categoryLabels,
   facets,
   metadata,
+  rootPath,
+  sections,
   units,
   onSelect,
   selectedUri,
@@ -415,11 +383,21 @@ function MetaKnowledgeTreeView({
   categoryLabels: Record<string, string>
   facets: string[]
   metadata: Partial<Record<string, WikiPageMetadata>>
+  rootPath: string
+  sections?: MetaKnowledgeViewSection[]
   units: MetaKnowledgeUnit[]
   onSelect: (uri: string) => void
   selectedUri: string | null
 }) {
-  const tree = React.useMemo(() => buildMetaKnowledgeTree(units), [units])
+  const tree = React.useMemo(
+    () =>
+      buildFacetFirstMetaKnowledgeTree(units, facets, {
+        categoryLabels,
+        rootPath,
+        sections,
+      }),
+    [categoryLabels, facets, rootPath, sections, units],
+  )
   const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(
     () => new Set(),
   )
@@ -427,10 +405,11 @@ function MetaKnowledgeTreeView({
   React.useEffect(() => {
     setExpandedPaths((current) => {
       const next = new Set(current)
-      for (const root of tree) {
-        next.add(root.path)
-        for (const child of root.children) next.add(child.path)
+      const expand = (node: FacetFirstMetaKnowledgeTreeNode, depth: number) => {
+        if (!node.entry && depth < 2) next.add(node.path)
+        for (const child of node.children) expand(child, depth + 1)
       }
+      for (const root of tree) expand(root, 0)
       return next
     })
   }, [tree])
@@ -445,12 +424,10 @@ function MetaKnowledgeTreeView({
   }, [])
 
   return tree.map((node) => (
-    <MetaKnowledgeTreeBranch
+    <FacetFirstKnowledgeTreeBranch
       key={node.path}
-      categoryLabels={categoryLabels}
       depth={0}
       expandedPaths={expandedPaths}
-      facets={facets}
       metadata={metadata}
       node={node}
       onSelect={onSelect}
@@ -1125,8 +1102,15 @@ function KnowledgeMiningRoute() {
         wikiEntries.map((entry) => ({ name: entry.name, uri: entry.uri })),
         mainViewFacets,
         metadataQuery.data || {},
+        effectiveCompileResult?.main_view?.root_path || 'knowledge',
       ),
-    [job?.targetUri, mainViewFacets, metadataQuery.data, wikiEntries],
+    [
+      effectiveCompileResult?.main_view?.root_path,
+      job?.targetUri,
+      mainViewFacets,
+      metadataQuery.data,
+      wikiEntries,
+    ],
   )
   const knowledgeEntries = React.useMemo(
     () =>
@@ -2522,6 +2506,10 @@ function KnowledgeMiningRoute() {
                               }}
                               facets={mainViewFacets}
                               metadata={metadataQuery.data || {}}
+                              rootPath={
+                                effectiveCompileResult?.main_view?.root_path ||
+                                'knowledge'
+                              }
                               units={metaKnowledgeUnits}
                               onSelect={setSelectedUri}
                               selectedUri={selectedUri}
@@ -2620,6 +2608,10 @@ function KnowledgeMiningRoute() {
                                     }}
                                     facets={mainViewFacets}
                                     metadata={metadataQuery.data || {}}
+                                    rootPath={
+                                      effectiveCompileResult?.main_view
+                                        ?.root_path || 'knowledge'
+                                    }
                                     units={section.units}
                                     onSelect={setSelectedUri}
                                     selectedUri={selectedUri}

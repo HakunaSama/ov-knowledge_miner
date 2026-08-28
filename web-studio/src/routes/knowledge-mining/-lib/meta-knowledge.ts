@@ -15,6 +15,14 @@ export type MetaKnowledgeTreeNode = {
   unit?: MetaKnowledgeUnit
 }
 
+export type FacetFirstMetaKnowledgeTreeNode = {
+  children: FacetFirstMetaKnowledgeTreeNode[]
+  entry?: TaggedWikiEntry
+  label?: string
+  name: string
+  path: string
+}
+
 function relativePath(rootUri: string, entry: TaggedWikiEntry): string {
   const normalizedRoot = rootUri.replace(/\/$/, '')
   return entry.uri.startsWith(`${normalizedRoot}/`)
@@ -27,22 +35,42 @@ export function buildMetaKnowledgeUnits(
   entries: TaggedWikiEntry[],
   facets: string[],
   metadataByUri: Partial<Record<string, WikiPageMetadata>> = {},
+  mainViewRootPath = '',
 ): MetaKnowledgeUnit[] {
   const facetSet = new Set(facets)
   const units = new Map<string, MetaKnowledgeUnit>()
+  const configuredRoot = mainViewRootPath.split('/').filter(Boolean)
 
   for (const entry of entries) {
     const segments = relativePath(rootUri, entry).split('/').filter(Boolean)
     if (segments.length < 3) continue
-    const facet = segments.at(-2) || ''
+    const configuredFacetIndex = configuredRoot.length
+    const configuredRootMatches = configuredRoot.every(
+      (segment, index) => segments[index] === segment,
+    )
+    const facetFirstIndex =
+      configuredRootMatches && facetSet.has(segments[configuredFacetIndex])
+        ? configuredFacetIndex
+        : facetSet.has(segments[1])
+          ? 1
+          : -1
+    const legacyFacet = segments.at(-2) || ''
+    const facet = facetFirstIndex >= 0 ? segments[facetFirstIndex] : legacyFacet
     if (!facetSet.has(facet)) continue
     const filename = segments.at(-1) || entry.name
     const stem = filename.replace(/\.md$/i, '')
     const metaId = metadataByUri[entry.uri]?.metaId || stem
-    const physicalMetaDirectory = segments.at(-3) === metaId
+    const viewSegments =
+      facetFirstIndex >= 0
+        ? [
+            ...segments.slice(0, facetFirstIndex),
+            ...segments.slice(facetFirstIndex + 1, -1),
+          ]
+        : segments.slice(0, -2)
+    const physicalMetaDirectory = viewSegments.at(-1) === metaId
     const path = physicalMetaDirectory
-      ? segments.slice(0, -2).join('/')
-      : [...segments.slice(0, -2), metaId].join('/')
+      ? viewSegments.join('/')
+      : [...viewSegments, metaId].join('/')
     const unit = units.get(path) || {
       entries: {},
       id: path,
@@ -56,6 +84,92 @@ export function buildMetaKnowledgeUnits(
   return [...units.values()].sort((left, right) =>
     left.path.localeCompare(right.path),
   )
+}
+
+export function buildFacetFirstMetaKnowledgeTree(
+  units: MetaKnowledgeUnit[],
+  facets: string[],
+  options: {
+    categoryLabels?: Partial<Record<string, string>>
+    rootPath?: string
+    sections?: MetaKnowledgeViewSection[]
+  } = {},
+): FacetFirstMetaKnowledgeTreeNode[] {
+  const roots: FacetFirstMetaKnowledgeTreeNode[] = facets.map((facet) => ({
+    children: [],
+    label: options.categoryLabels?.[facet],
+    name: facet,
+    path: facet,
+  }))
+  const rootsByFacet = new Map(roots.map((node) => [node.name, node]))
+  const rootSegments = (options.rootPath || '').split('/').filter(Boolean)
+  const sectionByUnit = new Map<
+    string,
+    { description: string; id: string; title: string }
+  >()
+  for (const section of options.sections || []) {
+    for (const unit of section.units) {
+      if (!sectionByUnit.has(unit.id)) sectionByUnit.set(unit.id, section)
+    }
+  }
+
+  const insert = (
+    root: FacetFirstMetaKnowledgeTreeNode,
+    segments: Array<{ label?: string; name: string }>,
+    entry: TaggedWikiEntry,
+  ) => {
+    let parent = root
+    for (const segment of segments) {
+      const path = `${parent.path}/${segment.name}`
+      let child = parent.children.find(
+        (candidate) => candidate.path === path && !candidate.entry,
+      )
+      if (!child) {
+        child = {
+          children: [],
+          label: segment.label,
+          name: segment.name,
+          path,
+        }
+        parent.children.push(child)
+        parent.children.sort((left, right) => left.name.localeCompare(right.name))
+      }
+      parent = child
+    }
+    parent.children.push({
+      children: [],
+      entry,
+      name: entry.name,
+      path: `${parent.path}/${entry.name}`,
+    })
+    parent.children.sort((left, right) => {
+      if (Boolean(left.entry) !== Boolean(right.entry)) return left.entry ? 1 : -1
+      return left.name.localeCompare(right.name)
+    })
+  }
+
+  for (const unit of units) {
+    const unitSegments = unit.path.split('/').filter(Boolean)
+    const relativeUnitSegments = rootSegments.every(
+      (segment, index) => unitSegments[index] === segment,
+    )
+      ? unitSegments.slice(rootSegments.length)
+      : unitSegments
+    const section = sectionByUnit.get(unit.id)
+    const hierarchy = [
+      ...(section
+        ? [{ label: section.title, name: section.id }]
+        : []),
+      ...relativeUnitSegments.map((name) => ({ name })),
+    ]
+    for (const facet of facets) {
+      const entry = unit.entries[facet]
+      const root = rootsByFacet.get(facet)
+      if (entry && root) insert(root, hierarchy, entry)
+    }
+  }
+
+  return roots.filter((root) => root.children.length > 0)
 }
 
 export function buildMetaKnowledgeTree(
