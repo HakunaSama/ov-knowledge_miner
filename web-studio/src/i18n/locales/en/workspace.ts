@@ -144,7 +144,7 @@ const workspace = {
       defaultName: 'Bundled OKF_CONFIG.yaml (default)',
       choose: 'Choose config',
       useDefault: 'Restore default OKF config',
-      hint: 'Optionally upload YAML that defines the single-source main view, what/why/how leaves, derived views, provenance, intermediate artifacts, cross-knowledge links, and WikiLink rules.',
+      hint: 'Optionally upload YAML that strictly defines the main-view path levels, facet position, derived-view groups, provenance, intermediate artifacts, cross-knowledge links, and WikiLink rules. Unconfigured directories and views are rejected.',
     },
     memory: {
       title: 'Team Memory (optional incremental source)',
@@ -263,7 +263,8 @@ const workspace = {
       mainDescription:
         'The main view mirrors the real OpenViking target directory. Derived views reorganize the same pages by OKF tags without copying knowledge.',
       mainStructure:
-        'Top-level facets: {{categories}}. Each facet keeps the configured view hierarchy below it.',
+        'Configured path levels: {{structure}}. Facet must be one of {{categories}}; extra directories are rejected.',
+      legacyStructure: 'legacy result without path_structure',
       metaSummary:
         '{{units}} meta-knowledge units and {{files}} knowledge files. Main, domain, and usage views always have exactly the same file total.',
       incompleteMetaSummary:
@@ -282,8 +283,16 @@ const workspace = {
           purpose:
             'This is the single source of truth and mirrors the folders and files actually stored in OpenViking, not a tag-generated copy.',
           content:
-            'The top level is split into what, why, and how. Each facet keeps the configured OKF view hierarchy below it. The root navigation page is not counted as knowledge.',
+            'The top level is split into what, why, and how. Each facet enters an OKF-configured business route before the meta_id and filename; the root navigation page is not counted as knowledge.',
           use: 'Use it to understand scope, browse the complete hierarchy, or locate the physical home of a claim.',
+        },
+        perspective: {
+          title: 'Enterprise perspective: knowledge form by business domain',
+          purpose:
+            'This virtual view does not copy physical files. Tags map each complete meta-knowledge unit into one two-level directory.',
+          content:
+            'The first level is TOPIC, REFERENCE, PROCEDURE, or SYNTHESIS. The second is operations, product-service, customer-market, technology-data, management-finance, people-organization, compliance-risk, or corporate-brand.',
+          use: 'Use it to locate knowledge by both its form and its enterprise business domain.',
         },
         domain: {
           title: 'Knowledge domain: primary subject of a meta-knowledge unit',

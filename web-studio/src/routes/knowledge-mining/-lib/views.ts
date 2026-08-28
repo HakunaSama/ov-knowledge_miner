@@ -36,6 +36,11 @@ export type ViewSection = {
   description: string
   entries: TaggedWikiEntry[]
   id: string
+  path?: Array<{
+    description: string
+    id: string
+    title: string
+  }>
   title: string
 }
 
@@ -169,6 +174,7 @@ export function buildViewSections(
       metadataByUri[entry.uri]?.tags.includes(group.tag),
     ),
     id: group.id,
+    path: group.path,
     title: group.title,
   }))
 }

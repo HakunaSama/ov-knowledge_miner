@@ -16,6 +16,7 @@ const unit: MetaKnowledgeUnit = {
     },
     why: { name: 'benefits.md', uri: `${root}/knowledge/rag/why/benefits.md` },
   },
+  entryPaths: {},
   id: 'knowledge/rag/retrieval',
   name: 'retrieval',
   path: 'knowledge/rag/retrieval',

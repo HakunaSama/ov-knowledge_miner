@@ -23,11 +23,11 @@ curl http://localhost:1933/bot/v1/health
 
 1. 在“知识挖掘”页面选择文件，或一次选择包含 `documents/` 与 `team-memory/` 的完整资源文件夹。页面会递归分类子目录。支持 `.pdf`、`.md`、`.markdown`、`.doc`、`.docx`、`.xls` 和 `.xlsx`；文件总数不限，单文件上限 10 MiB。
 2. 可选上传团队 Memory 文件（`.md`、`.txt`、`.json`、`.yaml`、`.yml`）。它们会进入独立来源目录，不会混入首轮文档 Compile。
-3. “OKF 格式配置”默认使用 `llm-wiki/OKF_CONFIG.yaml`；也可以选择自定义 `.yaml`/`.yml`，改写必需 frontmatter、目录类型映射、派生视图和 WikiLink 规则。
+3. “OKF 格式配置”默认使用 `llm-wiki/OKF_CONFIG.yaml`；也可以选择自定义 `.yaml`/`.yml`，严格指定必需 frontmatter、`main_view.path_structure`、facet、目录类型映射、派生视图和 WikiLink 规则。配置外目录或 `view/...` 分组会被提交器拒绝。
 4. 在“挖掘目标”中说明问题、受众、时间范围、输出语言和侧重点。这段内容会作为 Compile 的 `reason`。
 5. 点击“开始知识挖掘”。页面先把本批数据完整保存到独立目录，再按创建时间加入串行队列。可以立即新建另一批、上传另一份数据并继续排队；不同批次不会共享来源目录或产物目录。队首先用文档生成主知识库；如果上传了团队 Memory，文档任务成功后会自动对同一目标启动第二个增量 Compile。
 6. 页面顶部的“挖掘历史”会列出当前 principal 最近 90 天内的历史、运行中批次和排队位置；点击任一批次即可用同一套完整界面查看目录、覆盖账本、中间产物、调查问卷和知识点阵。队列严格一次只运行一个完整挖掘流程；文档、Memory、人工补证都属于同一流程，“等待人工补证”也会阻塞后续任务。当前流程完成、产出部分结果、失败或取消后才释放下一项。切换到其他历史不会停止后台轮询或后续自动阶段；运行中的 Compile 可以协作式取消，排队项可以取消排队，失败或已取消的任务只有在队列空闲时才能从检查点恢复。
-7. 主视图以可展开目录树展示真实知识文件。一个元知识有独立目录，由共享同一 `meta_id` 的 what、why、how 三页构成；根 `index.md` 只是导航，不计入知识文件。旧版结果仍会按 `meta_id` 显示兼容目录。
+7. 主视图以可展开目录树展示真实知识文件。默认物理结构严格是 `knowledge/<facet>/<meta_id>/<filename>`，what、why、how 位于顶层 facet，而不是文件的末级父目录；一个元知识仍由共享同一 `meta_id` 的三页构成。根 `index.md` 只是导航，不计入知识文件，旧版结果仍会按 `meta_id` 显示兼容目录。
 8. 主视图、知识域和使用场景始终展示同一批文件且总数一致。“知识域”表示整个元知识的一个主要主题归属，“使用场景”表示它的一个主要用途；两者只重组整组三页，不复制或拆散文件。“中间产物”用于审计证据链，“人工调查”是最终完成前的补证门禁。
 9. “知识点阵”直接复用 `examples/compile/graph-show/knowledge-graph/knowledge_graph.py` 中的官方 KG Explorer HTML/CSS/D3 渲染器；Studio 只负责把元知识、what/why/how、WikiLink、跨知识引用和证据链适配为官方 `nodes` / `links` 数据。保留类型筛选、关系图例、检索、邻居聚焦、平移缩放和实体检查器。
 10. “来源覆盖”逐项展示已上传、已检查、已引用、已合并和已跳过的材料及原因。缺失来源、未实际读取、无理由跳过或引用与证据账本不一致都会拒绝提交，让 VikingBot 继续处理。
@@ -60,9 +60,9 @@ viking://resources/knowledge-mining/<batch-id>/
 ├── team-memory/        # 可选的团队 Memory 增量来源
 └── wiki/                # llm-wiki 编译产物
     ├── index.md
-    ├── knowledge/<topic>/<meta_id>/what/*.md
-    ├── knowledge/<topic>/<meta_id>/why/*.md
-    ├── knowledge/<topic>/<meta_id>/how/*.md
+    ├── knowledge/what/<meta_id>/*.md
+    ├── knowledge/why/<meta_id>/*.md
+    ├── knowledge/how/<meta_id>/*.md
     └── _mining/
         ├── run-manifest.json
         ├── evidence-ledger.json
@@ -84,20 +84,20 @@ POST /bot/v1/compile
 
 首轮请求中的 `from` 指向 `document-sources`，`to` 指向 `wiki`。如果存在团队 Memory，第二轮请求严格使用 `from=team-memory`、`to=wiki`；VikingBot 会先读取现有目标，再把新增证据合并到规范页面中。增量提交允许保留首轮页面已有的文档出处，同时要求新 Memory 出处仍来自第二轮 supplied source。
 
-`skill` 指向当前用户或共享空间中的 `llm-wiki` Skill，`okf_config` 指向本批次写入的 `OKF_CONFIG.yaml`。VikingBot 将配置物化为 `compile_config/OKF_CONFIG.yaml` 并优先执行；提交器会确定性校验 frontmatter、元知识独立目录、What/Why/How 物理路径、原始来源与中间证据的双重谱系、跨库引用、派生视图标签、WikiLink，以及八类中间产物的结构和一致性，而不是只依赖模型遵守提示词。知识阅读、归纳和页面写作仍在 VikingBot 的任务独立 AgentLoop 中执行。
+`skill` 指向当前用户或共享空间中的 `llm-wiki` Skill，`okf_config` 指向本批次写入的 `OKF_CONFIG.yaml`。VikingBot 将配置物化为 `compile_config/OKF_CONFIG.yaml` 并优先执行；提交器会确定性校验 frontmatter、`main_view.path_structure` 的准确层数与顺序、facet 值、`meta_id` 目录、配置声明的全部派生视图标签、原始来源与中间证据的双重谱系、跨库引用、WikiLink，以及八类中间产物的结构和一致性。模型增加任意 topic/domain/misc 目录、改变 facet 位置、发明视图命名空间或使用未声明 group 都会失败；知识阅读、归纳和页面写作仍在 VikingBot 的任务独立 AgentLoop 中执行。
 
 Studio 启动 Compile 时不再提交一小时运行时限，服务端默认也没有墙钟硬截止时间。三阶段门禁会在服务端私有目录保存可恢复检查点：通过来源覆盖后保存一次，通过候选知识后再保存一次；协作式取消也会尽力保存当前工作区。恢复接口复用原任务的来源 URI 和净化请求，并校验来源签名后恢复 checkout、阅读账本与阶段状态。检查点在最终提交通过前不会写入 `wiki/` 正式目标，因此中断恢复不会暴露半成品知识库。
 
 ## 主视图与派生视图
 
-主视图永远对应 `wiki/` 中的实际文件，也是唯一事实源。除 `index.md` 外，默认契约要求页面位于 `knowledge/<topic>/<meta_id>/what|why|how/`。每个元知识必须有且仅有一个 what、一个 why 和一个 how 页面，三页共享稳定的 `meta_id`，且物理目录名必须与它一致。提交器会拒绝缺页、目录不匹配、同一分类有多页或三页视图标签不一致的结果。
+主视图永远对应 `wiki/` 中的实际文件，也是唯一事实源。除 `index.md` 外，默认契约的精确 `path_structure` 是 `facet/meta_id/filename`，所以页面位于 `knowledge/what|why|how/<meta_id>/*.md`；what/why/how 不再被代码硬编码为末级目录，它们的位置和可选值分别由 `path_structure` 与 `facet_categories` 决定。每个元知识必须有且仅有一个 what、一个 why 和一个 how 页面并共享稳定的 `meta_id`。提交器会拒绝额外或缺失层级、顺序错误、未知 facet、meta_id 不匹配、缺页、同一 facet 多页或三页视图标签不一致的结果。
 
 派生视图不会复制或移动页面，而是读取每个元知识三页一致的 namespaced tags。`index.md` 不进入派生视图；每个默认视图使用 `selection: exactly_one`，因此主视图、知识域和使用场景中的知识文件集合及总数严格一致。默认契约内置：
 
 - `domain`：元知识的主要主题归属——人员与组织、产品与系统、流程与方法、决策与洞察；
 - `usage`：新人入门、规划与决策、执行与协作、排障与风险、参考查询。
 
-自定义 OKF 可以在 `views` 中定义其他分组。每个视图声明 `tag_prefix`、`selection` 和 `groups`；提交器要求每页（包括 `index.md`）至少选择一个有效 group tag，`selection: exactly_one` 时必须恰好一个。
+自定义 OKF 可以在 `views` 中定义其他分组。每个视图声明 `tag_prefix`、`selection` 和 `groups`；提交器要求每个非豁免知识页至少选择一个有效 group tag，`selection: exactly_one` 时必须恰好一个，并拒绝所有未声明的 `view/...` 命名空间与 group。界面只根据这些已验证配置生成视图分支，不接受模型自定义目录。
 
 ## 谱系、跨库引用与人工确认
 

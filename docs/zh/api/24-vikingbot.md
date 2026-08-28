@@ -252,7 +252,8 @@ ov task status cmp_01abc
       "main_view": {
         "single_source_of_truth": true,
         "root_path": "knowledge",
-        "leaf_categories": ["what", "why", "how"],
+        "facet_categories": ["what", "why", "how"],
+        "path_structure": ["facet", "meta_id", "filename"],
         "exempt_paths": ["index.md"]
       },
       "intermediate_artifacts": [

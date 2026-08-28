@@ -2315,6 +2315,37 @@ def test_compile_prompt_explains_derived_okf_views():
     assert "do not duplicate pages" in system
 
 
+def test_compile_prompt_states_exact_configured_main_view_structure():
+    request = SanitizedCompileRequest.model_validate(
+        {
+            "from": ["viking://resources/source"],
+            "to": "viking://resources/output",
+            "skill": "viking://agent/skills/llm-wiki",
+            "reason": "Build a strict Wiki",
+        }
+    )
+    content = Path("examples/compile/ov-compile-skills/llm-wiki/OKF_CONFIG.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    system, _user = BotCompileService._build_prompts(
+        request=request,
+        skill_name="llm-wiki",
+        skill_content="Produce the required files.",
+        catalog=[],
+        capabilities=CompileCapabilities(exec_enabled=True),
+        okf_config_content=content,
+        okf_config=parse_okf_config(content),
+    )
+
+    assert "`knowledge/`" in system
+    assert "`facet/route/meta_id/filename`" in system
+    assert "what, why, how" in system
+    assert "Do not add, omit, reorder, or invent any directory level" in system
+    assert "any undeclared `view/...` tag is invalid" in system
+    assert "immediate-parent leaf category" not in system
+
+
 @pytest.mark.asyncio
 async def test_submit_tool_requires_workspace_paths_for_artifacts():
     tool = SubmitWikiBundleTool(
@@ -2686,9 +2717,7 @@ async def test_submit_tool_persists_platform_repairs_before_strict_validation_fa
         f"{checkout_root}/_mining/source-coverage.json": (
             b'{"version":"1.0","stage":"documents","sources":[]}'
         ),
-        f"{checkout_root}/_mining/candidate-knowledge.json": (
-            b'{"version":"1.0","candidates":[}'
-        ),
+        f"{checkout_root}/_mining/candidate-knowledge.json": (b'{"version":"1.0","candidates":[}'),
     }
 
     class Sandbox:
@@ -3807,10 +3836,7 @@ async def test_source_context_rejects_node_overflow_instead_of_truncating():
         async def list_resources(self, *, path, recursive, node_limit):
             assert recursive is False
             assert node_limit == 3
-            return [
-                {"uri": f"{path}/file-{index}.md", "isDir": False}
-                for index in range(3)
-            ]
+            return [{"uri": f"{path}/file-{index}.md", "isDir": False} for index in range(3)]
 
     service = object.__new__(BotCompileService)
     service.limits = CompileLimits(source_nodes=2)
@@ -4973,7 +4999,9 @@ async def test_resume_checkpoint_round_trip_is_private_and_restores_phase(tmp_pa
                 if name.startswith(f"{COMPILE_TARGET_CHECKOUT_ROOT}/")
             }
             assert len(selected) <= max_entries
-            return [SandboxFileInfo(path=name, size=len(payload)) for name, payload in selected.items()]
+            return [
+                SandboxFileInfo(path=name, size=len(payload)) for name, payload in selected.items()
+            ]
 
         async def read_file_bytes(self, path, *, max_bytes=None):
             if path not in self.files:
@@ -5228,6 +5256,57 @@ async def test_timeout_salvage_copies_workspace_and_repairs_links(tmp_path: Path
     assert result.validation_passed is False
     assert [view["id"] for view in result.views] == ["domain"]
     assert any("Skipped" in warning for warning in result.warnings)
+
+
+@pytest.mark.asyncio
+async def test_timeout_salvage_rejects_pages_outside_configured_main_view_structure(
+    tmp_path: Path,
+):
+    service = _compile_service(
+        tmp_path,
+        auth_mode="api_key",
+        backend=SandboxBackend.DIRECT,
+    )
+    page = (
+        b"---\ntype: entity\ntitle: Alice\ndescription: Alice profile.\n"
+        b"meta_id: alice\n---\n\n# Alice\n"
+    )
+    files = {
+        "__compile_staging__/target_checkout/knowledge/what/products/alice/alice.md": page,
+        "__compile_staging__/target_checkout/knowledge/what/invented/alice/alice.md": page,
+    }
+
+    class Client:
+        operations = []
+
+        async def tree(self, uri, *, node_limit):
+            return []
+
+        async def batch_write(self, *, root_uri, operations, wait):
+            self.operations = operations
+            return {
+                "created": [operation["uri"] for operation in operations],
+                "updated": [],
+                "unchanged": [],
+            }
+
+    config_content = Path("examples/compile/ov-compile-skills/llm-wiki/OKF_CONFIG.yaml").read_text(
+        encoding="utf-8"
+    )
+    client = Client()
+    result = await service._salvage_workspace(
+        client=client,
+        request=_sanitized_compile_request(),
+        sandbox=_FakeWorkspaceSandbox(files),
+        workspace_baseline=set(),
+        okf_config=parse_okf_config(config_content),
+    )
+
+    assert result is not None
+    assert [operation["uri"] for operation in client.operations] == [
+        "viking://resources/wiki/knowledge/what/products/alice/alice.md"
+    ]
+    assert any("Skipped 1" in warning for warning in result.warnings)
 
 
 @pytest.mark.parametrize(

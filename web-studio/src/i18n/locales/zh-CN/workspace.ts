@@ -141,7 +141,7 @@ const workspace = {
       defaultName: '内置 OKF_CONFIG.yaml（默认）',
       choose: '选择配置',
       useDefault: '恢复默认 OKF 配置',
-      hint: '可选上传 YAML 配置，指定单一事实主视图、what/why/how 末层、派生视图、证据链、中间产物、跨知识库引用和 WikiLink 规则。',
+      hint: '可选上传 YAML 配置，严格指定主视图路径层级、facet 位置、派生视图分组、证据链、中间产物、跨知识库引用和 WikiLink 规则；配置外目录与视图会被拒绝。',
     },
     memory: {
       title: '团队 Memory（可选增量来源）',
@@ -255,7 +255,8 @@ const workspace = {
       mainDescription:
         '主视图严格对应 OpenViking 目标目录中的真实文件结构；其他视图只按 OKF tags 重组同一批页面，不复制知识。',
       mainStructure:
-        '当前顶层按 {{categories}} 分区，各分区下保持视图目录结构。',
+        '配置路径层级：{{structure}}；facet 只能是 {{categories}}，不允许增加配置外目录。',
+      legacyStructure: '旧结果未记录 path_structure',
       metaSummary:
         '当前共 {{units}} 个元知识、{{files}} 个知识文件；主视图、知识域和使用场景的文件总数严格一致。',
       incompleteMetaSummary:
@@ -274,8 +275,16 @@ const workspace = {
           purpose:
             '这是唯一事实源，直接对应 OpenViking 中真正保存的文件夹和文件，不是按标签生成的副本。',
           content:
-            '顶层固定分为 what（是什么）、why（为什么）和 how（怎么做），每个顶层目录下继续遵循 OKF 视图目录结构；根导航页不计入知识文件。',
+            '顶层分为 what（是什么）、why（为什么）和 how（怎么做），每个分区先进入 OKF 配置的业务目录路由，再进入 meta_id 与文件名；根导航页不计入知识文件。',
           use: '需要理解知识边界、浏览完整目录，或确认某条知识实际保存在哪里时使用。',
+        },
+        perspective: {
+          title: '企业知识透视图：按知识形态与企业知识域浏览',
+          purpose:
+            '透视图不复制物理文件，而是用标签将完整元知识映射到一个两级目录。',
+          content:
+            '第一级为 TOPIC、REFERENCE、PROCEDURE、SYNTHESIS，第二级为 operations、product-service、customer-market、technology-data、management-finance、people-organization、compliance-risk、corporate-brand。',
+          use: '需要从知识形态和企业业务领域两个维度定位知识时使用。',
         },
         domain: {
           title: '知识域：元知识的主要主题归属',

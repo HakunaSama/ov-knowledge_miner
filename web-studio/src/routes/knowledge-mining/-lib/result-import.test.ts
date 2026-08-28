@@ -39,9 +39,9 @@ describe('CLI knowledge result import', () => {
     vi.mocked(fetchFsTree).mockResolvedValue({
       nodes: [
         node('index.md'),
-        node('knowledge/rag/rag/what/rag.md'),
-        node('knowledge/rag/rag/why/rag.md'),
-        node('knowledge/rag/rag/how/rag.md'),
+        node('knowledge/what/products/rag/rag.md'),
+        node('knowledge/why/compliance/rag/rag.md'),
+        node('knowledge/how/technology/backend/rag/rag.md'),
         node('_mining/run-manifest.json'),
         node('_mining/source-coverage.json'),
         node('_mining/investigation-report.json'),
@@ -86,7 +86,13 @@ describe('CLI knowledge result import', () => {
       from: ['viking://resources/source'],
       investigation_status: 'clear',
       main_view: {
-        leaf_categories: ['what', 'why', 'how'],
+        directory_routes: {
+          how: ['technology/backend'],
+          what: ['products'],
+          why: ['compliance'],
+        },
+        facet_categories: ['what', 'why', 'how'],
+        path_structure: ['facet', 'route', 'meta_id', 'filename'],
         root_path: 'knowledge',
       },
       page_count: 4,
@@ -160,6 +166,35 @@ describe('CLI knowledge result import', () => {
         ],
       },
       { id: 'usage', groups: [{ id: 'reference' }] },
+    ])
+  })
+
+  it('infers a two-level perspective path from nested tags', () => {
+    expect(
+      inferCompileViewsFromTags([
+        'view/perspective/topic/operations',
+        'view/perspective/synthesis/technology-data',
+      ]),
+    ).toMatchObject([
+      {
+        id: 'perspective',
+        groups: [
+          {
+            id: 'synthesis/technology-data',
+            path: [
+              { id: 'synthesis', title: 'SYNTHESIS' },
+              { id: 'technology-data', title: 'technology-data' },
+            ],
+          },
+          {
+            id: 'topic/operations',
+            path: [
+              { id: 'topic', title: 'TOPIC' },
+              { id: 'operations', title: 'operations' },
+            ],
+          },
+        ],
+      },
     ])
   })
 })

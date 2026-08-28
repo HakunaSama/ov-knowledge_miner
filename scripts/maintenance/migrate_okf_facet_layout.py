@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Move OKF what/why/how directories above the configured view hierarchy.
+"""Move legacy OKF facet leaves into the exact configured main-view hierarchy.
 
 Legacy layout::
 
     knowledge/<view path>/<meta_id>/<facet>/<page.md>
 
-Facet-first layout::
+Strict configured layout::
 
-    knowledge/<facet>/<view path>/<meta_id>/<page.md>
+    knowledge/<facet>/<meta_id>/<page.md>
 
 The command is a dry run unless ``--apply`` is passed. In addition to moving
 facet directories, it rewrites textual path references in Markdown, JSON,
@@ -31,6 +31,7 @@ import yaml
 
 DEFAULT_FACETS = ("what", "why", "how")
 DEFAULT_ROOT_PATH = "knowledge"
+DEFAULT_PATH_STRUCTURE = ("facet", "meta_id", "filename")
 TEXT_SUFFIXES = {".json", ".md", ".txt", ".yaml", ".yml"}
 
 
@@ -38,6 +39,7 @@ TEXT_SUFFIXES = {".json", ".md", ".txt", ".yaml", ".yml"}
 class Layout:
     root_path: str
     facets: tuple[str, ...]
+    path_structure: tuple[str, ...] = DEFAULT_PATH_STRUCTURE
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +72,7 @@ def _safe_relative_path(value: object, *, field: str) -> str:
 def load_layout(config_path: Path | None) -> Layout:
     """Load main-view root and facet names from an OKF YAML config."""
     if config_path is None:
-        return Layout(DEFAULT_ROOT_PATH, DEFAULT_FACETS)
+        return Layout(DEFAULT_ROOT_PATH, DEFAULT_FACETS, DEFAULT_PATH_STRUCTURE)
     try:
         raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
@@ -82,17 +84,28 @@ def load_layout(config_path: Path | None) -> Layout:
         main_view.get("root_path", DEFAULT_ROOT_PATH),
         field="main_view.root_path",
     )
-    raw_facets = main_view.get("leaf_categories", DEFAULT_FACETS)
+    raw_facets = main_view.get(
+        "facet_categories",
+        main_view.get("leaf_categories", DEFAULT_FACETS),
+    )
     if (
         not isinstance(raw_facets, list)
         or not raw_facets
         or any(not isinstance(item, str) or not item.strip() for item in raw_facets)
     ):
-        raise MigrationError("main_view.leaf_categories must be a non-empty string list")
+        raise MigrationError("main_view.facet_categories must be a non-empty string list")
     facets = tuple(dict.fromkeys(item.strip() for item in raw_facets))
     if any("/" in facet or facet in {".", ".."} for facet in facets):
-        raise MigrationError("main_view.leaf_categories must contain safe directory names")
-    return Layout(root_path, facets)
+        raise MigrationError("main_view.facet_categories must contain safe directory names")
+    raw_structure = main_view.get("path_structure", list(DEFAULT_PATH_STRUCTURE))
+    if not isinstance(raw_structure, list) or tuple(raw_structure) not in {
+        ("facet", "meta_id", "filename"),
+        ("meta_id", "facet", "filename"),
+    }:
+        raise MigrationError(
+            "migration supports path_structure facet/meta_id/filename or meta_id/facet/filename"
+        )
+    return Layout(root_path, facets, tuple(raw_structure))
 
 
 def _contains_direct_page(directory: Path) -> bool:
@@ -139,7 +152,14 @@ def plan_migration(wiki_root: Path, layout: Layout) -> list[PlannedMove]:
         ),
     ):
         relative = source.relative_to(knowledge_root)
-        destination = knowledge_root / source.name / Path(*relative.parts[:-1])
+        meta_id = relative.parts[-2]
+        directory_levels = {
+            "facet": source.name,
+            "meta_id": meta_id,
+        }
+        destination = knowledge_root.joinpath(
+            *(directory_levels[level] for level in layout.path_structure[:-1])
+        )
         if destination.exists():
             raise MigrationError(
                 "target already exists; refusing to merge directories: "
@@ -264,8 +284,8 @@ def apply_migration(wiki_root: Path, moves: Sequence[PlannedMove]) -> MigrationS
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Move an existing OKF Wiki from view-first facet leaves to a "
-            "what/why/how-first directory layout."
+            "Move an existing OKF Wiki from view-first facet leaves to its exact "
+            "configured main-view path_structure."
         )
     )
     parser.add_argument("wiki_root", type=Path, help="local path to the mined Wiki root")
@@ -291,6 +311,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"[{mode}] Wiki root: {args.wiki_root.resolve()}")
         print(f"Main-view root: {layout.root_path}")
         print(f"Facet order: {', '.join(layout.facets)}")
+        print(f"Path structure: {' / '.join(layout.path_structure)}")
         for move in moves:
             print(f"MOVE {move.old_relative} -> {move.new_relative}")
         if not moves:

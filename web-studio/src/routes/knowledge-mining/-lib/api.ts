@@ -12,7 +12,7 @@ import {
 export const LLM_WIKI_SKILL_NAME = 'llm-wiki'
 export const DEFAULT_OKF_CONFIG = defaultOkfConfig
 const LLM_WIKI_SKILL_VERSION_MARKER =
-  'OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 4.3'
+  'OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 4.5'
 
 export type CompileStatus =
   | 'accepted'
@@ -51,9 +51,12 @@ export type CompileResult = {
 }
 
 export type CompileMainView = {
+  directory_routes?: Record<string, string[]>
   derived_views_include_exempt?: boolean
   exempt_paths: string[]
-  leaf_categories: string[]
+  facet_categories?: string[]
+  /** Legacy Compile results created before OKF 1.1. */
+  leaf_categories?: string[]
   meta_knowledge?: {
     group_by: 'frontmatter_field'
     id_field: string
@@ -61,6 +64,7 @@ export type CompileMainView = {
     require_id_directory?: boolean
     shared_view_tags: boolean
   } | null
+  path_structure?: Array<'facet' | 'route' | 'meta_id' | 'filename'>
   root_path: string
   single_source_of_truth: boolean
 }
@@ -82,6 +86,11 @@ export type CompileIntermediateArtifact = {
 export type CompileViewGroup = {
   description: string
   id: string
+  path?: Array<{
+    description: string
+    id: string
+    title: string
+  }>
   tag: string
   title: string
 }

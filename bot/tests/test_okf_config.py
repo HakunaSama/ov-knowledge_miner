@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 from vikingbot.compile.okf_config import parse_okf_config
 from vikingbot.compile.renderer import finalize_resource_checkout
 
@@ -21,7 +22,7 @@ def _page(
         f"title: {title}\n"
         f"description: Knowledge about {title}.\n"
         f"meta_id: {meta_id or title.lower().replace(' ', '-')}\n"
-        "tags: [test, view/domain/products-and-systems, view/usage/reference]\n"
+        "tags: [test, view/perspective/topic/technology-data]\n"
         f"{status_line}"
         "sources:\n"
         "  - resource: viking://resources/source/document\n"
@@ -46,14 +47,14 @@ def _page(
 def _unit_pages(*, topic: str, meta_id: str, what_name: str, what_page: bytes) -> dict[str, bytes]:
     """Return one complete meta-knowledge triplet with unambiguous filenames."""
     return {
-        f"knowledge/{topic}/{meta_id}/what/{what_name}.md": what_page,
-        f"knowledge/{topic}/{meta_id}/why/{meta_id}-rationale.md": _page(
+        f"knowledge/what/products/{meta_id}/{what_name}.md": what_page,
+        f"knowledge/why/compliance/{meta_id}/{meta_id}-rationale.md": _page(
             page_type="synthesis",
             title=f"{meta_id} rationale",
             body="Rationale.",
             meta_id=meta_id,
         ),
-        f"knowledge/{topic}/{meta_id}/how/{meta_id}-procedure.md": _page(
+        f"knowledge/how/operations/pickup-delivery/{meta_id}/{meta_id}-procedure.md": _page(
             page_type="concept",
             title=f"{meta_id} procedure",
             body="Procedure.",
@@ -191,15 +192,26 @@ def _source_unit(resource: str = "viking://resources/source/document") -> dict:
 def test_default_okf_config_maps_paths_with_last_match_winning():
     config = parse_okf_config(DEFAULT_CONFIG)
 
-    assert config.expected_type("knowledge/people/what/person.md") == "entity"
-    assert config.expected_type("knowledge/compiler/how/build.md") == "concept"
-    assert config.expected_type("knowledge/project/why/decision.md") == "synthesis"
+    assert config.expected_type("knowledge/what/products/person/person.md") == "entity"
+    assert config.expected_type("knowledge/how/technology/backend/build/build.md") == "concept"
+    assert config.expected_type("knowledge/why/compliance/decision/decision.md") == "synthesis"
     assert config.expected_type("index.md") == "synthesis"
-    assert [view.id for view in config.views] == ["domain", "usage"]
-    assert config.views[0].groups[0].tag == "view/domain/people-and-orgs"
+    assert [view.id for view in config.views] == ["perspective"]
+    assert len(config.views[0].groups) == 32
+    assert config.views[0].groups[0].tag == "view/perspective/topic/operations"
+    assert [item.title for item in config.views[0].groups[0].path] == [
+        "TOPIC",
+        "operations",
+    ]
     assert config.main_view is not None
     assert config.main_view.single_source_of_truth is True
-    assert config.main_view.leaf_categories == ("what", "why", "how")
+    assert config.main_view.facet_categories == ("what", "why", "how")
+    assert config.main_view.path_structure == ("facet", "route", "meta_id", "filename")
+    assert config.main_view.directory_routes["what"] == (
+        "products",
+        "operations",
+        "technology",
+    )
     assert config.main_view.derived_views_include_exempt is False
     assert config.main_view.meta_knowledge is not None
     assert config.main_view.meta_knowledge.group_by == "frontmatter_field"
@@ -255,8 +267,8 @@ def test_configured_checkout_applies_defaults_and_literal_wikilinks():
         generated_metadata={"by": "llm-wiki/test", "at": "2026-08-25T09:00:00Z"},
     )
 
-    alice = finalized.files["knowledge/people/alice/what/Alice.md"].decode()
-    bob = finalized.files["knowledge/people/bob/what/Bob.md"].decode()
+    alice = finalized.files["knowledge/what/products/alice/Alice.md"].decode()
+    bob = finalized.files["knowledge/what/products/bob/Bob.md"].decode()
     assert "status: stable" in alice
     assert "by: llm-wiki/test" in alice
     assert "at: '2026-08-25T09:00:00Z'" in alice
@@ -285,8 +297,8 @@ def test_configured_checkout_rejects_wrong_path_type_and_unknown_wikilink():
     with pytest.raises(ValueError, match='must use type "entity"'):
         finalize_resource_checkout(
             {
-                **_artifacts(["knowledge/people/alice/what/Alice.md"]),
-                "knowledge/people/alice/what/Alice.md": _page(
+                **_artifacts(["knowledge/what/products/alice/Alice.md"]),
+                "knowledge/what/products/alice/Alice.md": _page(
                     page_type="concept", title="Alice", body="Body."
                 ),
             },
@@ -299,13 +311,13 @@ def test_configured_checkout_rejects_wrong_path_type_and_unknown_wikilink():
 def test_configured_checkout_requires_declared_tags_for_every_view():
     config = parse_okf_config(DEFAULT_CONFIG)
     page = _page(page_type="entity", title="Alice", body="Body.").replace(
-        b"view/usage/reference", b"ordinary-tag"
+        b"view/perspective/topic/technology-data", b"ordinary-tag"
     )
-    with pytest.raises(ValueError, match='at least one tag for view "usage"'):
+    with pytest.raises(ValueError, match='at least one tag for view "perspective"'):
         finalize_resource_checkout(
             {
-                **_artifacts(["knowledge/people/alice/what/Alice.md"]),
-                "knowledge/people/alice/what/Alice.md": page,
+                **_artifacts(["knowledge/what/products/alice/Alice.md"]),
+                "knowledge/what/products/alice/Alice.md": page,
             },
             target_uri="viking://resources/wiki",
             source_roots={"src_1": "viking://resources/source"},
@@ -313,10 +325,10 @@ def test_configured_checkout_requires_declared_tags_for_every_view():
         )
 
 
-def test_configured_checkout_enforces_what_why_how_as_physical_leaf_categories():
+def test_configured_checkout_rejects_model_invented_main_view_directory_routes():
     config = parse_okf_config(DEFAULT_CONFIG)
-    path = "knowledge/people/what/deeper/Alice.md"
-    with pytest.raises(ValueError, match="main-view leaf category"):
+    path = "knowledge/what/model-invented/alice/Alice.md"
+    with pytest.raises(ValueError, match="configured directory route"):
         finalize_resource_checkout(
             {
                 **_artifacts([path]),
@@ -328,9 +340,62 @@ def test_configured_checkout_enforces_what_why_how_as_physical_leaf_categories()
         )
 
 
+def test_configured_checkout_uses_configured_facet_position_and_names():
+    raw = yaml.safe_load(DEFAULT_CONFIG)
+    raw["main_view"]["facet_categories"] = ["definition", "rationale", "procedure"]
+    raw["main_view"]["directory_routes"] = {
+        "definition": ["products"],
+        "rationale": ["compliance"],
+        "procedure": ["operations/pickup-delivery"],
+    }
+    raw["path_types"] = [
+        {"pattern": "index.md", "type": "synthesis"},
+        {"pattern": "knowledge/definition/**/*.md", "type": "entity"},
+        {"pattern": "knowledge/rationale/**/*.md", "type": "synthesis"},
+        {"pattern": "knowledge/procedure/**/*.md", "type": "concept"},
+    ]
+    config = parse_okf_config(yaml.safe_dump(raw, sort_keys=False))
+    pages = {
+        "knowledge/definition/products/alice/alice.md": _page(
+            page_type="entity", title="Alice", body="Definition.", meta_id="alice"
+        ),
+        "knowledge/rationale/compliance/alice/alice-rationale.md": _page(
+            page_type="synthesis", title="Alice rationale", body="Rationale.", meta_id="alice"
+        ),
+        "knowledge/procedure/operations/pickup-delivery/alice/alice-procedure.md": _page(
+            page_type="concept", title="Alice procedure", body="Procedure.", meta_id="alice"
+        ),
+    }
+
+    finalized = finalize_resource_checkout(
+        {**_artifacts(list(pages)), **pages},
+        target_uri="viking://resources/wiki",
+        source_roots={"src_1": "viking://resources/source"},
+        okf_config=config,
+    )
+
+    assert finalized.wiki_paths == set(pages)
+
+
+def test_configured_checkout_rejects_undeclared_view_namespace():
+    config = parse_okf_config(DEFAULT_CONFIG)
+    path = "knowledge/what/products/alice/Alice.md"
+    page = _page(page_type="entity", title="Alice", body="Body.").replace(
+        b"tags: [test,", b"tags: [view/model-invented/group, test,"
+    )
+
+    with pytest.raises(ValueError, match="not declared by the effective OKF config"):
+        finalize_resource_checkout(
+            {**_artifacts([path]), path: page},
+            target_uri="viking://resources/wiki",
+            source_roots={"src_1": "viking://resources/source"},
+            okf_config=config,
+        )
+
+
 def test_configured_checkout_requires_complete_meta_knowledge_triplet():
     config = parse_okf_config(DEFAULT_CONFIG)
-    path = "knowledge/people/alice/what/Alice.md"
+    path = "knowledge/what/products/alice/Alice.md"
     with pytest.raises(ValueError, match=r"Meta-knowledge unit .*missing how, why"):
         finalize_resource_checkout(
             {
@@ -359,7 +424,7 @@ def test_configured_checkout_requires_meta_id_as_physical_directory():
     pages = {
         path.replace("/alice/", "/wrong-directory/"): page for path, page in valid_pages.items()
     }
-    with pytest.raises(ValueError, match="in its own directory"):
+    with pytest.raises(ValueError, match="configured meta_id level"):
         finalize_resource_checkout(
             {**_artifacts(list(pages)), **pages},
             target_uri="viking://resources/wiki",
@@ -599,9 +664,7 @@ def test_candidate_knowledge_requires_every_upload_level_source():
     )
     artifacts = _artifacts(list(pages))
     candidates = json.loads(artifacts["_mining/candidate-knowledge.json"])
-    candidates["candidates"][0]["source_resources"] = [
-        "viking://resources/source/other-document"
-    ]
+    candidates["candidates"][0]["source_resources"] = ["viking://resources/source/other-document"]
     artifacts["_mining/candidate-knowledge.json"] = json.dumps(candidates).encode()
 
     with pytest.raises(ValueError, match="account for every upload-level source"):
@@ -647,9 +710,10 @@ def test_configured_checkout_requires_shared_view_tags_within_meta_knowledge():
         what_name="Alice",
         what_page=_page(page_type="entity", title="Alice", body="Body.", meta_id="alice"),
     )
-    why_path = "knowledge/people/alice/why/alice-rationale.md"
+    why_path = "knowledge/why/compliance/alice/alice-rationale.md"
     pages[why_path] = pages[why_path].replace(
-        b"view/domain/products-and-systems", b"view/domain/decisions-and-insights"
+        b"view/perspective/topic/technology-data",
+        b"view/perspective/synthesis/technology-data",
     )
     with pytest.raises(ValueError, match="identical tags"):
         finalize_resource_checkout(
@@ -662,7 +726,7 @@ def test_configured_checkout_requires_shared_view_tags_within_meta_knowledge():
 
 def test_configured_checkout_requires_input_and_intermediate_lineage():
     config = parse_okf_config(DEFAULT_CONFIG)
-    path = "knowledge/people/alice/what/Alice.md"
+    path = "knowledge/what/products/alice/Alice.md"
     page = _page(page_type="entity", title="Alice", body="Body.")
     missing_intermediate = page.replace(
         b"  - resource: viking://resources/wiki/_mining/evidence-ledger.json\n"
@@ -683,7 +747,7 @@ def test_configured_checkout_requires_input_and_intermediate_lineage():
 
 def test_configured_checkout_requires_all_intermediate_artifacts():
     config = parse_okf_config(DEFAULT_CONFIG)
-    path = "knowledge/people/alice/what/Alice.md"
+    path = "knowledge/what/products/alice/Alice.md"
     files = {
         **_artifacts([path]),
         path: _page(page_type="entity", title="Alice", body="Body."),
@@ -700,7 +764,7 @@ def test_configured_checkout_requires_all_intermediate_artifacts():
 
 def test_run_manifest_error_names_the_exact_missing_source_root():
     config = parse_okf_config(DEFAULT_CONFIG)
-    path = "knowledge/topic/page/what/page.md"
+    path = "knowledge/what/products/page/page.md"
     files = {
         **_artifacts([path]),
         path: _page(page_type="entity", title="Page", body="Body."),
@@ -729,7 +793,7 @@ def test_run_manifest_error_names_the_exact_missing_source_root():
 
 def test_configured_checkout_requires_questionnaire_coverage_for_every_issue():
     config = parse_okf_config(DEFAULT_CONFIG)
-    path = "knowledge/people/alice/what/Alice.md"
+    path = "knowledge/what/products/alice/Alice.md"
     artifacts = _artifacts([path])
     artifacts["_mining/investigation-report.json"] = json.dumps(
         {
@@ -801,11 +865,11 @@ def test_configured_checkout_preserves_answered_question_history_after_resolutio
 
 def test_configured_checkout_validates_cross_knowledge_links():
     config = parse_okf_config(DEFAULT_CONFIG)
-    path = "knowledge/people/alice/what/Alice.md"
+    path = "knowledge/what/products/alice/Alice.md"
     page = _page(page_type="entity", title="Alice", body="Body.").replace(
         b"knowledge_links: []",
         b"knowledge_links:\n"
-        b"  - resource: viking://resources/other/wiki/knowledge/team/what/Bob.md\n"
+        b"  - resource: viking://resources/other/wiki/knowledge/what/products/bob/Bob.md\n"
         b"    title: Bob\n"
         b"    relation: contradicts\n"
         b"    direction: bidirectional",
@@ -821,8 +885,8 @@ def test_configured_checkout_validates_cross_knowledge_links():
 
 def test_configured_checkout_requires_contextual_body_link_for_every_cross_knowledge_relation():
     config = parse_okf_config(DEFAULT_CONFIG)
-    path = "knowledge/people/alice/what/Alice.md"
-    target = "viking://resources/other/wiki/knowledge/team/what/Bob.md"
+    path = "knowledge/what/products/alice/Alice.md"
+    target = "viking://resources/other/wiki/knowledge/what/products/bob/Bob.md"
     contextual = _page(
         page_type="entity",
         title="Alice",
@@ -863,13 +927,14 @@ def test_configured_checkout_requires_contextual_body_link_for_every_cross_knowl
 def test_configured_checkout_rejects_unknown_namespaced_view_tag():
     config = parse_okf_config(DEFAULT_CONFIG)
     page = _page(page_type="entity", title="Alice", body="Body.").replace(
-        b"view/domain/products-and-systems", b"view/domain/not-configured"
+        b"view/perspective/topic/technology-data",
+        b"view/perspective/topic/not-configured",
     )
-    with pytest.raises(ValueError, match="uses unknown tags"):
+    with pytest.raises(ValueError, match="not declared by the effective OKF config"):
         finalize_resource_checkout(
             {
-                **_artifacts(["knowledge/people/alice/what/Alice.md"]),
-                "knowledge/people/alice/what/Alice.md": page,
+                **_artifacts(["knowledge/what/products/alice/Alice.md"]),
+                "knowledge/what/products/alice/Alice.md": page,
             },
             target_uri="viking://resources/wiki",
             source_roots={"src_1": "viking://resources/source"},
@@ -879,8 +944,8 @@ def test_configured_checkout_rejects_unknown_namespaced_view_tag():
     with pytest.raises(ValueError, match="must declare YAML frontmatter type"):
         finalize_resource_checkout(
             {
-                **_artifacts(["knowledge/people/alice/what/Alice.md"]),
-                "knowledge/people/alice/what/Alice.md": b"# Alice\n\nBody.",
+                **_artifacts(["knowledge/what/products/alice/Alice.md"]),
+                "knowledge/what/products/alice/Alice.md": b"# Alice\n\nBody.",
             },
             target_uri="viking://resources/wiki",
             source_roots={"src_1": "viking://resources/source"},
@@ -925,3 +990,20 @@ def test_configured_checkout_rejects_unknown_namespaced_view_tag():
 def test_okf_config_rejects_invalid_contracts(content: str, message: str):
     with pytest.raises(ValueError, match=message):
         parse_okf_config(content)
+
+
+@pytest.mark.parametrize(
+    "path_structure, message",
+    [
+        (["facet", "meta_id"], "must end with filename"),
+        (["meta_id", "filename"], "must contain facet"),
+        (["facet", "topic", "meta_id", "filename"], "unsupported levels: topic"),
+        (["facet", "meta_id", "meta_id", "filename"], "must not repeat levels"),
+    ],
+)
+def test_okf_config_rejects_non_exact_main_view_structures(path_structure, message):
+    raw = yaml.safe_load(DEFAULT_CONFIG)
+    raw["main_view"]["path_structure"] = path_structure
+
+    with pytest.raises(ValueError, match=message):
+        parse_okf_config(yaml.safe_dump(raw, sort_keys=False))

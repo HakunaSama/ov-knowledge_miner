@@ -3,7 +3,7 @@ name: llm-wiki
 description: Compile heterogeneous documents, notes, spreadsheets, reports, and code into an evidence-grounded OKF knowledge base with entity, concept, and synthesis pages; deterministic path/type rules; source metadata; and literal cross-page WikiLinks. Use with ov compile for new or incremental knowledge mining.
 ---
 
-<!-- OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 4.3 -->
+<!-- OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 4.5 -->
 
 # LLM Wiki
 
@@ -94,21 +94,24 @@ configuration, and its frontmatter `type` must equal the last matching rule. Lat
 rules therefore override earlier directory-wide rules.
 
 The bundled default makes the physical main view the single source of truth. Except
-for root `index.md`, every page is stored under one explicit meta-knowledge directory
-and its final `what`, `why`, or `how` directory:
+for root `index.md`, every page must follow `main_view.path_structure` exactly. The
+default structure is `facet/route/meta_id/filename`. The configured `what`, `why`, and
+`how` facets are at the top of the tree, while `route` expands to one exact path from
+that facet's `directory_routes` list:
 
 | Path | Type |
 | --- | --- |
 | `index.md` | `synthesis` |
-| `knowledge/<topic>/<meta_id>/what/*.md` | `entity` — definitions, identities, components, current facts |
-| `knowledge/<topic>/<meta_id>/why/*.md` | `synthesis` — rationale, decisions, tradeoffs, evidence-backed conclusions |
-| `knowledge/<topic>/<meta_id>/how/*.md` | `concept` — procedures, mechanisms, runbooks, reusable methods |
+| `knowledge/what/<what-route>/<meta_id>/*.md` | `entity` — definitions, identities, components, current facts |
+| `knowledge/why/<why-route>/<meta_id>/*.md` | `synthesis` — rationale, decisions, tradeoffs, evidence-backed conclusions |
+| `knowledge/how/<how-route>/<meta_id>/*.md` | `concept` — procedures, mechanisms, runbooks, reusable methods |
 
-Use a stable, meaningful lowercase topic slug derived from the actual domain. Never use
-literal placeholders such as `topic`, `misc`, `general`, or `other`. The immediate
-parent of each non-index page must be exactly one configured leaf category. Preserve an
-existing valid path when updating it; tag-derived views never create duplicate copies
-of the page.
+Treat every `path_structure` level as an exact ordered schema. `facet` must be one value
+from `facet_categories`; `route` must exactly match one configured relative path for
+that facet; `meta_id` must equal the page's configured frontmatter id; and `filename`
+is the Markdown filename. Never add an unconfigured directory level. Preserve an
+existing path only when it still matches the effective structure; tag-derived views
+never create duplicate copies of the page.
 
 ### Maintain `index.md`
 
@@ -135,7 +138,9 @@ type: entity
 title: Canonical page title
 description: One factual sentence describing the page's retrieval purpose.
 tags:
+  - view/perspective/topic/technology-data
   - useful-tag
+meta_id: canonical-page-id
 status: stable
 sources:
   - resource: viking://resources/supplied-source
@@ -183,13 +188,14 @@ not duplicate or move pages to implement it.
 ### Build atomic meta-knowledge units
 
 With the bundled contract, one meta-knowledge unit is **exactly one complete
-what/why/how triplet**. The three pages share the same explicit frontmatter `meta_id`
-and physical meta directory:
+what/why/how triplet**. The three pages share the same explicit frontmatter `meta_id`;
+the configured facet is the first path level, followed by one configured route and the
+meta id:
 
 ```text
-knowledge/<domain>/<meta_id>/what/<descriptive-what-page>.md
-knowledge/<domain>/<meta_id>/why/<descriptive-why-page>.md
-knowledge/<domain>/<meta_id>/how/<descriptive-how-page>.md
+knowledge/what/<what-route>/<meta_id>/<descriptive-what-page>.md
+knowledge/why/<why-route>/<meta_id>/<descriptive-why-page>.md
+knowledge/how/<how-route>/<meta_id>/<descriptive-how-page>.md
 ```
 
 The what page defines the unit, the why page explains its rationale or significance,
@@ -198,9 +204,10 @@ without its two siblings. Give the three pages one stable, non-empty `meta_id`; 
 may differ so WikiLinks stay unambiguous. Do not treat the three facet pages as three
 independent knowledge subjects.
 
-All three pages in a unit must carry identical configured `view/domain/...` and
-`view/usage/...` tags. In the bundled contract each derived view uses `exactly_one`, so
-choose one primary domain and one primary usage group for the whole unit. Other useful
+All three pages in a unit must carry the same configured
+`view/perspective/<knowledge-form>/<enterprise-domain>` tag. The bundled perspective
+view uses `exactly_one`, so choose exactly one of TOPIC, REFERENCE, PROCEDURE, or
+SYNTHESIS and exactly one configured enterprise domain for the whole unit. Other useful
 non-view tags may still differ by facet. `index.md` is navigation only: do not assign it
 derived-view tags and never count it as another meta-knowledge unit.
 
@@ -210,7 +217,8 @@ derived-view tags and never count it as another meta-knowledge unit.
 - Select at least one group per view. If a view uses `selection: exactly_one`, select
   one and only one group; `one_or_more` permits multiple well-supported groups.
 - Use only group tags declared by the effective contract under that view's
-  `tag_prefix`. Keep other useful subject tags, but do not invent `view/...` tags.
+  `tag_prefix`. Keep other useful subject tags, but never invent a `view/...` namespace,
+  group, or hierarchy that is absent from the effective config.
 - During an incremental Compile, preserve still-valid view tags and revise them when
   new team Memory changes the page's scope or use.
 
@@ -218,8 +226,7 @@ With the bundled contract, every page in one triplet might include:
 
 ```yaml
 tags:
-  - view/domain/products-and-systems
-  - view/usage/execution
+  - view/perspective/procedure/operations
   - deployment
 ```
 
@@ -234,7 +241,7 @@ structured `knowledge_links` entry:
 
 ```yaml
 knowledge_links:
-  - resource: viking://resources/another-wiki/knowledge/payments/what/adapter.md
+  - resource: viking://resources/another-wiki/knowledge/what/payment-adapter/adapter.md
     title: Payment adapter
     relation: depends-on
     direction: bidirectional
@@ -375,7 +382,7 @@ The same input and intermediate resources must appear in that page's frontmatter
 {
   "version": "1.0",
   "pages": [{
-    "path": "knowledge/topic/what/page.md",
+    "path": "knowledge/what/authentication-boundary/page.md",
     "source_resources": ["viking://resources/exact-supplied-source/file"],
     "intermediate_resources": ["viking://resources/exact-compile-target/_mining/evidence-ledger.json"],
     "claims": []
@@ -424,9 +431,9 @@ still-valid candidates; the platform merges candidates by id and recomputes the 
     "disposition": "promoted",
     "meta_id": "authentication-boundary",
     "page_paths": [
-      "knowledge/security/authentication-boundary/what/authentication-boundary.md",
-      "knowledge/security/authentication-boundary/why/authentication-boundary-rationale.md",
-      "knowledge/security/authentication-boundary/how/authentication-boundary-procedure.md"
+      "knowledge/what/authentication-boundary/authentication-boundary.md",
+      "knowledge/why/authentication-boundary/authentication-boundary-rationale.md",
+      "knowledge/how/authentication-boundary/authentication-boundary-procedure.md"
     ],
     "stage": "documents"
   }],
@@ -489,7 +496,7 @@ this file manually. Compile likewise owns `_mining/evidence-history.json`.
     "resource": "viking://resources/source/uploaded-document",
     "status": "cited",
     "inspected": true,
-    "page_paths": ["knowledge/domain/meta-id/what/page.md"],
+    "page_paths": ["knowledge/what/meta-id/page.md"],
     "evidence_resources": ["viking://resources/source/uploaded-document/content.md"]
   }],
   "summary": {
@@ -574,10 +581,13 @@ Before calling `submit_wiki_bundle`, verify all of the following:
 - the effective OKF config was read and no config file was treated as knowledge;
 - `index.md` exists, is typed by its configured path rule, and catalogs active pages;
 - every Wiki file matches a configured path and allowed type;
-- every non-exempt page uses an immediate-parent what/why/how main-view category;
+- every non-exempt page follows the configured `main_view.path_structure` exactly,
+  with no model-invented directory levels;
 - every meta-knowledge unit contains exactly one what, why, and how page sharing one
-  explicit `meta_id`, in a physical directory named by that `meta_id`;
-- all three pages in a meta-knowledge unit use identical primary domain and usage tags;
+  explicit `meta_id`, at the configured `meta_id` path level;
+- all three pages in a meta-knowledge unit use the same configured perspective leaf tag;
+- every `view/...` tag, group, and resulting derived-view branch is declared by the
+  effective config; no undeclared view namespace is present;
 - exempt navigation pages never appear as files in derived knowledge views;
 - every required frontmatter key has the correct YAML shape and appears exactly once;
 - every page selects valid group tags for every configured derived view;

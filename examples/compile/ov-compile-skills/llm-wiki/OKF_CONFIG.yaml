@@ -1,4 +1,4 @@
-version: "1.0"
+version: "1.1"
 
 frontmatter:
   required:
@@ -40,22 +40,41 @@ frontmatter:
 path_types:
   - pattern: "index.md"
     type: synthesis
-  - pattern: "knowledge/**/what/*.md"
+  - pattern: "knowledge/what/**/*.md"
     type: entity
-  - pattern: "knowledge/**/why/*.md"
+  - pattern: "knowledge/why/**/*.md"
     type: synthesis
-  - pattern: "knowledge/**/how/*.md"
+  - pattern: "knowledge/how/**/*.md"
     type: concept
 
-# The physical tree is the canonical write model. Every non-index page ends in a
-# topic/<meta_id>/<what|why|how>/page.md path; tag views never copy or move pages.
+# The physical tree is the canonical write model. Each configured route expands to
+# one or more directory levels between the top-level facet and meta_id.
 main_view:
   single_source_of_truth: true
   root_path: knowledge
-  leaf_categories:
+  facet_categories:
     - what
     - why
     - how
+  path_structure:
+    - facet
+    - route
+    - meta_id
+    - filename
+  directory_routes:
+    what:
+      - products
+      - operations
+      - technology
+    why:
+      - compliance
+      - management
+      - finance
+    how:
+      - operations/pickup-delivery
+      - technology/backend
+      - technology/data
+      - training/onboarding
   exempt_paths:
     - index.md
   # One meta-knowledge unit is three pages sharing one explicit frontmatter meta_id.
@@ -96,49 +115,56 @@ cross_knowledge:
     - derived-from
     - supersedes
 
-# Optional derived views. The main view always follows the physical path tree above;
-# these views reorganize the same pages by namespaced OKF frontmatter tags.
+# The perspective view is virtual and never duplicates physical pages. Every
+# meta-knowledge unit selects exactly one leaf in this two-level hierarchy:
+# knowledge form (TOPIC/REFERENCE/PROCEDURE/SYNTHESIS) -> enterprise domain.
 views:
-  - id: domain
-    title: "知识域 · Domain"
-    description: "按页面描述的人、系统、方法或决策结论重新组织知识。"
-    tag_prefix: "view/domain/"
+  - id: perspective
+    title: "企业知识透视图 · Perspective"
+    description: "按知识形态与企业知识域两级目录重新组织同一批知识页面。"
+    tag_prefix: "view/perspective/"
     selection: exactly_one
     groups:
-      - id: people-and-orgs
-        title: "人员与组织"
-        description: "团队、角色、客户、合作方及其他组织主体。"
-      - id: products-and-systems
-        title: "产品与系统"
-        description: "产品、项目、服务、工具、数据和技术系统。"
-      - id: processes-and-methods
-        title: "流程与方法"
-        description: "流程、规范、技能、机制和可复用方法。"
-      - id: decisions-and-insights
-        title: "决策与洞察"
-        description: "跨来源结论、关键决策、偏好、事件和经验洞察。"
-
-  - id: usage
-    title: "使用场景 · Usage"
-    description: "按团队成员使用知识时要完成的工作重新组织页面。"
-    tag_prefix: "view/usage/"
-    selection: exactly_one
-    groups:
-      - id: onboarding
-        title: "新人入门"
-        description: "帮助新成员建立背景、术语和边界认知。"
-      - id: planning-and-decisions
-        title: "规划与决策"
-        description: "支持方案比较、优先级判断和决策复盘。"
-      - id: execution
-        title: "执行与协作"
-        description: "支持日常执行、交接、协作和标准操作。"
-      - id: troubleshooting
-        title: "排障与风险"
-        description: "支持故障定位、风险识别和失败恢复。"
+      - id: topic
+        title: "TOPIC"
+        description: "围绕业务对象、能力、系统或主题组织的知识。"
+        groups: &enterprise_domains
+          - id: operations
+            title: "operations"
+            description: "运营、履约、供应链与日常业务运作。"
+          - id: product-service
+            title: "product-service"
+            description: "产品、服务、项目及其生命周期。"
+          - id: customer-market
+            title: "customer-market"
+            description: "客户、用户、市场、销售与增长。"
+          - id: technology-data
+            title: "technology-data"
+            description: "技术系统、架构、平台、数据与算法。"
+          - id: management-finance
+            title: "management-finance"
+            description: "经营管理、战略、财务与资源配置。"
+          - id: people-organization
+            title: "people-organization"
+            description: "人员、角色、团队、组织与协作关系。"
+          - id: compliance-risk
+            title: "compliance-risk"
+            description: "合规、法律、安全、审计与风险控制。"
+          - id: corporate-brand
+            title: "corporate-brand"
+            description: "企业、品牌、文化、传播与公共形象。"
       - id: reference
-        title: "参考查询"
-        description: "适合按实体、定义、事实或索引快速查阅。"
+        title: "REFERENCE"
+        description: "适合按定义、事实、清单、参数或索引快速查询的知识。"
+        groups: *enterprise_domains
+      - id: procedure
+        title: "PROCEDURE"
+        description: "可执行的步骤、流程、SOP、检查表与操作规范。"
+        groups: *enterprise_domains
+      - id: synthesis
+        title: "SYNTHESIS"
+        description: "跨来源形成的结论、解释、比较、决策与综合洞察。"
+        groups: *enterprise_domains
 
 wikilinks:
   enabled: true

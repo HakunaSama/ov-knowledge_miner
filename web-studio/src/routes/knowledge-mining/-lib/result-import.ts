@@ -67,7 +67,6 @@ async function readJson(
 }
 
 function inferMainView(
-  targetUri: string,
   pagePaths: string[],
 ): NonNullable<CompileResult['main_view']> {
   const observedFacets = ['what', 'why', 'how'].filter((facet) =>
@@ -79,11 +78,42 @@ function inferMainView(
   const rootPath = pagePaths.some((path) => path.startsWith('knowledge/'))
     ? 'knowledge'
     : ''
+  const facetFirst = pagePaths.some((path) => {
+    const segments = path.split('/').filter(Boolean)
+    return observedFacets.includes(segments[1] || '')
+  })
+  const facets =
+    observedFacets.length > 0 ? observedFacets : ['what', 'why', 'how']
+  const directoryRoutes = Object.fromEntries(
+    facets.map((facet) => [
+      facet,
+      [
+        ...new Set(
+          pagePaths.flatMap((path) => {
+            const segments = path.split('/').filter(Boolean)
+            return segments[1] === facet && segments.length > 4
+              ? [segments.slice(2, -2).join('/')]
+              : []
+          }),
+        ),
+      ],
+    ]),
+  )
+  const routeBased = Object.values(directoryRoutes).every(
+    (routes) => routes.length > 0,
+  )
   return {
     derived_views_include_exempt: false,
     exempt_paths: ['index.md'],
-    leaf_categories:
-      observedFacets.length > 0 ? observedFacets : ['what', 'why', 'how'],
+    ...(facetFirst
+      ? {
+          facet_categories: facets,
+          ...(routeBased ? { directory_routes: directoryRoutes } : {}),
+          path_structure: routeBased
+            ? (['facet', 'route', 'meta_id', 'filename'] as const)
+            : (['facet', 'meta_id', 'filename'] as const),
+        }
+      : { leaf_categories: facets }),
     meta_knowledge: {
       group_by: 'frontmatter_field',
       id_field: 'meta_id',
@@ -174,6 +204,7 @@ export async function inspectCliResult(
     ? questionnaire.questions.length
     : hint?.question_count || 0
   const paths = pageUris.map((uri) => relativePath(targetUri, uri))
+  const hintedArtifacts = hint?.intermediate_artifacts
   const scopeSummary =
     stringValue(manifest?.scope_summary) ||
     stringValue(manifest?.summary) ||
@@ -184,12 +215,12 @@ export async function inspectCliResult(
       created: hint?.created || pageUris,
       from: hint?.from.length ? hint.from : sourceRoots,
       intermediate_artifacts:
-        hint?.intermediate_artifacts?.length > 0
-          ? hint.intermediate_artifacts
+        hintedArtifacts && hintedArtifacts.length > 0
+          ? hintedArtifacts
           : intermediateArtifacts,
       investigation_status: investigationStatus,
       link_count: hint?.link_count || 0,
-      main_view: hint?.main_view || inferMainView(targetUri, paths),
+      main_view: hint?.main_view || inferMainView(paths),
       okf_version: hint?.okf_version || stringValue(manifest?.version) || '1.0',
       page_count: hint?.page_count || pageUris.length,
       question_count: questions,
@@ -261,7 +292,7 @@ function humanize(value: string): string {
 export function inferCompileViewsFromTags(tags: string[]): CompileView[] {
   const groups = new Map<string, Set<string>>()
   for (const tag of tags) {
-    const match = tag.match(/^view\/([^/]+)\/([^/]+)$/)
+    const match = tag.match(/^view\/([^/]+)\/(.+)$/)
     if (!match) continue
     const current = groups.get(match[1]) || new Set<string>()
     current.add(match[2])
@@ -274,6 +305,15 @@ export function inferCompileViewsFromTags(tags: string[]): CompileView[] {
       groups: [...groupIds].sort().map((groupId) => ({
         description: '',
         id: groupId,
+        path: groupId.split('/').map((segment, index) => ({
+          description: '',
+          id: segment,
+          title:
+            index === 0 &&
+            ['topic', 'reference', 'procedure', 'synthesis'].includes(segment)
+              ? segment.toUpperCase()
+              : segment,
+        })),
         tag: `view/${viewId}/${groupId}`,
         title: humanize(groupId),
       })),

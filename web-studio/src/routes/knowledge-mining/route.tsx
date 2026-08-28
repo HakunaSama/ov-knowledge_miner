@@ -76,7 +76,6 @@ import {
 } from './-lib/api'
 import type {
   CompileIntermediateArtifact,
-  CompileResult,
   CompileTask,
   CompileView,
 } from './-lib/api'
@@ -123,6 +122,7 @@ import {
   buildFacetFirstMetaKnowledgeTree,
   buildMetaKnowledgeUnits,
   buildMetaKnowledgeViewSections,
+  buildPerspectiveMetaKnowledgeTree,
 } from './-lib/meta-knowledge'
 import type {
   FacetFirstMetaKnowledgeTreeNode,
@@ -395,15 +395,12 @@ function MetaKnowledgeTreeView({
     .join('|')
   const tree = React.useMemo(
     () =>
-      buildFacetFirstMetaKnowledgeTree(
-        sections ? sections.flatMap((section) => section.units) : units,
-        facets,
-        {
-          categoryLabels,
-          rootPath,
-          sections,
-        },
-      ),
+      sections
+        ? buildPerspectiveMetaKnowledgeTree(sections, facets)
+        : buildFacetFirstMetaKnowledgeTree(units, facets, {
+            categoryLabels,
+            rootPath,
+          }),
     // categoryLabelKey tracks language changes without rebuilding for a new
     // object literal containing the same translated labels on every render.
     [categoryLabelKey, facets, rootPath, sections, units],
@@ -1083,12 +1080,16 @@ function KnowledgeMiningRoute() {
   )
   const mainViewFacets = React.useMemo(
     () =>
+      effectiveCompileResult?.main_view?.facet_categories ||
       effectiveCompileResult?.main_view?.leaf_categories || [
         'what',
         'why',
         'how',
       ],
-    [effectiveCompileResult?.main_view?.leaf_categories],
+    [
+      effectiveCompileResult?.main_view?.facet_categories,
+      effectiveCompileResult?.main_view?.leaf_categories,
+    ],
   )
   const metadataQuery = useQuery({
     enabled: hasVisibleResults && wikiEntries.length > 0,
@@ -1276,9 +1277,11 @@ function KnowledgeMiningRoute() {
             ? 'graph'
             : selectedViewId === 'domain'
               ? 'domain'
-              : selectedViewId === 'usage'
-                ? 'usage'
-                : 'main'
+              : selectedViewId === 'perspective'
+                ? 'perspective'
+                : selectedViewId === 'usage'
+                  ? 'usage'
+                  : 'main'
   const viewSections = React.useMemo(
     () =>
       selectedView
@@ -2391,10 +2394,11 @@ function KnowledgeMiningRoute() {
                       <div className="mt-3 space-y-2">
                         <p className="rounded-md bg-primary/8 px-3 py-2 text-xs font-medium text-primary">
                           {t('views.mainStructure', {
-                            categories:
-                              effectiveCompileResult.main_view.leaf_categories.join(
+                            categories: mainViewFacets.join(' / '),
+                            structure:
+                              effectiveCompileResult.main_view.path_structure?.join(
                                 ' / ',
-                              ),
+                              ) || t('views.legacyStructure'),
                           })}
                         </p>
                         <p className="text-xs text-muted-foreground">

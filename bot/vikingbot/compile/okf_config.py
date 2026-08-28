@@ -34,6 +34,21 @@ class OKFViewGroup:
     title: str
     description: str
     tag: str
+    path: tuple["OKFViewPathSegment", ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class OKFViewPathSegment:
+    id: str
+    title: str
+    description: str
+
+    def public_dict(self) -> dict[str, str]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +72,7 @@ class OKFView:
                     "title": group.title,
                     "description": group.description,
                     "tag": group.tag,
+                    "path": [segment.public_dict() for segment in group.path],
                 }
                 for group in self.groups
             ],
@@ -67,8 +83,10 @@ class OKFView:
 class OKFMainView:
     single_source_of_truth: bool
     root_path: str
-    leaf_categories: tuple[str, ...]
+    facet_categories: tuple[str, ...]
+    path_structure: tuple[Literal["facet", "route", "meta_id", "filename"], ...]
     exempt_paths: tuple[str, ...]
+    directory_routes: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     meta_knowledge: "OKFMetaKnowledgeConfig | None" = None
     derived_views_include_exempt: bool = False
 
@@ -76,7 +94,11 @@ class OKFMainView:
         return {
             "single_source_of_truth": self.single_source_of_truth,
             "root_path": self.root_path,
-            "leaf_categories": list(self.leaf_categories),
+            "facet_categories": list(self.facet_categories),
+            "path_structure": list(self.path_structure),
+            "directory_routes": {
+                facet: list(routes) for facet, routes in self.directory_routes.items()
+            },
             "exempt_paths": list(self.exempt_paths),
             "derived_views_include_exempt": self.derived_views_include_exempt,
             "meta_knowledge": (
@@ -245,12 +267,85 @@ def _parse_main_view(value: Any) -> OKFMainView | None:
         default=True,
     )
     root_path = _relative_path(view.get("root_path", "knowledge"), field_name="main_view.root_path")
-    leaf_categories = _string_list(
-        view.get("leaf_categories"), field_name="main_view.leaf_categories"
-    )
-    if len(leaf_categories) > 8 or any(not _VIEW_ID_RE.fullmatch(item) for item in leaf_categories):
+    raw_facets = view.get("facet_categories")
+    if raw_facets is None:
+        # Parse the pre-1.1 name so an existing user contract fails only when its
+        # structure is actually ambiguous. Public results always expose the new,
+        # position-neutral name.
+        raw_facets = view.get("leaf_categories")
+    facet_categories = _string_list(raw_facets, field_name="main_view.facet_categories")
+    if len(facet_categories) > 8 or any(
+        not _VIEW_ID_RE.fullmatch(item) for item in facet_categories
+    ):
         raise ValueError(
-            'OKF config field "main_view.leaf_categories" must contain at most 8 lowercase slugs'
+            'OKF config field "main_view.facet_categories" must contain at most 8 lowercase slugs'
+        )
+    raw_path_structure = view.get("path_structure")
+    if (
+        isinstance(raw_path_structure, list)
+        and all(isinstance(item, str) for item in raw_path_structure)
+        and len(raw_path_structure) != len(dict.fromkeys(raw_path_structure))
+    ):
+        raise ValueError('OKF config field "main_view.path_structure" must not repeat levels')
+    path_structure = _string_list(raw_path_structure, field_name="main_view.path_structure")
+    allowed_structure = {"facet", "route", "meta_id", "filename"}
+    unknown_structure = sorted(set(path_structure) - allowed_structure)
+    if unknown_structure:
+        raise ValueError(
+            'OKF config field "main_view.path_structure" contains unsupported levels: '
+            + ", ".join(unknown_structure)
+        )
+    if path_structure[-1] != "filename":
+        raise ValueError('OKF config field "main_view.path_structure" must end with filename')
+    if "facet" not in path_structure:
+        raise ValueError('OKF config field "main_view.path_structure" must contain facet')
+    raw_directory_routes = view.get("directory_routes")
+    directory_routes: dict[str, tuple[str, ...]] = {}
+    if raw_directory_routes is not None:
+        routes = _mapping(raw_directory_routes, field_name="main_view.directory_routes")
+        unknown_facets = sorted(set(routes) - set(facet_categories))
+        missing_facets = sorted(set(facet_categories) - set(routes))
+        if unknown_facets or missing_facets:
+            details: list[str] = []
+            if missing_facets:
+                details.append("missing " + ", ".join(missing_facets))
+            if unknown_facets:
+                details.append("unknown " + ", ".join(unknown_facets))
+            raise ValueError(
+                'OKF config field "main_view.directory_routes" must define exactly '
+                "the configured facets: " + "; ".join(details)
+            )
+        for facet in facet_categories:
+            raw_routes = _string_list(
+                routes[facet], field_name=f"main_view.directory_routes.{facet}"
+            )
+            normalized_routes = tuple(
+                _relative_path(
+                    route,
+                    field_name=f"main_view.directory_routes.{facet}[]",
+                )
+                for route in raw_routes
+            )
+            directory_routes[facet] = normalized_routes
+    if "route" in path_structure and not directory_routes:
+        raise ValueError(
+            'OKF config field "main_view.path_structure" uses route but '
+            "main_view.directory_routes is missing"
+        )
+    if directory_routes and "route" not in path_structure:
+        raise ValueError(
+            'OKF config field "main_view.path_structure" must contain route when '
+            "main_view.directory_routes is configured"
+        )
+    if "route" in path_structure and tuple(path_structure) != (
+        "facet",
+        "route",
+        "meta_id",
+        "filename",
+    ):
+        raise ValueError(
+            'OKF config field "main_view.path_structure" must be '
+            "facet/route/meta_id/filename when directory routes are configured"
         )
     exempt_paths = _string_list(
         view.get("exempt_paths", ["index.md"]),
@@ -293,10 +388,22 @@ def _parse_main_view(value: Any) -> OKFMainView | None:
                 default=False,
             ),
         )
+        if "meta_id" not in path_structure:
+            raise ValueError(
+                'OKF config field "main_view.path_structure" must contain meta_id when '
+                "main_view.meta_knowledge is configured"
+            )
+    elif "meta_id" in path_structure:
+        raise ValueError(
+            'OKF config field "main_view.path_structure" cannot contain meta_id without '
+            "main_view.meta_knowledge"
+        )
     return OKFMainView(
         single_source_of_truth=single_source,
         root_path=root_path,
-        leaf_categories=leaf_categories,
+        facet_categories=facet_categories,
+        path_structure=path_structure,
+        directory_routes=directory_routes,
         exempt_paths=exempt_paths,
         meta_knowledge=meta_knowledge,
         derived_views_include_exempt=_boolean(
@@ -404,6 +511,88 @@ def _parse_cross_knowledge(value: Any) -> OKFCrossKnowledgeConfig | None:
     )
 
 
+def _parse_view_groups(
+    value: Any,
+    *,
+    path: str,
+    tag_prefix: str,
+    seen_tags: set[str],
+) -> tuple[OKFViewGroup, ...]:
+    leaves: list[OKFViewGroup] = []
+
+    def visit(
+        raw_groups: Any,
+        *,
+        group_path: str,
+        ancestors: tuple[OKFViewPathSegment, ...],
+    ) -> None:
+        if not isinstance(raw_groups, list) or not raw_groups:
+            raise ValueError(f'OKF config field "{group_path}" must be a non-empty YAML list')
+        seen_sibling_ids: set[str] = set()
+        for group_index, raw_group in enumerate(raw_groups):
+            item_path = f"{group_path}[{group_index}]"
+            group = _mapping(raw_group, field_name=item_path)
+            group_id = _required_string(group.get("id"), field_name=f"{item_path}.id")
+            if not _VIEW_ID_RE.fullmatch(group_id):
+                raise ValueError(
+                    f'OKF config field "{item_path}.id" must use lowercase letters, '
+                    "digits, and hyphens"
+                )
+            if group_id in seen_sibling_ids:
+                raise ValueError(
+                    f'OKF config field "{group_path}" contains duplicate id: {group_id}'
+                )
+            seen_sibling_ids.add(group_id)
+            title = _required_string(group.get("title"), field_name=f"{item_path}.title")
+            description = _required_string(
+                group.get("description"), field_name=f"{item_path}.description"
+            )
+            segment = OKFViewPathSegment(
+                id=group_id,
+                title=title,
+                description=description,
+            )
+            group_hierarchy = (*ancestors, segment)
+            children = group.get("groups")
+            if children is not None:
+                if group.get("tag") is not None:
+                    raise ValueError(
+                        f'OKF config field "{item_path}.tag" is only valid on a leaf group'
+                    )
+                visit(
+                    children,
+                    group_path=f"{item_path}.groups",
+                    ancestors=group_hierarchy,
+                )
+                continue
+
+            full_id = "/".join(item.id for item in group_hierarchy)
+            tag = group.get("tag", f"{tag_prefix}{full_id}")
+            tag = _required_string(tag, field_name=f"{item_path}.tag")
+            if not tag.startswith(tag_prefix) or not _OKF_TAG_RE.fullmatch(tag):
+                raise ValueError(
+                    f'OKF config field "{item_path}.tag" must be a valid OKF tag under '
+                    f'prefix "{tag_prefix}"'
+                )
+            if tag in seen_tags:
+                raise ValueError(f"OKF config views contain duplicate tag: {tag}")
+            seen_tags.add(tag)
+            leaves.append(
+                OKFViewGroup(
+                    id=full_id,
+                    title=title,
+                    description=description,
+                    tag=tag,
+                    path=group_hierarchy,
+                )
+            )
+
+    visit(value, group_path=path, ancestors=())
+    if len(leaves) > 32:
+        raise ValueError(f'OKF config field "{path}" supports at most 32 leaf groups')
+    return tuple(leaves)
+
+
 def _parse_views(value: Any) -> tuple[OKFView, ...]:
     if value is None:
         return ()
@@ -439,50 +628,12 @@ def _parse_views(value: Any) -> tuple[OKFView, ...]:
             raise ValueError(
                 f'OKF config field "{path}.selection" must be one_or_more or exactly_one'
             )
-        raw_groups = view.get("groups")
-        if not isinstance(raw_groups, list) or not raw_groups:
-            raise ValueError(f'OKF config field "{path}.groups" must be a non-empty YAML list')
-        if len(raw_groups) > 32:
-            raise ValueError(f'OKF config field "{path}.groups" supports at most 32 groups')
-
-        groups: list[OKFViewGroup] = []
-        seen_group_ids: set[str] = set()
-        for group_index, raw_group in enumerate(raw_groups):
-            group_path = f"{path}.groups[{group_index}]"
-            group = _mapping(raw_group, field_name=group_path)
-            group_id = _required_string(group.get("id"), field_name=f"{group_path}.id")
-            if not _VIEW_ID_RE.fullmatch(group_id):
-                raise ValueError(
-                    f'OKF config field "{group_path}.id" must use lowercase letters, '
-                    "digits, and hyphens"
-                )
-            if group_id in seen_group_ids:
-                raise ValueError(
-                    f'OKF config field "{path}.groups" contains duplicate id: {group_id}'
-                )
-            seen_group_ids.add(group_id)
-            group_title = _required_string(group.get("title"), field_name=f"{group_path}.title")
-            group_description = _required_string(
-                group.get("description"), field_name=f"{group_path}.description"
-            )
-            tag = group.get("tag", f"{tag_prefix}{group_id}")
-            tag = _required_string(tag, field_name=f"{group_path}.tag")
-            if not tag.startswith(tag_prefix) or not _OKF_TAG_RE.fullmatch(tag):
-                raise ValueError(
-                    f'OKF config field "{group_path}.tag" must be a valid OKF tag under '
-                    f'prefix "{tag_prefix}"'
-                )
-            if tag in seen_tags:
-                raise ValueError(f"OKF config views contain duplicate tag: {tag}")
-            seen_tags.add(tag)
-            groups.append(
-                OKFViewGroup(
-                    id=group_id,
-                    title=group_title,
-                    description=group_description,
-                    tag=tag,
-                )
-            )
+        groups = _parse_view_groups(
+            view.get("groups"),
+            path=f"{path}.groups",
+            tag_prefix=tag_prefix,
+            seen_tags=seen_tags,
+        )
         views.append(
             OKFView(
                 id=view_id,
@@ -490,7 +641,7 @@ def _parse_views(value: Any) -> tuple[OKFView, ...]:
                 description=description,
                 tag_prefix=tag_prefix,
                 selection=selection,
-                groups=tuple(groups),
+                groups=groups,
             )
         )
     return tuple(views)

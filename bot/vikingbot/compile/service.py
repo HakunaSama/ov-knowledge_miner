@@ -80,6 +80,7 @@ from vikingbot.compile.renderer import (
     WikiRenderer,
     extract_okf_source_resources,
     has_unclosed_frontmatter,
+    validate_configured_main_view_payload_path,
     validate_declared_okf_markdown,
 )
 from vikingbot.compile.store import CompileTaskStore
@@ -206,8 +207,8 @@ def _source_reading_workflow(*, materialized: bool) -> str:
         f"4. Then read narrowly and purposefully: {targeted_reads}. Skip whole-file sweeps and "
         "never base a value judgment on a file's head alone."
         f"{materialized_override}\n"
-        "5. Reserve the latter half of the task for candidate consolidation and what/why/how "
-        "page generation. Batch local reads with exec and batch write_file calls so mandatory "
+        "5. Reserve the latter half of the task for candidate consolidation and configured "
+        "facet-page generation. Batch local reads with exec and batch write_file calls so mandatory "
         "inspection cannot consume the generation budget."
         + (f"\n{step6}\n{step7}" if step6 else "")
     )
@@ -542,9 +543,7 @@ class BotCompileService:
         """List recent Compile tasks owned by one principal for history recovery."""
         await self.start()
         matched = [
-            task
-            for task in await self.store.list()
-            if task.principal_scope == principal_scope
+            task for task in await self.store.list() if task.principal_scope == principal_scope
         ][:limit]
         items: list[dict[str, Any]] = []
         for task in matched:
@@ -768,7 +767,9 @@ class BotCompileService:
         raw_paths = manifest.get("files")
         if not isinstance(raw_paths, list):
             raise CompileFailure(
-                "CONFLICT", "Compile resume checkpoint has no file inventory.", stage="collecting_context"
+                "CONFLICT",
+                "Compile resume checkpoint has no file inventory.",
+                stage="collecting_context",
             )
         checkout_prefix = f"{COMPILE_TARGET_CHECKOUT_ROOT}/"
         for raw in raw_paths:
@@ -791,7 +792,9 @@ class BotCompileService:
                     f'Compile resume checkpoint is missing "{relative}".',
                     stage="collecting_context",
                 )
-            await sandbox.write_file_bytes(relative, await asyncio.to_thread(payload_path.read_bytes))
+            await sandbox.write_file_bytes(
+                relative, await asyncio.to_thread(payload_path.read_bytes)
+            )
         completed_stage = manifest.get("completed_stage")
         if completed_stage not in {None, "source_coverage", "candidate_knowledge"}:
             raise CompileFailure(
@@ -1379,6 +1382,7 @@ class BotCompileService:
                 registry_kwargs["task_id"] = task_id
                 registry_kwargs["baseline_intermediates"] = baseline_intermediates
                 registry_kwargs["baseline_checkout"] = baseline_checkout
+
                 async def persist_phase_checkpoint(stage: str) -> None:
                     await self._set_state(task_id, status="running", stage=stage)
                     completed_stage = {
@@ -1419,6 +1423,7 @@ class BotCompileService:
             }
             if okf_config_content is not None:
                 prompt_kwargs["okf_config_content"] = okf_config_content
+                prompt_kwargs["okf_config"] = okf_config
             system_prompt, user_prompt = self._build_prompts(**prompt_kwargs)
             if resumed_from_task_id is not None:
                 if resume_completed_stage == "candidate_knowledge":
@@ -1753,7 +1758,9 @@ class BotCompileService:
                         )
                     )
                 except Exception as exc:
-                    logger.warning("Compile {} checkpoint save during interruption failed: {}", task_id, exc)
+                    logger.warning(
+                        "Compile {} checkpoint save during interruption failed: {}", task_id, exc
+                    )
                 raise
             if (
                 runtime_deadline is None
@@ -2026,6 +2033,16 @@ class BotCompileService:
                 )
             except ValueError:
                 is_page = legacy_page
+            if is_page and okf_config is not None:
+                try:
+                    validate_configured_main_view_payload_path(
+                        output_path,
+                        payload,
+                        config=okf_config,
+                    )
+                except ValueError:
+                    skipped_files += 1
+                    continue
             output_key = output_path.casefold()
             if (
                 output_key in output_keys
@@ -2145,10 +2162,7 @@ class BotCompileService:
                 path
                 for path in known_paths
                 if path.casefold().endswith(".md")
-                and (
-                    path in main_view.exempt_paths
-                    or path.startswith(f"{main_view.root_path}/")
-                )
+                and (path in main_view.exempt_paths or path.startswith(f"{main_view.root_path}/"))
                 and not path.casefold().endswith(("/.abstract.md", "/.overview.md"))
             }
             final_page_count = len(final_page_paths)
@@ -2166,9 +2180,7 @@ class BotCompileService:
             validation_passed=False,
             warnings=warnings,
             views=(
-                [view.public_dict() for view in okf_config.views]
-                if okf_config is not None
-                else []
+                [view.public_dict() for view in okf_config.views] if okf_config is not None else []
             ),
             main_view=(
                 okf_config.main_view.public_dict()
@@ -2856,8 +2868,7 @@ class BotCompileService:
                         "status": status,
                         **(
                             {"sha256": content_hashes[(source_id, uri)]}
-                            if content_hashes is not None
-                            and (source_id, uri) in content_hashes
+                            if content_hashes is not None and (source_id, uri) in content_hashes
                             else {}
                         ),
                     }
@@ -2882,9 +2893,7 @@ class BotCompileService:
                     inspection_strategy = "all"
                 else:
                     probe_indexes = distributed_probe_indexes(len(materialized))
-                    required_read_paths = [
-                        materialized[index] for index in probe_indexes
-                    ]
+                    required_read_paths = [materialized[index] for index in probe_indexes]
                     inspection_strategy = "adaptive_distributed_head_middle_tail"
                 units.append(
                     {
@@ -3195,11 +3204,7 @@ class BotCompileService:
             registry.register(tool)
         if target_checkout_enabled:
             phase_gate: CompilePhaseGate | None = None
-            if (
-                okf_config is not None
-                and okf_config.intermediates is not None
-                and source_units
-            ):
+            if okf_config is not None and okf_config.intermediates is not None and source_units:
                 phase_gate = CompilePhaseGate(
                     coverage_passed=resume_completed_stage
                     in {"source_coverage", "candidate_knowledge"},
@@ -3269,6 +3274,7 @@ class BotCompileService:
         catalog_truncated: bool = False,
         wiki_language: WikiLanguage | None = None,
         okf_config_content: str | None = None,
+        okf_config: OKFConfig | None = None,
     ) -> tuple[str, str]:
         if capabilities.exec_enabled:
             command_rule = (
@@ -3313,7 +3319,7 @@ class BotCompileService:
                 "Still do not create or modify final pages. Call submit_candidate_knowledge with "
                 "no arguments and continue only after it is accepted. Promoted candidates need "
                 "stable meta_id values; their final page_paths are validated at final submission.\n"
-                "3. PAGE GENERATION: only now create/update index, what/why/how pages, evidence "
+                "3. PAGE GENERATION: only now create/update index, configured facet pages, evidence "
                 "artifacts, and other final output. Finish with submit_wiki_bundle. The final tool "
                 "is locked until both prior checkpoints have passed. Use scratch paths outside "
                 f"{COMPILE_TARGET_CHECKOUT_ROOT}/ while planning the first two phases.\n"
@@ -3325,6 +3331,29 @@ class BotCompileService:
         )
         okf_config_rule = ""
         if okf_config_content is not None:
+            main_view_rule = ""
+            if okf_config is not None and okf_config.main_view is not None:
+                main_view = okf_config.main_view
+                structure = "/".join(main_view.path_structure)
+                facets = ", ".join(main_view.facet_categories)
+                route_rule = ""
+                if main_view.directory_routes:
+                    route_summary = "; ".join(
+                        f"{facet}: {', '.join(routes)}"
+                        for facet, routes in main_view.directory_routes.items()
+                    )
+                    route_rule = (
+                        " The `route` level expands to one of these exact relative directory "
+                        f"paths for its facet: {route_summary}."
+                    )
+                main_view_rule = (
+                    " The exact non-exempt main-view path hierarchy, relative to "
+                    f"`{main_view.root_path}/`, is `{structure}`. The only configured facet "
+                    f"values are: {facets}. Use the page's explicit frontmatter "
+                    f"`{main_view.meta_knowledge.id_field if main_view.meta_knowledge else 'meta_id'}` "
+                    "at the `meta_id` level."
+                    f"{route_rule} Do not add, omit, reorder, or invent any directory level."
+                )
             okf_config_rule = (
                 "\nThe external OKF contract is materialized at "
                 f"`{COMPILE_CONFIG_ROOT}/{DEFAULT_OKF_CONFIG_NAME}`. Read it before planning "
@@ -3336,16 +3365,15 @@ class BotCompileService:
                 "declares derived views, keep the physical file tree as the main view and "
                 "assign every page the configured namespaced tag selections for every view; "
                 "do not duplicate pages to represent those views. If main_view is declared, "
-                "treat that physical tree as the single source of truth and route every "
-                "non-exempt page through its configured immediate-parent leaf category (for "
-                "the bundled contract: what, why, or how). When main_view.meta_knowledge is "
-                "declared, one meta-knowledge unit is the complete set of sibling facet pages "
-                "that share the same topic path and explicit frontmatter meta_id. When "
-                "require_id_directory is true, put that meta_id in its own physical directory "
-                "immediately before the facet directory. For the "
-                "bundled contract, "
-                "always create exactly one what, one why, and one how page for every unit; "
-                "give all three identical configured domain and usage view tags. Exempt "
+                "treat that physical tree as the single source of truth and follow its exact "
+                "configured path_structure for every non-exempt page. Never invent an "
+                "additional topic, domain, usage, miscellaneous, or other directory."
+                f"{main_view_rule} When main_view.meta_knowledge is declared, one meta-knowledge "
+                "unit is the complete configured set of facet pages that share one explicit "
+                "frontmatter id. Create exactly one page for every configured facet when "
+                "require_complete is true, and give the unit identical configured derived-view "
+                "tags when shared_view_tags is true. Use only configured view tag namespaces "
+                "and group values; any undeclared `view/...` tag is invalid. Exempt "
                 "navigation pages such as index.md are not knowledge units and must not be "
                 "tagged into derived views. If intermediates are declared, "
                 "create and maintain the run manifest, evidence ledger, investigation report, "
