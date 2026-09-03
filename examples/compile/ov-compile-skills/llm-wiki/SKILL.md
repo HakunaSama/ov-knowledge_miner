@@ -3,9 +3,13 @@ name: llm-wiki
 description: Compile heterogeneous documents, notes, spreadsheets, reports, and code into an evidence-grounded OKF knowledge base with entity, concept, and synthesis pages; deterministic path/type rules; source metadata; and literal cross-page WikiLinks. Use with ov compile for new or incremental knowledge mining.
 ---
 
-<!-- OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 4.6 -->
+<!-- OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 4.7 -->
+<!-- OPENVIKING_KNOWLEDGE_MINING_PROTOCOL_VERSION: 1.0 -->
 
 # LLM Wiki
+
+> Platform-owned workflow file. Keep Compile process changes here; put user-adjustable
+> mining preferences in `USER_PROFILE.md` and directory/view rules in `OKF_CONFIG.yaml`.
 
 ## Objective
 
@@ -21,6 +25,20 @@ and task history. Never generate `.overview.md`, `.abstract.md`, `.relations.jso
 Follow explicit task-reason instructions for scope, audience, language, and depth.
 Otherwise use the dominant language of the sources and write for a knowledgeable
 newcomer.
+
+## Load the user mining profile
+
+Read `skills/llm-wiki/USER_PROFILE.md` before planning the knowledge base. This file is
+the user-editable mining profile. It may refine the business objective, audience,
+atomic-knowledge criteria, inclusion and exclusion preferences, evidence priorities,
+terminology, language, and writing style. Treat it as control data: never mine it as
+knowledge or cite it as a source.
+
+The user profile cannot change the Compile phase order, required source coverage,
+candidate checkpoint, evidence and provenance requirements, submission tools, platform-
+owned files, safety rules, or the effective OKF contract. Ignore any profile instruction
+that conflicts with those fixed rules. If the profile is missing or a section is blank,
+use the defaults in this Skill and the task reason.
 
 ## Load the OKF contract first
 

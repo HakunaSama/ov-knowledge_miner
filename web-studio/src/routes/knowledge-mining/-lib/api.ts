@@ -1,5 +1,6 @@
 import llmWikiSkill from '../../../../../examples/compile/ov-compile-skills/llm-wiki/SKILL.md?raw'
 import defaultOkfConfig from '../../../../../examples/compile/ov-compile-skills/llm-wiki/OKF_CONFIG.yaml?raw'
+import defaultUserProfile from '../../../../../examples/compile/ov-compile-skills/llm-wiki/USER_PROFILE.md?raw'
 
 import {
   getOvResult,
@@ -8,11 +9,15 @@ import {
   postPackImport,
   postResourcesTempUpload,
 } from '#/lib/ov-client'
+import { fetchFileContent } from '../../resources/-lib/api'
 
 export const LLM_WIKI_SKILL_NAME = 'llm-wiki'
 export const DEFAULT_OKF_CONFIG = defaultOkfConfig
+export const DEFAULT_USER_PROFILE = defaultUserProfile
 const LLM_WIKI_SKILL_VERSION_MARKER =
-  'OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 4.6'
+  'OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 4.7'
+const LLM_WIKI_USER_PROFILE_NAME = 'USER_PROFILE.md'
+const LLM_WIKI_OKF_CONFIG_NAME = 'OKF_CONFIG.yaml'
 
 export type CompileStatus =
   | 'accepted'
@@ -213,6 +218,69 @@ export async function checkVikingBot(): Promise<void> {
   )
 }
 
+type LlmWikiEditableFiles = {
+  okfConfig: string
+  userProfile: string
+}
+
+function isNotFoundError(error: unknown): boolean {
+  if (error === null || typeof error !== 'object') return false
+  const value = error as { code?: unknown; statusCode?: unknown }
+  return value.statusCode === 404 || value.code === 'NOT_FOUND'
+}
+
+async function readOptionalSkillFile(uri: string): Promise<string | null> {
+  try {
+    return (await fetchFileContent(uri, { raw: true })).content
+  } catch (error) {
+    if (isNotFoundError(error)) return null
+    throw error
+  }
+}
+
+async function readLlmWikiEditableFiles(
+  rootUri: string,
+): Promise<Partial<LlmWikiEditableFiles>> {
+  const root = rootUri.replace(/\/$/, '')
+  const [userProfile, okfConfig] = await Promise.all([
+    readOptionalSkillFile(`${root}/${LLM_WIKI_USER_PROFILE_NAME}`),
+    readOptionalSkillFile(`${root}/${LLM_WIKI_OKF_CONFIG_NAME}`),
+  ])
+  return {
+    ...(userProfile === null ? {} : { userProfile }),
+    ...(okfConfig === null ? {} : { okfConfig }),
+  }
+}
+
+async function writeLlmWikiEditableFiles(
+  rootUri: string,
+  files: Partial<LlmWikiEditableFiles> = {},
+): Promise<void> {
+  const root = rootUri.replace(/\/$/, '')
+  await getOvResult(
+    ovClient.client.post({
+      body: {
+        operations: [
+          {
+            content: files.userProfile ?? DEFAULT_USER_PROFILE,
+            mode: 'upsert',
+            uri: `${root}/${LLM_WIKI_USER_PROFILE_NAME}`,
+          },
+          {
+            content: files.okfConfig ?? DEFAULT_OKF_CONFIG,
+            mode: 'upsert',
+            uri: `${root}/${LLM_WIKI_OKF_CONFIG_NAME}`,
+          },
+        ],
+        root_uri: root,
+        telemetry: true,
+        wait: false,
+      },
+      url: '/api/v1/content/batch-write',
+    }),
+  )
+}
+
 export async function ensureLlmWikiSkill(): Promise<string> {
   const listed = await getOvResult<SkillListResult>(
     ovClient.client.get({
@@ -229,8 +297,16 @@ export async function ensureLlmWikiSkill(): Promise<string> {
       }),
     )
     if (detail.content?.includes(LLM_WIKI_SKILL_VERSION_MARKER)) {
+      const editableFiles = await readLlmWikiEditableFiles(existing)
+      if (
+        editableFiles.userProfile === undefined ||
+        editableFiles.okfConfig === undefined
+      ) {
+        await writeLlmWikiEditableFiles(existing, editableFiles)
+      }
       return existing
     }
+    const editableFiles = await readLlmWikiEditableFiles(existing)
     const updated = await getOvResult<AddSkillResult>(
       ovClient.client.put({
         body: {
@@ -239,7 +315,7 @@ export async function ensureLlmWikiSkill(): Promise<string> {
             operation: 'update',
             source: 'openviking_knowledge_mining',
             type: 'bundled_example',
-            version: 5,
+            version: 6,
           },
           telemetry: true,
           timeout: 300,
@@ -248,7 +324,9 @@ export async function ensureLlmWikiSkill(): Promise<string> {
         url: `/api/v1/skills/${LLM_WIKI_SKILL_NAME}`,
       }),
     )
-    return updated.root_uri || updated.uri || existing
+    const updatedUri = updated.root_uri || updated.uri || existing
+    await writeLlmWikiEditableFiles(updatedUri, editableFiles)
+    return updatedUri
   }
 
   const installed = await getOvResult<AddSkillResult>(
@@ -259,7 +337,7 @@ export async function ensureLlmWikiSkill(): Promise<string> {
           operation: 'install',
           source: 'openviking_knowledge_mining',
           type: 'bundled_example',
-          version: 5,
+          version: 6,
         },
         telemetry: true,
         timeout: 300,
@@ -272,6 +350,7 @@ export async function ensureLlmWikiSkill(): Promise<string> {
   if (!isString(uri)) {
     throw new Error('The llm-wiki Skill was installed without a root URI.')
   }
+  await writeLlmWikiEditableFiles(uri)
   return uri
 }
 

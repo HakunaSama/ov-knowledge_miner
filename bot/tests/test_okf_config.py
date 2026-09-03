@@ -236,6 +236,20 @@ def test_llm_wiki_skill_does_not_embed_default_facet_paths_or_triplets():
     assert "knowledge/how/" not in skill.casefold()
 
 
+def test_llm_wiki_skill_separates_fixed_protocol_from_user_profile():
+    skill_dir = ROOT / "examples/compile/ov-compile-skills/llm-wiki"
+    skill = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    profile = (skill_dir / "USER_PROFILE.md").read_text(encoding="utf-8")
+
+    assert "OPENVIKING_KNOWLEDGE_MINING_PROTOCOL_VERSION: 1.0" in skill
+    assert "Platform-owned workflow file" in skill
+    assert "Read `skills/llm-wiki/USER_PROFILE.md`" in skill
+    assert "cannot change the Compile phase order" in skill
+    assert profile.startswith("# LLM Wiki User Profile")
+    assert "## Atomic knowledge criteria" in profile
+    assert "cannot override the fixed Compile workflow" in profile
+
+
 def test_configured_checkout_applies_defaults_and_literal_wikilinks():
     config = parse_okf_config(DEFAULT_CONFIG)
     pages = {

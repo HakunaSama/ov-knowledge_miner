@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  DEFAULT_USER_PROFILE,
   buildHumanAnswerCompileInput,
   buildTeamMemoryCompileInput,
   findLlmWikiSkill,
@@ -8,6 +9,14 @@ import {
 } from './api'
 
 describe('knowledge mining API helpers', () => {
+  it('bundles a separate user-editable mining profile', () => {
+    expect(DEFAULT_USER_PROFILE).toContain('# LLM Wiki User Profile')
+    expect(DEFAULT_USER_PROFILE).toContain('## Atomic knowledge criteria')
+    expect(DEFAULT_USER_PROFILE).toContain(
+      'cannot override the fixed Compile workflow',
+    )
+  })
+
   it('prefers a user-scoped llm-wiki Skill', () => {
     expect(
       findLlmWikiSkill({
