@@ -280,15 +280,11 @@ fn print_progress(output_format: OutputFormat, message: String) {
     }
 }
 
-fn completion_phase(result: Option<&CompileResult>) -> &'static str {
-    if result.is_some_and(|result| {
-        result.investigation_status.as_deref() == Some("needs_human_input")
-            && result.question_count > 0
-    }) {
-        "awaiting_human"
-    } else {
-        "completed"
-    }
+fn completion_phase(_result: Option<&CompileResult>) -> &'static str {
+    // Human evidence is currently informational for the CLI workflow. Keep the
+    // investigation and questionnaire in the Compile result for auditing, but
+    // do not make them a completion gate or submit answers automatically.
+    "completed"
 }
 
 async fn upload_files(
@@ -578,10 +574,10 @@ mod tests {
     }
 
     #[test]
-    fn unresolved_questions_pause_completion() {
+    fn unresolved_questions_do_not_block_cli_completion() {
         assert_eq!(
             completion_phase(Some(&compile_result(Some("needs_human_input"), 2))),
-            "awaiting_human"
+            "completed"
         );
         assert_eq!(
             completion_phase(Some(&compile_result(Some("clear"), 0))),

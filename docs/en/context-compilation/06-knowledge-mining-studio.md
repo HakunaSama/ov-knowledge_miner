@@ -63,6 +63,7 @@ ov knowledge-mining \
 - `--to` fixes the target knowledge-base URI. When omitted, the isolated batch's `wiki/` directory is used.
 - Without `--wait`, the command returns after upload and document-task creation. Use the returned `document_task_id` with `ov task status <task-id>`.
 - Add `-o json` for script-friendly batch URIs, source URIs, task IDs, phase, and final Compile result.
+- The CLI currently treats human evidence as informational rather than a completion gate. Even when the investigation report creates questions or reports `needs_human_input`, the top-level `phase` is `completed`; the CLI never emits `awaiting_human` or submits human answers automatically. The report and questionnaire remain available for auditing.
 
 The command does not duplicate the mining algorithm. It composes the public `POST /api/v1/resources/temp_upload`, `POST /api/v1/resources`, `POST /api/v1/content/write`, and `POST /bot/v1/compile` APIs, so Studio, the original `ov compile`, and this wrapper all use the same server-side ingestion, Compile, and validation implementation.
 

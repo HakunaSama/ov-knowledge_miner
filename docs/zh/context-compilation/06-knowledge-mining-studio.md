@@ -65,6 +65,7 @@ ov knowledge-mining \
 - `--to` 可固定知识库目标；省略时自动使用本批次的 `wiki/` 目录。
 - 不传 `--wait` 时，命令完成上传并启动文档任务后立即返回 `document_task_id`，可用 `ov task status <task-id>` 查询。
 - 加 `-o json` 可获得便于脚本消费的批次 URI、来源 URI、任务 ID、阶段和最终 Compile 结果。
+- CLI 当前不启用人工补充门禁：即使调查报告生成了问卷或标记为 `needs_human_input`，顶层 `phase` 仍返回 `completed`，不会出现 `awaiting_human`，也不会自动提交人工答案。调查报告和问卷仍保留在结果中用于审计。
 
 该命令不复制挖掘算法，而是依次复用公开接口：`POST /api/v1/resources/temp_upload`、`POST /api/v1/resources`、`POST /api/v1/content/write` 和 `POST /bot/v1/compile`。因此网页、原有 `ov compile` 与此命令最终走的是同一套服务端解析、Compile 和校验逻辑。
 
