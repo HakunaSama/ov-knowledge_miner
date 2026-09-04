@@ -33,6 +33,39 @@ curl http://localhost:1933/bot/v1/health
 10. **Source coverage** shows uploaded, inspected, cited, merged, and skipped materials with reasons. Missing sources, unread sources, unjustified skips, or citations that disagree with the evidence ledger reject submission so VikingBot continues working.
 11. When conflicts or evidence gaps exist, Studio switches the workflow to **Waiting for human evidence** and immediately exposes the provisional pages and questionnaire without declaring the run complete. Answers become a `human-answer` source and trigger an incremental Compile against the same target. The workflow completes only after the open issues are handled.
 
+## Upload and start mining from the CLI
+
+`ov knowledge-mining` packages the page's **upload knowledge files** and **start knowledge mining** actions as one non-interactive command. It creates an isolated batch, uploads and parses every document, writes the OKF config, discovers or installs the `llm-wiki` Skill, and starts the document Compile:
+
+```bash
+ov knowledge-mining \
+  --documents ./resources/documents \
+  --reason "Mine product, procedure, and risk knowledge with provenance" \
+  --wait
+```
+
+To upload team Memory and automatically run the incremental stage against the same target after document mining succeeds:
+
+```bash
+ov knowledge-mining \
+  --documents ./resources/documents \
+  --memory ./resources/team-memory \
+  --okf-config ./OKF_CONFIG.yaml \
+  --to viking://resources/enterprise-wiki \
+  --wait \
+  --timeout 7200
+```
+
+- `--documents` is required and accepts repeatable files or directories. Directories are scanned recursively for the formats supported by the Studio page.
+- `--memory` is optional. It requires `--wait`, because the incremental Memory Compile can start only after the document Compile succeeds.
+- `--okf-config` accepts a local YAML file. The bundled default is used when omitted.
+- `--skill` selects an existing Skill URI. When omitted, the command prefers a visible user-scoped `llm-wiki` and installs the bundled version if none exists.
+- `--to` fixes the target knowledge-base URI. When omitted, the isolated batch's `wiki/` directory is used.
+- Without `--wait`, the command returns after upload and document-task creation. Use the returned `document_task_id` with `ov task status <task-id>`.
+- Add `-o json` for script-friendly batch URIs, source URIs, task IDs, phase, and final Compile result.
+
+The command does not duplicate the mining algorithm. It composes the public `POST /api/v1/resources/temp_upload`, `POST /api/v1/resources`, `POST /api/v1/content/write`, and `POST /bot/v1/compile` APIs, so Studio, the original `ov compile`, and this wrapper all use the same server-side ingestion, Compile, and validation implementation.
+
 ## Display CLI mining results
 
 The **Import and display CLI mining results** area reuses exactly the same Main, derived-view, source-coverage, intermediate, questionnaire, and knowledge-cloud renderers as a Studio run. It does not run VikingBot again. Three connection paths are supported:

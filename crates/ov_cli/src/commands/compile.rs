@@ -44,6 +44,16 @@ pub async fn run(
         return Ok(());
     }
 
+    let status = wait_for_completion(client, &accepted, timeout).await?;
+    render_completed(&status, output_format, compact);
+    Ok(())
+}
+
+pub async fn wait_for_completion(
+    client: &HttpClient,
+    accepted: &CompileAccepted,
+    timeout: Option<f64>,
+) -> Result<CompileTaskStatus> {
     let deadline = timeout.map(|seconds| Instant::now() + Duration::from_secs_f64(seconds));
     let mut polling = Duration::from_millis(500);
     loop {
@@ -56,8 +66,7 @@ pub async fn run(
         let status = client.get_compile(&accepted.task_id).await?;
         match status.status.as_str() {
             "completed" => {
-                render_completed(&status, output_format, compact);
-                return Ok(());
+                return Ok(status);
             }
             "failed" => {
                 let error = status.error.unwrap_or(crate::client::CompileErrorInfo {
@@ -146,6 +155,7 @@ fn render_completed(value: &CompileTaskStatus, format: OutputFormat, compact: bo
             intermediate_artifacts: Vec::new(),
             investigation_status: None,
             question_count: 0,
+            validation_passed: None,
         });
     println!("to: {}", result.to);
     println!("created: {}", result.created.len());

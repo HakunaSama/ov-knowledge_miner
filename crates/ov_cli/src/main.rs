@@ -1066,6 +1066,53 @@ enum Commands {
         runtime_timeout: Option<f64>,
     },
 
+    /// [Data] Upload local knowledge files and start an llm-wiki mining workflow
+    KnowledgeMining {
+        /// Local document file or directory; repeat the flag or separate entries with commas
+        #[arg(
+            long = "documents",
+            required = true,
+            value_delimiter = ',',
+            value_name = "path"
+        )]
+        document_paths: Vec<String>,
+        /// Local team Memory file or directory; repeat the flag or separate entries with commas
+        #[arg(long = "memory", value_delimiter = ',', value_name = "path")]
+        memory_paths: Vec<String>,
+        /// Mining target; defaults to an isolated knowledge-mining batch URI
+        #[arg(long = "to", value_name = "uri")]
+        target_uri: Option<String>,
+        /// Existing llm-wiki Skill URI; auto-discovers or installs the bundled Skill when omitted
+        #[arg(long = "skill", value_name = "uri")]
+        skill_uri: Option<String>,
+        /// Local OKF YAML file; uses the bundled OKF config when omitted
+        #[arg(long = "okf-config", value_name = "file")]
+        okf_config_path: Option<String>,
+        /// Knowledge-mining objective
+        #[arg(long, value_name = "text")]
+        reason: Option<String>,
+        /// Wait for the full document and optional team Memory workflow
+        #[arg(long)]
+        wait: bool,
+        /// Local wait timeout in seconds for each Compile stage; does not cancel server tasks
+        #[arg(
+            long,
+            requires = "wait",
+            value_parser = config::parse_positive_timeout,
+            value_name = "seconds"
+        )]
+        timeout: Option<f64>,
+        /// Server-side runtime limit in seconds for each Compile stage
+        #[arg(
+            long = "runtime-timeout",
+            value_parser = config::parse_positive_timeout,
+            value_name = "seconds"
+        )]
+        runtime_timeout: Option<f64>,
+        #[command(flatten)]
+        upload_options: UploadCliOptions,
+    },
+
     // --- Status & Observability ---
     /// [Status] Wait for queued async processing to complete
     Wait {
@@ -1190,7 +1237,10 @@ impl Commands {
     }
 
     fn supports_upload_options(&self) -> bool {
-        matches!(self, Self::AddResource { .. } | Self::AddSkill { .. })
+        matches!(
+            self,
+            Self::AddResource { .. } | Self::AddSkill { .. } | Self::KnowledgeMining { .. }
+        )
     }
 }
 
@@ -1200,7 +1250,7 @@ fn legacy_upload_option_error(
 ) -> Option<&'static str> {
     if options.is_set() && !command.supports_upload_options() {
         Some(
-            "--progress, --no-progress, and --verbose are only supported for add-resource and add-skill.",
+            "--progress, --no-progress, and --verbose are only supported for add-resource, add-skill, and knowledge-mining.",
         )
     } else {
         None
@@ -2473,6 +2523,8 @@ fn is_top_level_server_command(command: &str) -> bool {
             | "restore"
             | "tui"
             | "chat"
+            | "compile"
+            | "knowledge-mining"
             | "wait"
             | "status"
             | "health"
@@ -3449,6 +3501,41 @@ async fn main() {
             )
             .await
         }
+        Commands::KnowledgeMining {
+            document_paths,
+            memory_paths,
+            target_uri,
+            skill_uri,
+            okf_config_path,
+            reason,
+            wait,
+            timeout,
+            runtime_timeout,
+            upload_options,
+        } => {
+            let ctx =
+                ctx.with_upload_options(upload_options.merged_with_legacy(legacy_upload_options));
+            let client = ctx.get_client();
+            commands::knowledge_mining::run(
+                &client,
+                commands::knowledge_mining::KnowledgeMiningOptions {
+                    document_paths,
+                    memory_paths,
+                    target_uri,
+                    skill_uri,
+                    okf_config_path,
+                    reason,
+                    wait,
+                    timeout,
+                    runtime_timeout,
+                    show_progress: ctx.should_show_progress(),
+                    verbose: ctx.is_verbose(),
+                    output_format: ctx.output_format,
+                    compact: ctx.compact,
+                },
+            )
+            .await
+        }
         Commands::Config { action } => handlers::handle_config(action, ctx).await,
         Commands::Language { .. } => unreachable!("language command is handled before config load"),
         Commands::Version => {
@@ -3898,6 +3985,46 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn cli_knowledge_mining_accepts_local_sources_and_optional_memory() {
+        let cli = Cli::try_parse_from([
+            "ov",
+            "knowledge-mining",
+            "--documents",
+            "./docs-a,./docs-b",
+            "--memory",
+            "./memory",
+            "--okf-config",
+            "./OKF_CONFIG.yaml",
+            "--reason",
+            "提炼产品知识",
+            "--wait",
+            "--timeout",
+            "600",
+        ])
+        .expect("knowledge-mining flags should parse");
+
+        match cli.command {
+            Commands::KnowledgeMining {
+                document_paths,
+                memory_paths,
+                okf_config_path,
+                reason,
+                wait,
+                timeout,
+                ..
+            } => {
+                assert_eq!(document_paths, vec!["./docs-a", "./docs-b"]);
+                assert_eq!(memory_paths, vec!["./memory"]);
+                assert_eq!(okf_config_path.as_deref(), Some("./OKF_CONFIG.yaml"));
+                assert_eq!(reason.as_deref(), Some("提炼产品知识"));
+                assert!(wait);
+                assert_eq!(timeout, Some(600.0));
+            }
+            _ => panic!("expected knowledge-mining command"),
+        }
     }
 
     #[test]
@@ -4610,7 +4737,7 @@ mod tests {
         assert_eq!(
             legacy_upload_option_error(upload_options, &tree.command),
             Some(
-                "--progress, --no-progress, and --verbose are only supported for add-resource and add-skill."
+                "--progress, --no-progress, and --verbose are only supported for add-resource, add-skill, and knowledge-mining."
             )
         );
 
@@ -4623,9 +4750,19 @@ mod tests {
         assert_eq!(
             legacy_upload_option_error(upload_options, &skills_add.command),
             Some(
-                "--progress, --no-progress, and --verbose are only supported for add-resource and add-skill."
+                "--progress, --no-progress, and --verbose are only supported for add-resource, add-skill, and knowledge-mining."
             )
         );
+
+        let knowledge_mining = Cli::try_parse_from([
+            "ov",
+            "--progress",
+            "knowledge-mining",
+            "--documents",
+            "./documents",
+        ])
+        .expect("legacy upload flag should parse for knowledge-mining");
+        assert!(legacy_upload_option_error(upload_options, &knowledge_mining.command).is_none());
     }
 
     #[test]

@@ -151,6 +151,8 @@ pub struct CompileResult {
     pub investigation_status: Option<String>,
     #[serde(default)]
     pub question_count: usize,
+    #[serde(default)]
+    pub validation_passed: Option<bool>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

@@ -33,6 +33,41 @@ curl http://localhost:1933/bot/v1/health
 10. “来源覆盖”逐项展示已上传、已检查、已引用、已合并和已跳过的材料及原因。缺失来源、未实际读取、无理由跳过或引用与证据账本不一致都会拒绝提交，让 VikingBot 继续处理。
 11. 当报告发现来源冲突或证据缺口时，Studio 将整次工作流切换到“等待人工知识补证”，立即展示阶段性知识与问卷，但不会宣布挖掘完成。提交答案后，答案作为新的 `human-answer` 来源触发同目标增量 Compile；只有问题处理完成后才进入“已完成”。
 
+## 使用 CLI 一键上传并开始挖掘
+
+`ov knowledge-mining` 把页面上的“上传知识文件”和“开始知识挖掘”封装成一个非交互命令。它会自动创建隔离批次目录、逐份上传并解析文档、写入 OKF 配置、找到或安装 `llm-wiki` Skill，然后启动文档 Compile：
+
+```bash
+ov knowledge-mining \
+  --documents ./resources/documents \
+  --reason "提炼产品、流程和风险知识，并保留出处" \
+  --wait
+```
+
+同时上传团队 Memory 并在首轮成功后自动增量更新同一个知识库：
+
+```bash
+ov knowledge-mining \
+  --documents ./resources/documents \
+  --memory ./resources/team-memory \
+  --okf-config ./OKF_CONFIG.yaml \
+  --to viking://resources/enterprise-wiki \
+  --wait \
+  --timeout 7200
+```
+
+参数说明：
+
+- `--documents` 必填，可传文件或目录，也可重复传入；目录会递归查找页面支持的文档格式。
+- `--memory` 可选，可传文件或目录。由于 Memory 必须等待文档阶段完成后才能增量执行，因此它必须和 `--wait` 一起使用。
+- `--okf-config` 接收本地 YAML 文件；省略时使用随 CLI 编译的默认配置。
+- `--skill` 可指定已有 Skill URI；省略时优先使用当前身份可见的用户级 `llm-wiki`，找不到时自动安装内置版本。
+- `--to` 可固定知识库目标；省略时自动使用本批次的 `wiki/` 目录。
+- 不传 `--wait` 时，命令完成上传并启动文档任务后立即返回 `document_task_id`，可用 `ov task status <task-id>` 查询。
+- 加 `-o json` 可获得便于脚本消费的批次 URI、来源 URI、任务 ID、阶段和最终 Compile 结果。
+
+该命令不复制挖掘算法，而是依次复用公开接口：`POST /api/v1/resources/temp_upload`、`POST /api/v1/resources`、`POST /api/v1/content/write` 和 `POST /bot/v1/compile`。因此网页、原有 `ov compile` 与此命令最终走的是同一套服务端解析、Compile 和校验逻辑。
+
 ## 展示 CLI 挖掘结果
 
 Studio 的“导入并展示 CLI 挖掘结果”区域复用与网页挖掘完全相同的主视图、派生视图、来源覆盖、中间产物、调查问卷和知识点阵渲染器，不会再次运行 VikingBot。支持三种接入方式：

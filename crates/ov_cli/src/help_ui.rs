@@ -62,6 +62,7 @@ struct CommandHelpSpec {
 
 const CORE_WORKFLOW: &[HelpCommand] = help_commands![
     "add-resource",
+    "knowledge-mining",
     "add-skill",
     "skills",
     "find",
@@ -844,6 +845,30 @@ const COMMAND_HELP_SPECS: &[CommandHelpSpec] = &[
             HelpItem {
                 label: "ov tree <target-uri>",
                 description: "Inspect the generated output.",
+            },
+        ],
+    },
+    CommandHelpSpec {
+        path: &["knowledge-mining"],
+        purpose: "Upload local documents and run the same llm-wiki mining workflow used by Studio.",
+        examples: &[
+            HelpItem {
+                label: "ov knowledge-mining --documents ./documents --wait",
+                description: "Upload documents, mine them, and wait for the final result.",
+            },
+            HelpItem {
+                label: "ov knowledge-mining --documents ./documents --memory ./team-memory --okf-config ./OKF_CONFIG.yaml --wait",
+                description: "Run document mining followed by a team Memory incremental update.",
+            },
+        ],
+        next_steps: &[
+            HelpItem {
+                label: "ov task status <cmp-task-id>",
+                description: "Inspect the active Compile task.",
+            },
+            HelpItem {
+                label: "ov tree <target-uri>",
+                description: "Inspect the generated knowledge base.",
             },
         ],
     },

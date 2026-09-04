@@ -4,6 +4,7 @@ pub mod compile;
 pub mod content;
 pub mod crypto;
 pub mod filesystem;
+pub mod knowledge_mining;
 pub mod observer;
 pub mod pack;
 pub mod privacy;
