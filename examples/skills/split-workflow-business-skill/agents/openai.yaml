@@ -1,0 +1,4 @@
+interface:
+  display_name: "拆分流程与业务 Skill"
+  short_description: "将混合 Skill 安全拆成固定流程与可编辑业务 Profile"
+  default_prompt: "使用 $split-workflow-business-skill 拆分这个混合 Skill，并验证拆分前后语义等价。"
