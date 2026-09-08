@@ -52,6 +52,7 @@ Compile 本身不规定「编译成什么」——那由 Skill 决定。同一�
 
 ## 相关文档
 
+- [Agent 分批知识挖掘教程](./08-batched-knowledge-mining-agent-guide.md) — 使用自定义 Skill、OKF Config、本地 documents、10 文件串行窗口和断点恢复
 - [VikingBot 概念](../concepts/15-vikingbot.md) — Compile 背后的执行体
 - [VikingBot API](../api/24-vikingbot.md) — `compile()` / `compile_status()` / `compile_cancel()` 的完整参考
 - [Skills API](../api/04-skills.md) — 如何管理和自定义 Skill

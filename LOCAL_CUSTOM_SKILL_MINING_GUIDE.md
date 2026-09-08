@@ -1,5 +1,9 @@
 # 使用本地自定义 Skill 进行知识库挖掘
 
+> 当前推荐的 Agent 分批挖掘教程见
+> `docs/zh/context-compilation/08-batched-knowledge-mining-agent-guide.md`。
+> 新教程使用已实测的 `ov skills add`、10 文件串行窗口、统一目标知识库和断点恢复流程。
+
 这份教程用于指导本地 Codex 或开发者完成以下工作：
 
 1. 从现有 `llm-wiki` 复制并修改一个本地 Skill；
