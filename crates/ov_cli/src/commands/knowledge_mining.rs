@@ -238,9 +238,12 @@ pub async fn run(client: &HttpClient, options: KnowledgeMiningOptions) -> Result
         state.skill_uri =
             ensure_llm_wiki_skill(client, options.show_progress, options.verbose).await?;
     }
-    client
-        .mkdir(&state.root_uri, Some("Knowledge-mining serial run"))
-        .await?;
+    mkdir_idempotent(
+        client,
+        &state.root_uri,
+        Some("Knowledge-mining serial run"),
+    )
+    .await?;
     if let Some(config) = okf_config {
         write_text_upsert_compatible(client, &state.okf_config_uri, &config).await?;
     }
@@ -706,6 +709,18 @@ async fn write_text_upsert_compatible(
     }
 }
 
+async fn mkdir_idempotent(
+    client: &HttpClient,
+    uri: &str,
+    reason: Option<&str>,
+) -> Result<()> {
+    match client.mkdir(uri, reason).await {
+        Ok(_) => Ok(()),
+        Err(error) if matches!(error.code(), "CONFLICT" | "ALREADY_EXISTS") => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 async fn upload_window_file(
     client: &HttpClient,
     file: &WindowFileState,
@@ -773,9 +788,12 @@ async fn run_serial_window(
     checkpoint_run(client, state_path, state).await?;
 
     let source_uri = state.windows[window_index].source_uri.clone();
-    client
-        .mkdir(&source_uri, Some("Knowledge-mining window sources"))
-        .await?;
+    mkdir_idempotent(
+        client,
+        &source_uri,
+        Some("Knowledge-mining window sources"),
+    )
+    .await?;
     let file_count = state.windows[window_index].files.len();
     print_progress(
         output_format,
@@ -973,9 +991,15 @@ async fn ensure_llm_wiki_skill(
         return Ok(uri);
     }
 
+    let package_root = tempfile::tempdir()?;
+    let package = package_root.path().join("llm-wiki");
+    fs::create_dir_all(&package)?;
+    fs::write(package.join("SKILL.md"), DEFAULT_SKILL)?;
+    fs::write(package.join("USER_PROFILE.md"), DEFAULT_USER_PROFILE)?;
+    fs::write(package.join("OKF_CONFIG.yaml"), DEFAULT_OKF_CONFIG)?;
     let installed = client
         .add_skill(
-            DEFAULT_SKILL,
+            &package.to_string_lossy(),
             true,
             Some(300.0),
             show_progress,
@@ -996,18 +1020,6 @@ async fn ensure_llm_wiki_skill(
         .filter(|value| !value.trim().is_empty())
         .map(str::to_owned)
         .ok_or_else(|| Error::Parse("llm-wiki installation returned no root URI".into()))?;
-
-    for (name, content) in [
-        ("USER_PROFILE.md", DEFAULT_USER_PROFILE),
-        ("OKF_CONFIG.yaml", DEFAULT_OKF_CONFIG),
-    ] {
-        write_text_upsert_compatible(
-            client,
-            &format!("{}/{name}", root_uri.trim_end_matches('/')),
-            content,
-        )
-        .await?;
-    }
     Ok(root_uri)
 }
 

@@ -49,6 +49,20 @@ fn add_resource_tag_fields(body: &mut Value, tags: &[String], tag_mode: &str) {
     obj.insert("tag_mode".to_string(), serde_json::json!(tag_mode));
 }
 
+fn wait_aware_processing_timeout(
+    dynamic_timeout: std::time::Duration,
+    wait: bool,
+    server_timeout_secs: Option<f64>,
+) -> std::time::Duration {
+    if !wait {
+        return dynamic_timeout;
+    }
+    let Some(seconds) = server_timeout_secs.filter(|value| *value > 0.0 && value.is_finite()) else {
+        return dynamic_timeout;
+    };
+    dynamic_timeout.max(std::time::Duration::from_secs_f64(seconds + 30.0))
+}
+
 fn normalize_image_input(image: Option<String>) -> Result<Option<String>> {
     let Some(value) = image else {
         return Ok(None);
@@ -852,8 +866,11 @@ impl HttpClient {
                     "args": args.clone(),
                 }));
 
-                let dynamic_timeout =
-                    TimeoutConfig::for_resource_processing().calculate(zip_file.path())?;
+                let dynamic_timeout = wait_aware_processing_timeout(
+                    TimeoutConfig::for_resource_processing().calculate(zip_file.path())?,
+                    wait,
+                    timeout,
+                );
                 self.base
                     .post_with_timeout("/api/v1/resources", &body, dynamic_timeout)
                     .await
@@ -888,8 +905,11 @@ impl HttpClient {
                     "args": args.clone(),
                 }));
 
-                let dynamic_timeout =
-                    TimeoutConfig::for_resource_processing().calculate(path_obj)?;
+                let dynamic_timeout = wait_aware_processing_timeout(
+                    TimeoutConfig::for_resource_processing().calculate(path_obj)?,
+                    wait,
+                    timeout,
+                );
                 self.base
                     .post_with_timeout("/api/v1/resources", &body, dynamic_timeout)
                     .await
@@ -975,8 +995,11 @@ impl HttpClient {
                 if let Some(target_uri) = target_uri {
                     body["target_uri"] = serde_json::Value::String(target_uri.to_string());
                 }
-                let dynamic_timeout =
-                    TimeoutConfig::for_resource_processing().calculate(zip_file.path())?;
+                let dynamic_timeout = wait_aware_processing_timeout(
+                    TimeoutConfig::for_resource_processing().calculate(zip_file.path())?,
+                    wait,
+                    timeout,
+                );
                 self.base
                     .post_with_timeout("/api/v1/skills", &body, dynamic_timeout)
                     .await
@@ -999,8 +1022,11 @@ impl HttpClient {
                 if let Some(target_uri) = target_uri {
                     body["target_uri"] = serde_json::Value::String(target_uri.to_string());
                 }
-                let dynamic_timeout =
-                    TimeoutConfig::for_resource_processing().calculate(path_obj)?;
+                let dynamic_timeout = wait_aware_processing_timeout(
+                    TimeoutConfig::for_resource_processing().calculate(path_obj)?,
+                    wait,
+                    timeout,
+                );
                 self.base
                     .post_with_timeout("/api/v1/skills", &body, dynamic_timeout)
                     .await
@@ -1879,6 +1905,23 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::sync::oneshot;
+
+    #[test]
+    fn processing_timeout_covers_server_side_wait() {
+        let dynamic = std::time::Duration::from_secs(60);
+        assert_eq!(
+            super::wait_aware_processing_timeout(dynamic, true, Some(900.0)),
+            std::time::Duration::from_secs(930)
+        );
+        assert_eq!(
+            super::wait_aware_processing_timeout(dynamic, false, Some(900.0)),
+            dynamic
+        );
+        assert_eq!(
+            super::wait_aware_processing_timeout(dynamic, true, None),
+            dynamic
+        );
+    }
 
     #[test]
     fn compact_request_body_drops_null_and_empty_args() {
