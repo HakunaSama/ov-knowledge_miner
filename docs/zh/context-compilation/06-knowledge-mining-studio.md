@@ -36,7 +36,7 @@ curl http://localhost:1933/bot/v1/health
 
 ## 使用 CLI 一键上传并开始挖掘
 
-`ov knowledge-mining` 把页面上的“上传知识文件”和“开始知识挖掘”封装成一个非交互命令。它会自动创建隔离批次目录、逐份上传并解析文档、写入 OKF 配置、找到或安装 `llm-wiki` Skill，然后启动文档 Compile：
+`ov knowledge-mining` 把知识源准备和“开始知识挖掘”封装成一个非交互命令。它会自动创建隔离批次目录、上传并解析本地文档或直接引用已有 OpenViking 文件夹、写入 OKF 配置、找到或安装 `llm-wiki` Skill，然后启动文档 Compile：
 
 ```bash
 ov knowledge-mining \
@@ -59,7 +59,7 @@ ov knowledge-mining \
 
 参数说明：
 
-- `--documents` 必填，可传文件或目录，也可重复传入；目录会递归查找页面支持的文档格式。
+- `--documents` 必填，可传本地文件/目录或 `viking://` 文件夹，也可重复传入；本地目录会递归查找支持的文档格式，OpenViking 文件夹不会重复上传。
 - `--memory` 可选，可传文件或目录。由于 Memory 必须等待文档阶段完成后才能增量执行，因此它必须和 `--wait` 一起使用。
 - `--okf-config` 接收本地 YAML 文件；省略时使用随 CLI 编译的默认配置。
 - `--skill` 可指定已有 Skill URI；省略时优先使用当前身份可见的用户级 `llm-wiki`，找不到时自动安装内置版本。

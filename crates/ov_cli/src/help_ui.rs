@@ -850,11 +850,15 @@ const COMMAND_HELP_SPECS: &[CommandHelpSpec] = &[
     },
     CommandHelpSpec {
         path: &["knowledge-mining"],
-        purpose: "Upload local documents and run the same llm-wiki mining workflow used by Studio.",
+        purpose: "Mine local documents or existing OpenViking folders with the llm-wiki workflow.",
         examples: &[
             HelpItem {
                 label: "ov knowledge-mining --documents ./documents --wait",
                 description: "Upload documents, mine them, and wait for the final result.",
+            },
+            HelpItem {
+                label: "ov knowledge-mining --documents viking://resources/existing-source --wait",
+                description: "Mine an existing OpenViking folder without uploading it again.",
             },
             HelpItem {
                 label: "ov knowledge-mining --documents ./documents --memory ./team-memory --okf-config ./OKF_CONFIG.yaml --wait",

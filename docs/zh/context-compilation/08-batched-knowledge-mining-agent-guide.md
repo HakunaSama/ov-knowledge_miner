@@ -42,7 +42,7 @@
 
 参数类型不能混用：
 
-- --documents 接受本地文件或本地文件夹；
+- --documents 接受本地文件、本地文件夹或 OpenViking 文件夹 URI；
 - --okf-config 接受本地 YAML 文件；
 - --skill 必须使用安装后返回的 viking:// Skill URI，不能传本地路径；
 - --to 是 OpenViking 目标 URI，并且在整次串行运行中必须保持不变。
@@ -335,11 +335,23 @@ Agent 在结束时至少报告：
 - 每个窗口的 validation_passed 和 warnings；
 - 创建、更新和保留了多少知识页面。
 
-## 十三、当前不支持 OpenViking 文件夹作为 documents
+## 十三、使用 OpenViking 文件夹作为 documents
 
-当前 ov knowledge-mining --documents 只接受本地路径，不能直接接受 OpenViking 文件夹 URI。
+`ov knowledge-mining --documents` 同时接受本地路径和 `viking://` 文件夹 URI。OpenViking 文件夹会先使用当前 CLI 身份执行 `stat` 校验，然后直接交给 Compile，不会下载到本地，也不会重复上传到知识挖掘批次目录。
 
-下面的命令当前不受支持：
+两种数据源进入的是同一套 Skill、OKF Config、Compile 和最终校验流程；差异只在 source 准备、窗口计数和溯源位置：
+
+| 项目 | 本地文件或文件夹 | OpenViking 文件夹 |
+|---|---|---|
+| 准备方式 | CLI 递归筛选支持的文件并逐份上传、解析 | CLI 校验目录后直接引用现有 URI |
+| 窗口计数 | 每个本地文件计为一个 source item | 每个 `viking://` 文件夹 URI 计为一个 source item |
+| 目录展开 | 上传后的批次 source 目录 | 由既有 Compile 逻辑递归展开原目录 |
+| 溯源 URI | 指向本次批次下上传后的资源 | 保留原 OpenViking 文件夹及其子资源 URI |
+| checkpoint | 记录每个本地文件的上传状态 | 从创建 state 起标记为远端已就绪，不执行上传 |
+
+OpenViking 输入只支持文件夹，不支持用远端单文件 URI 代替文件夹。`--memory`、`--okf-config` 仍只接受本地路径，`--skill` 仍必须是安装后可访问的 Skill URI。该能力只改变 `ov knowledge-mining` 的 CLI 编排，不改变 `ov compile` 的参数或服务端行为。
+
+直接挖掘已有 OpenViking 文件夹：
 
 ~~~bash
 ov knowledge-mining \
@@ -348,12 +360,47 @@ ov knowledge-mining \
   --wait
 ~~~
 
-Agent 不得把 viking:// URI 当成本地目录传入。如果用户的唯一知识源已经位于 OpenViking，应明确报告：当前 knowledge-mining 尚未实现远端 documents URI 的枚举、窗口规划和直接引用，需要扩展 CLI，或者由用户提供可读取的本地源目录。
+本地目录与 OpenViking 文件夹也可以混合输入：
+
+~~~bash
+ov knowledge-mining \
+  --documents /data/documents \
+  --documents viking://resources/existing-source \
+  --wait
+~~~
+
+窗口规划把每个 OpenViking 文件夹 URI 视为一个现有 source；文件夹内部的递归枚举、文件数和总字节限制仍由既有 Compile 服务端逻辑执行。本地文件保持原有行为，继续逐份上传到批次窗口。checkpoint 会把远端文件夹标记为已就绪，因此 `--resume-state` 不依赖远端 source 的本地副本。
+
+Agent 执行远端文件夹挖掘时必须遵守以下规则：
+
+1. URI 必须属于 CLI 当前连接的同一个 OpenViking 服务，且当前 account、user 和 actor peer 对它有读取权限。
+2. 启动前执行 `ov stat <folder-uri>`；需要确认内容范围时再执行 `ov ls <folder-uri>` 或 `ov tree <folder-uri>`，不要先导出到本地再挖掘。
+3. 一个远端文件夹在 CLI 窗口预算中计为一个 source，而不是按内部文件数计数。超大目录仍可能触发服务端 `RESOURCE_EXHAUSTED`；需要严格分批时，应传入多个更小的 OpenViking 子文件夹 URI。
+4. 远端目录不会生成批次内的数据副本。挖掘页面的来源应指向原始 OpenViking URI，这是预期行为。
+5. `--resume-state` 不会重新上传或把 URI 当成本地路径，但恢复时原目录必须仍然存在、可访问。目录内容在窗口开始前发生变化时，挖掘使用当时可见的最新内容。
+6. 混合输入时，本地文件先上传到窗口 staging 目录，远端文件夹直接加入同一个 Compile 请求；不要手工复制远端目录到 staging URI。
+
+远端-only 自动化示例：
+
+~~~bash
+ov -o json knowledge-mining \
+  --documents viking://resources/existing-source \
+  --skill viking://user/default/skills/acme-wiki \
+  --okf-config /data/skills/acme-wiki/OKF_CONFIG.yaml \
+  --to viking://resources/acme/knowledge \
+  --state-file /data/mining/acme-remote-run.json \
+  --reason "将 OpenViking 中已有资料整理为可检索、可追溯的中文知识库" \
+  --wait \
+  --timeout 1800 \
+  --runtime-timeout 1800
+~~~
+
+如果命令报告 source 不是文件夹、无权访问或不存在，Agent 应停止并报告对应 URI 与当前连接身份，不得退回成本地路径猜测。若服务端报告 source 文件数或总字节超限，应让用户提供更小的子文件夹边界，再以多个 `--documents viking://...` 参数重试。
 
 ## 十四、Agent 标准执行清单
 
 1. 确认当前 ov 版本并执行 ov config validate。
-2. 确认知识源是本地文件或目录，不是 viking:// URI。
+2. 确认每个知识源是可读取的本地文件/目录，或当前身份可访问的 viking:// 文件夹。
 3. 检查并完整读取本地 SKILL.md 和 OKF_CONFIG.yaml。
 4. 执行 ov skills validate <SKILL_DIR>。
 5. 使用 ov skills add <SKILL_DIR> --skill <NAME> --wait --yes 安装。

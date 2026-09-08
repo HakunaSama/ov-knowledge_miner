@@ -36,7 +36,7 @@ curl http://localhost:1933/bot/v1/health
 
 ## Upload and start mining from the CLI
 
-`ov knowledge-mining` packages the page's **upload knowledge files** and **start knowledge mining** actions as one non-interactive command. It creates an isolated batch, uploads and parses every document, writes the OKF config, discovers or installs the `llm-wiki` Skill, and starts the document Compile:
+`ov knowledge-mining` packages source preparation and **start knowledge mining** as one non-interactive command. It creates an isolated batch, uploads and parses local documents or directly references an existing OpenViking folder, writes the OKF config, discovers or installs the `llm-wiki` Skill, and starts the document Compile:
 
 ```bash
 ov knowledge-mining \
@@ -57,7 +57,7 @@ ov knowledge-mining \
   --timeout 7200
 ```
 
-- `--documents` is required and accepts repeatable files or directories. Directories are scanned recursively for the formats supported by the Studio page.
+- `--documents` is required and accepts repeatable local files/directories or `viking://` folder URIs. Local directories are scanned recursively; OpenViking folders are passed directly to Compile without another upload.
 - `--memory` is optional. It requires `--wait`, because the incremental Memory Compile can start only after the document Compile succeeds.
 - `--okf-config` accepts a local YAML file. The bundled default is used when omitted.
 - `--skill` selects an existing Skill URI. When omitted, the command prefers a visible user-scoped `llm-wiki` and installs the bundled version if none exists.

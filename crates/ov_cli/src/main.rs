@@ -1066,14 +1066,14 @@ enum Commands {
         runtime_timeout: Option<f64>,
     },
 
-    /// [Data] Upload local knowledge files and start an llm-wiki mining workflow
+    /// [Data] Mine local documents or an existing OpenViking folder with llm-wiki
     KnowledgeMining {
-        /// Local document file or directory; repeat the flag or separate entries with commas
+        /// Local document path or OpenViking folder URI; repeat or comma-separate
         #[arg(
             long = "documents",
             required_unless_present = "resume_state",
             value_delimiter = ',',
-            value_name = "path"
+            value_name = "path-or-uri"
         )]
         document_paths: Vec<String>,
         /// Local team Memory file or directory; repeat the flag or separate entries with commas
