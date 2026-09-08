@@ -156,6 +156,19 @@ const workspace = {
         incremental: '2 · 团队 Memory 增量更新',
       },
     },
+    window: {
+      fileLimit: '每窗最多文件数',
+      byteLimit: '每窗容量上限（MiB）',
+      pageLimit: '每窗 PDF 页数上限',
+      probeLimit: '每窗预计必读探针上限',
+      preview:
+        '当前选择预估拆成 {{count}} 个串行窗口；启动时会读取 PDF 实际页数并重新精确规划。单文件超过任一窗口预算时独占一窗。',
+      incrementalReason:
+        '这是串行窗口 {{index}}/{{count}} 的增量更新。完整保留现有目标知识库，只用本窗口新增证据补充、纠正和去重。',
+      badge: '窗口 {{index}}/{{count}}',
+      singleton: '大文件独占窗',
+      singletonSuffix: ' · 大文件独占窗',
+    },
     reason: {
       label: '挖掘目标',
       default:
@@ -188,6 +201,8 @@ const workspace = {
       skill: 'Skill',
       okfConfig: 'OKF 配置',
       output: '产物目录',
+      window: '串行窗口',
+      windowLog: '窗口日志',
       cancelledDescription: '任务已取消。已保存的阶段检查点可以继续恢复。',
     },
     phases: {
@@ -405,6 +420,8 @@ const workspace = {
         '排队任务缺少 Skill 或 OKF 配置，无法安全启动。请新建任务并重新上传。',
       queueBusy:
         '当前仍有正在执行或排队的挖掘任务。为保证严格串行，暂时不能恢复这个检查点。',
+      windowFilesUnavailable:
+        '浏览器刷新后无法恢复尚未上传的本地文件。请重新创建该运行；已完成窗口和远端日志不会丢失。',
     },
     queue: {
       added: '数据已独立保存并加入挖掘队列。',

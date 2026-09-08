@@ -21,15 +21,16 @@ curl http://localhost:1933/bot/v1/health
 
 ## Workflow
 
-1. Choose individual files or a complete resource folder containing `documents/` and `team-memory/`; Studio recursively classifies its subdirectories. Supported document extensions are `.pdf`, `.md`, `.markdown`, `.doc`, `.docx`, `.xls`, and `.xlsx`. The total file count is unlimited and each file may be up to 10 MiB.
+1. Choose individual files or a complete resource folder containing `documents/` and `team-memory/`; Studio recursively classifies its subdirectories. Supported document extensions are `.pdf`, `.md`, `.markdown`, `.doc`, `.docx`, `.xls`, and `.xlsx`. The total file count is unlimited and each file may be up to 512 MiB.
 2. Optionally upload team Memory files (`.md`, `.txt`, `.json`, `.yaml`, `.yml`). They use an isolated source root and are not mixed into the first document Compile.
 3. **OKF format config** uses `llm-wiki/OKF_CONFIG.yaml` by default. A custom `.yaml`/`.yml` can strictly define required frontmatter, `main_view.path_structure`, facets, path/type mappings, derived views, and WikiLink rules. Submission rejects unconfigured directories or `view/...` groups.
 4. Describe the question, audience, time range, output language, and priorities. This text becomes the Compile `reason`.
-5. Select **Start knowledge mining**. Studio first saves the complete batch under isolated directories and then adds it to a FIFO queue. You can immediately create another batch, upload a different dataset, and queue it without sharing source or output directories. The queue head builds the main knowledge base from documents first. If team Memory was uploaded, it starts a second incremental Compile against the same target after the document task succeeds.
-6. **Mining history** lists the current principal's recent, running, and queued batches with queue positions. Select any batch to inspect it through the same full directory, coverage ledger, intermediate, questionnaire, and knowledge-cloud interface. The queue runs exactly one complete mining workflow at a time: document, Memory, and human-evidence stages belong to the same workflow, and a run waiting for human evidence blocks later jobs. The next item starts only after the current workflow completes, produces a partial result, fails, or is cancelled. Running Compile tasks can be cancelled cooperatively, queued items can leave the queue, and failed or cancelled tasks can resume from a checkpoint only when the queue is idle.
-7. Browse physical knowledge files in an expandable directory tree. The default physical structure is exactly `knowledge/<facet>/<meta_id>/<filename>`: what, why, and how are top-level facets rather than final parent directories. Every unit still contains one page per facet sharing an explicit `meta_id`; root `index.md` is navigation and is not counted as knowledge. Legacy results receive a compatible virtual meta directory.
-8. Main, Domain, and Usage always contain the exact same files and file total. **Knowledge domain** is the unit's single primary subject, while **Usage** is its single primary job to be done; both move the complete triplet without copying or splitting files. **Intermediates** expose the audit trail, and **Human investigation** is the pre-completion evidence gate.
-9. **Knowledge cloud** directly reuses the official KG Explorer HTML/CSS/D3 renderer in `examples/compile/graph-show/knowledge-graph/knowledge_graph.py`. Studio only adapts meta-knowledge, what/why/how pages, WikiLinks, cross-knowledge references, and evidence chains into the official `nodes` / `links` data. Type filters, relation legend, search, neighbor focus, pan/zoom, and the entity inspector remain intact.
+5. Configure serial windows. The defaults are at most 10 files, 200 MiB of original bytes, 1,500 PDF pages, and 300 estimated required probes per window. The first exhausted budget closes the window. A file that alone exceeds a window budget but remains at or below the 512 MiB single-file ceiling receives a singleton window; the client does not physically split the PDF.
+6. Select **Start knowledge mining**. Every window has an isolated source directory and the same fixed `wiki` target. Studio strictly runs upload-current-window → Compile-current-window → complete-current-window → upload-next-window. The first window creates the knowledge base and later document or Memory windows update it incrementally.
+7. **Mining history** lists recent, running, and queued windows with queue positions. Select any window to inspect it through the full directory, coverage-ledger, intermediate, questionnaire, and knowledge-cloud interface. Every terminal window leaves a log. Running Compile tasks can be cancelled cooperatively, and failed or cancelled tasks resume from a checkpoint only when the queue is idle.
+8. Browse physical knowledge files in an expandable directory tree. The default physical structure is exactly `knowledge/<facet>/<meta_id>/<filename>`: what, why, and how are top-level facets rather than final parent directories. Every unit still contains one page per facet sharing an explicit `meta_id`; root `index.md` is navigation and is not counted as knowledge. Legacy results receive a compatible virtual meta directory.
+9. Main, Domain, and Usage always contain the exact same files and file total. **Knowledge domain** is the unit's single primary subject, while **Usage** is its single primary job to be done; both move the complete triplet without copying or splitting files. **Intermediates** expose the audit trail, and **Human investigation** is the pre-completion evidence gate.
+10. **Knowledge cloud** directly reuses the official KG Explorer HTML/CSS/D3 renderer in `examples/compile/graph-show/knowledge-graph/knowledge_graph.py`. Studio only adapts meta-knowledge, what/why/how pages, WikiLinks, cross-knowledge references, and evidence chains into the official `nodes` / `links` data. Type filters, relation legend, search, neighbor focus, pan/zoom, and the entity inspector remain intact.
 10. **Source coverage** shows uploaded, inspected, cited, merged, and skipped materials with reasons. Missing sources, unread sources, unjustified skips, or citations that disagree with the evidence ledger reject submission so VikingBot continues working.
 11. When conflicts or evidence gaps exist, Studio switches the workflow to **Waiting for human evidence** and immediately exposes the provisional pages and questionnaire without declaring the run complete. Answers become a `human-answer` source and trigger an incremental Compile against the same target. The workflow completes only after the open issues are handled.
 
@@ -61,7 +62,10 @@ ov knowledge-mining \
 - `--okf-config` accepts a local YAML file. The bundled default is used when omitted.
 - `--skill` selects an existing Skill URI. When omitted, the command prefers a visible user-scoped `llm-wiki` and installs the bundled version if none exists.
 - `--to` fixes the target knowledge-base URI. When omitted, the isolated batch's `wiki/` directory is used.
-- Without `--wait`, the command returns after upload and document-task creation. Use the returned `document_task_id` with `ov task status <task-id>`.
+- `--window-files`, `--window-bytes`, `--window-pages`, and `--window-probes` control file count (default 10), original bytes (default 200 MiB), actual PDF pages (default 1500), and estimated required probes (default 300). A complete multi-window run requires `--wait`.
+- The `knowledge-mining` CLI treats final OKF conformance as a non-blocking warning: a checkout with OKFConfig path, frontmatter, source, or WikiLink violations is still written, while `validation_passed: false` and the warning are retained in the task result and window log. Path safety, file-count and byte limits, and the first two mining-stage gates remain enforced. Regular `ov compile` stays strict.
+- `--state-file` selects the atomic local JSON checkpoint; by default it is `.openviking/knowledge-mining/<batch-id>.json`. Resume after interruption with `ov knowledge-mining --resume-state <file>` and no `--documents`; completed windows and confirmed uploads are skipped, while running, failed, or partial windows are recovered.
+- Omitting `--wait` is supported only for a single window. The response includes `task_ids`, `state_file`, and `run_log_uri`.
 - Add `-o json` for script-friendly batch URIs, source URIs, task IDs, phase, and final Compile result.
 - The CLI currently treats human evidence as informational rather than a completion gate. Even when the investigation report creates questions or reports `needs_human_input`, the top-level `phase` is `completed`; the CLI never emits `awaiting_human` or submits human answers automatically. The report and questionnaire remain available for auditing.
 
@@ -89,9 +93,14 @@ Each run creates an isolated directory:
 
 ```text
 viking://resources/knowledge-mining/<batch-id>/
-├── document-sources/   # uploaded and parsed documents
-│   └── OKF_CONFIG.yaml  # external OKF contract for this Compile run
-├── team-memory/        # optional incremental team Memory source
+├── OKF_CONFIG.yaml
+├── windows/
+│   ├── 0001/document-sources/
+│   ├── 0002/document-sources/
+│   └── 0003/team-memory/
+├── logs/
+│   ├── run.json
+│   └── windows/0001.json
 └── wiki/                # llm-wiki Compile output
     ├── index.md
     ├── knowledge/what/<meta_id>/*.md
@@ -114,7 +123,7 @@ The page uses OpenViking's existing temporary upload and `add_resource` APIs and
 POST /bot/v1/compile
 ```
 
-Queue state and FIFO order are persisted in the browser for the current Studio identity. Refreshing or reopening Knowledge Mining resumes scheduling. Compile tasks that already started continue independently on the server when the page is closed; queued tasks that have not started continue the next time the page opens and confirms that no other Compile is running. Before dispatch, Studio checks both server history and local state so restoring the page cannot accidentally overlap two workflows.
+Every terminal window writes `logs/windows/NNNN.json`, and `logs/run.json` stores aggregate run state. Uploaded or already-started Compile windows can be recovered from server history and logs. Browser security prevents a reload from reopening local `File` objects that were not uploaded yet, so Studio marks such a later window failed. Use the CLI `--state-file` / `--resume-state` path for unattended runs that must survive process restarts.
 
 The first request uses `from=document-sources` and `to=wiki`. When team Memory exists, the second request strictly uses `from=team-memory` and `to=wiki`; VikingBot reads the existing target before merging the new evidence. Incremental validation permits existing document provenance to remain while new Memory provenance must still come from the second supplied source.
 
@@ -131,6 +140,8 @@ Derived views never copy or move pages. They group complete units using the same
 ## Provenance, cross-knowledge references, and human confirmation
 
 Every knowledge page's `sources` must include at least one input (`original`, `team-memory`, or `human-answer`) and one configured `intermediate` artifact. `_mining/evidence-ledger.json` also maps every page to input URIs, intermediate URIs, and material claims, so final knowledge can be traced back through processing to uploaded documents.
+
+Parsed PDF fragments do not become unrelated "original files." Knowledge Mining stores the original binary and a `provenance.json` sidecar under the document resource's `.source/` directory. The sidecar records `original_uri`, the real filename, size, and a SHA-256 `document_id`. Compile reads the small provenance sidecar and derived Markdown evidence without downloading the large PDF into the Agent sandbox. Final `kind: original` source entries point to the original PDF, while page locations remain available through PDF page markers in derived evidence.
 
 `_mining/source-coverage.json` works at the user upload level rather than counting parser chunks as independent sources. Every source is `cited`, `merged`, or `skipped`; all fragments for small documents and adaptive deterministic head/middle/tail probes for large documents must appear in the platform-generated `readlist.json`, cited sources must resolve to evidence-ledger pages, merged sources must point to a directly cited source, and skipped sources require a source-specific reason that cannot be copied across uploads. `candidate-knowledge.json` is a mandatory pre-page checkpoint for every promote/merge/defer/reject decision; the platform does not synthesize missing rejected candidates. Incremental Compile merges prior evidence and appends an `evidence-history.json` snapshot.
 

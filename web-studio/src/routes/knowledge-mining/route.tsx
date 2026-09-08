@@ -39,6 +39,7 @@ import { toast } from 'sonner'
 import { Alert, AlertDescription, AlertTitle } from '#/components/ui/alert'
 import { Badge } from '#/components/ui/badge'
 import { Button } from '#/components/ui/button'
+import { Input } from '#/components/ui/input'
 import {
   Card,
   CardContent,
@@ -51,10 +52,7 @@ import { Textarea } from '#/components/ui/textarea'
 import { useAppConnection } from '#/hooks/use-app-connection'
 import { isOvClientError } from '#/lib/ov-client'
 import { cn } from '#/lib/utils'
-import {
-  MAX_UPLOAD_FILE_SIZE_BYTES,
-  formatFileSize,
-} from '#/routes/resources/-lib/upload'
+import { formatFileSize } from '#/routes/resources/-lib/upload'
 import { fetchFileContent, fetchFsTree } from '#/routes/resources/-lib/api'
 import type { VikingFsEntry } from '#/routes/resources/-types/viking-fm'
 
@@ -72,6 +70,7 @@ import {
   resumeCompile,
   startCompile,
   uploadKnowledgeFile,
+  writeKnowledgeMiningLog,
   writeOkfConfig,
 } from './-lib/api'
 import type {
@@ -140,6 +139,15 @@ import {
 import { KnowledgeCloudGraph } from './-components/knowledge-cloud-graph'
 import { CliResultImportCard } from './-components/cli-result-import-card'
 import { buildKnowledgeGraph } from './-lib/knowledge-graph'
+import {
+  DEFAULT_WINDOW_BYTE_LIMIT,
+  DEFAULT_WINDOW_FILE_LIMIT,
+  DEFAULT_WINDOW_PAGE_LIMIT,
+  DEFAULT_WINDOW_PROBE_LIMIT,
+  MAX_KNOWLEDGE_MINING_FILE_BYTES,
+  inspectMiningFiles,
+  planMiningWindows,
+} from './-lib/windowing'
 
 export const Route = createFileRoute('/knowledge-mining')({
   component: KnowledgeMiningRoute,
@@ -150,9 +158,8 @@ function getErrorMessage(error: unknown): string {
   return String(error)
 }
 
-function createJobUris(): {
-  documentSourceUri: string
-  memorySourceUri: string
+function createRunUris(): {
+  rootUri: string
   targetUri: string
 } {
   const timestamp = new Date()
@@ -162,8 +169,7 @@ function createJobUris(): {
   const suffix = Math.random().toString(36).slice(2, 8)
   const root = `viking://resources/knowledge-mining/${timestamp}-${suffix}`
   return {
-    documentSourceUri: `${root}/document-sources`,
-    memorySourceUri: `${root}/team-memory`,
+    rootUri: root,
     targetUri: `${root}/wiki`,
   }
 }
@@ -176,38 +182,83 @@ function progressFor(files: File[]): FileProgress[] {
   }))
 }
 
-function newJob(
+async function newJobs(
   documentFiles: File[],
   memoryFiles: File[],
   reason: string,
-): MiningJob {
-  const { documentSourceUri, memorySourceUri, targetUri } = createJobUris()
+  windowFileLimit: number,
+  windowByteLimit: number,
+  windowPageLimit: number,
+  windowProbeLimit: number,
+): Promise<Array<{ files: File[]; job: MiningJob }>> {
+  const { rootUri, targetUri } = createRunUris()
+  const runId = rootUri.split('/').at(-1) || rootUri
   const now = new Date().toISOString()
-  return {
-    createdAt: now,
-    documentFiles: progressFor(documentFiles),
-    documentSourceUri,
-    documentTaskId: null,
-    error: null,
-    memoryFiles: progressFor(memoryFiles),
-    memorySourceUri,
-    memoryTaskId: null,
-    humanTaskId: null,
-    id:
-      targetUri
-        .replace(/\/wiki$/, '')
-        .split('/')
-        .at(-1) || targetUri,
-    phase: 'preparing',
-    reason,
-    result: null,
-    okfConfigUri: null,
-    origin: 'studio',
-    skillUri: null,
-    targetUri,
-    taskId: null,
-    updatedAt: now,
-  }
+  const [inspectedDocuments, inspectedMemory] = await Promise.all([
+    inspectMiningFiles(documentFiles),
+    inspectMiningFiles(memoryFiles),
+  ])
+  const planned = [
+    ...planMiningWindows(inspectedDocuments, {
+      byteLimit: windowByteLimit,
+      fileLimit: windowFileLimit,
+      pageLimit: windowPageLimit,
+      probeLimit: windowProbeLimit,
+    }).map((window) => ({ ...window, kind: 'documents' as const })),
+    ...planMiningWindows(inspectedMemory, {
+      byteLimit: windowByteLimit,
+      fileLimit: windowFileLimit,
+      pageLimit: windowPageLimit,
+      probeLimit: windowProbeLimit,
+    }).map((window) => ({ ...window, kind: 'memory' as const })),
+  ]
+  return planned.map((window, offset) => {
+    const windowIndex = offset + 1
+    const suffix = window.kind === 'memory' ? 'team-memory' : 'document-sources'
+    const sourceUri = `${rootUri}/windows/${String(windowIndex).padStart(4, '0')}/${suffix}`
+    const windowLogUri = `${rootUri}/logs/windows/${String(windowIndex).padStart(4, '0')}.json`
+    const job: MiningJob = {
+      createdAt: now,
+      documentFiles:
+        window.kind === 'documents'
+          ? progressFor(window.files.map((item) => item.file))
+          : [],
+      documentSourceUri: sourceUri,
+      documentTaskId: null,
+      error: null,
+      memoryFiles:
+        window.kind === 'memory'
+          ? progressFor(window.files.map((item) => item.file))
+          : [],
+      memorySourceUri: sourceUri,
+      memoryTaskId: null,
+      humanTaskId: null,
+      id: `${runId}-w${String(windowIndex).padStart(4, '0')}`,
+      phase: 'preparing',
+      reason,
+      result: null,
+      okfConfigUri: null,
+      origin: 'studio',
+      skillUri: null,
+      targetUri,
+      taskId: null,
+      updatedAt: now,
+      runId,
+      windowByteLimit,
+      windowCount: planned.length,
+      windowFileLimit,
+      windowPageLimit,
+      windowProbeLimit,
+      windowIndex,
+      windowKind: window.kind,
+      windowLogUri,
+      windowSizeBytes: window.sizeBytes,
+      windowPdfPages: window.pdfPages,
+      windowEstimatedProbes: window.estimatedProbes,
+      oversizedSingleton: window.oversizedSingleton,
+    }
+    return { files: window.files.map((item) => item.file), job }
+  })
 }
 
 function readMiningHistory(
@@ -509,9 +560,40 @@ function KnowledgeMiningRoute() {
   const [memoryFiles, setMemoryFiles] = React.useState<File[]>([])
   const [okfConfigFile, setOkfConfigFile] = React.useState<File | null>(null)
   const [reason, setReason] = React.useState(() => t('reason.default'))
+  const [windowFileLimit, setWindowFileLimit] = React.useState(
+    DEFAULT_WINDOW_FILE_LIMIT,
+  )
+  const [windowByteLimitMiB, setWindowByteLimitMiB] = React.useState(
+    DEFAULT_WINDOW_BYTE_LIMIT / 1024 / 1024,
+  )
+  const [windowPageLimit, setWindowPageLimit] = React.useState(
+    DEFAULT_WINDOW_PAGE_LIMIT,
+  )
+  const [windowProbeLimit, setWindowProbeLimit] = React.useState(
+    DEFAULT_WINDOW_PROBE_LIMIT,
+  )
   const [history, setHistory] = React.useState<MiningHistory>(() =>
     readMiningHistory(historyStorageKey, legacyJobStorageKey),
   )
+  const plannedWindowCount = React.useMemo(() => {
+    const options = {
+      byteLimit: Math.max(1, windowByteLimitMiB) * 1024 * 1024,
+      fileLimit: Math.max(1, Math.floor(windowFileLimit)),
+      pageLimit: Math.max(1, Math.floor(windowPageLimit)),
+      probeLimit: Math.max(1, Math.floor(windowProbeLimit)),
+    }
+    return (
+      planMiningWindows(documentFiles, options).length +
+      planMiningWindows(memoryFiles, options).length
+    )
+  }, [
+    documentFiles,
+    memoryFiles,
+    windowByteLimitMiB,
+    windowFileLimit,
+    windowPageLimit,
+    windowProbeLimit,
+  ])
   const job = React.useMemo(
     () =>
       history.jobs.find(
@@ -529,6 +611,9 @@ function KnowledgeMiningRoute() {
   const historyHydratedRef = React.useRef(false)
   const advancingJobsRef = React.useRef(new Set<string>())
   const queueStartingJobsRef = React.useRef(new Set<string>())
+  const uploadingWindowJobsRef = React.useRef(new Set<string>())
+  const pendingWindowFilesRef = React.useRef(new Map<string, File[]>())
+  const loggedWindowStatesRef = React.useRef(new Set<string>())
 
   const updateJob = React.useCallback(
     (
@@ -569,6 +654,19 @@ function KnowledgeMiningRoute() {
     }))
   }, [])
 
+  const addJobs = React.useCallback((nextJobs: MiningJob[]) => {
+    setHistory((current) => ({
+      ...current,
+      jobs: [
+        ...nextJobs,
+        ...current.jobs.filter(
+          (item) => !nextJobs.some((nextJob) => nextJob.id === item.id),
+        ),
+      ],
+      selectedJobId: nextJobs[0]?.id || current.selectedJobId,
+    }))
+  }, [])
+
   const setResourceFolderInputRef = React.useCallback(
     (input: HTMLInputElement | null) => {
       resourceFolderInputRef.current = input
@@ -595,6 +693,63 @@ function KnowledgeMiningRoute() {
       // Storage may be unavailable in privacy-restricted browser contexts.
     }
   }, [history, historyStorageKey, legacyJobStorageKey])
+
+  React.useEffect(() => {
+    for (const terminalJob of history.jobs.filter((candidate) =>
+      ['completed', 'partial', 'failed', 'cancelled'].includes(candidate.phase),
+    )) {
+      if (
+        !terminalJob.windowLogUri ||
+        !terminalJob.runId ||
+        !terminalJob.windowFileLimit
+      )
+        continue
+      const signature = `${terminalJob.id}:${terminalJob.phase}:${terminalJob.taskId || ''}`
+      if (loggedWindowStatesRef.current.has(signature)) continue
+      loggedWindowStatesRef.current.add(signature)
+      const runJobs = history.jobs
+        .filter((candidate) => candidate.runId === terminalJob.runId)
+        .sort(
+          (left, right) => (left.windowIndex || 1) - (right.windowIndex || 1),
+        )
+      const rootUri = terminalJob.targetUri.replace(/\/wiki\/?$/, '')
+      const publicJob = (candidate: MiningJob) => ({
+        error: candidate.error,
+        files: [...candidate.documentFiles, ...candidate.memoryFiles],
+        oversized_singleton: candidate.oversizedSingleton || false,
+        pdf_pages: candidate.windowPdfPages || 0,
+        estimated_probes: candidate.windowEstimatedProbes || 0,
+        phase: candidate.phase,
+        run_id: candidate.runId,
+        size_bytes: candidate.windowSizeBytes || 0,
+        source_uri: candidate.documentSourceUri,
+        target_uri: candidate.targetUri,
+        task_id: candidate.taskId,
+        updated_at: candidate.updatedAt,
+        window_count: candidate.windowCount || 1,
+        window_file_limit: candidate.windowFileLimit || 0,
+        window_byte_limit: candidate.windowByteLimit || 0,
+        window_page_limit: candidate.windowPageLimit || 0,
+        window_probe_limit: candidate.windowProbeLimit || 0,
+        window_index: candidate.windowIndex || 1,
+        window_kind: candidate.windowKind || 'documents',
+      })
+      void Promise.all([
+        writeKnowledgeMiningLog(terminalJob.windowLogUri, {
+          version: '1.0',
+          window: publicJob(terminalJob),
+        }),
+        writeKnowledgeMiningLog(`${rootUri}/logs/run.json`, {
+          run_id: terminalJob.runId,
+          target_uri: terminalJob.targetUri,
+          version: '1.0',
+          windows: runJobs.map(publicJob),
+        }),
+      ]).catch(() => {
+        loggedWindowStatesRef.current.delete(signature)
+      })
+    }
+  }, [history.jobs])
 
   const serverHistoryQuery = useQuery({
     queryFn: listCompileTasks,
@@ -693,11 +848,11 @@ function KnowledgeMiningRoute() {
           toast.error(t('errors.unsupportedFile', { name: file.name }))
           continue
         }
-        if (file.size > MAX_UPLOAD_FILE_SIZE_BYTES) {
+        if (file.size > MAX_KNOWLEDGE_MINING_FILE_BYTES) {
           toast.error(
             t('errors.fileTooLarge', {
               name: file.name,
-              size: formatFileSize(MAX_UPLOAD_FILE_SIZE_BYTES),
+              size: formatFileSize(MAX_KNOWLEDGE_MINING_FILE_BYTES),
             }),
           )
           continue
@@ -747,11 +902,11 @@ function KnowledgeMiningRoute() {
           toast.error(t('errors.unsupportedMemoryFile', { name: file.name }))
           continue
         }
-        if (file.size > MAX_UPLOAD_FILE_SIZE_BYTES) {
+        if (file.size > MAX_KNOWLEDGE_MINING_FILE_BYTES) {
           toast.error(
             t('errors.fileTooLarge', {
               name: file.name,
-              size: formatFileSize(MAX_UPLOAD_FILE_SIZE_BYTES),
+              size: formatFileSize(MAX_KNOWLEDGE_MINING_FILE_BYTES),
             }),
           )
           continue
@@ -925,7 +1080,8 @@ function KnowledgeMiningRoute() {
         return
       }
       const transition = transitionAfterCompletedCompile({
-        hasMemoryFiles: trackedJob.memoryFiles.length > 0,
+        hasMemoryFiles:
+          !trackedJob.windowFileLimit && trackedJob.memoryFiles.length > 0,
         memoryTaskStarted: Boolean(trackedJob.memoryTaskId),
         phase: trackedJob.phase,
         result: task.result,
@@ -982,6 +1138,15 @@ function KnowledgeMiningRoute() {
         return
       }
       if (transition === 'await_human_evidence') {
+        if ((trackedJob.windowIndex || 1) < (trackedJob.windowCount || 1)) {
+          updateJob(trackedJob.id, (current) => ({
+            ...current,
+            error: null,
+            phase: 'completed',
+            result: task.result || current.result,
+          }))
+          return
+        }
         updateJob(trackedJob.id, (current) =>
           current.phase === 'awaiting_human' && current.result === task.result
             ? current
@@ -1012,6 +1177,124 @@ function KnowledgeMiningRoute() {
   }, [compileQueries, history.selectedJobId, t, trackedJobs, updateJob])
 
   React.useEffect(() => {
+    const strandedUpload = history.jobs.find(
+      (candidate) =>
+        candidate.phase === 'uploading' &&
+        Boolean(candidate.windowFileLimit) &&
+        !pendingWindowFilesRef.current.has(candidate.id),
+    )
+    if (strandedUpload) {
+      updateJob(strandedUpload.id, (current) => ({
+        ...current,
+        error: t('errors.windowFilesUnavailable'),
+        phase: 'failed',
+      }))
+      return
+    }
+    const active = schedulingJobs.some((candidate) =>
+      [
+        'uploading',
+        'queued',
+        'compiling_documents',
+        'compiling_memory',
+        'compiling_human',
+        'awaiting_human',
+      ].includes(candidate.phase),
+    )
+    if (active) return
+    const nextWindow = history.jobs
+      .filter((candidate) => candidate.phase === 'preparing')
+      .sort(
+        (left, right) =>
+          left.createdAt.localeCompare(right.createdAt) ||
+          (left.runId || left.id).localeCompare(right.runId || right.id) ||
+          (left.windowIndex || 1) - (right.windowIndex || 1),
+      )
+      .find((candidate) => {
+        const priorWindows = history.jobs.filter(
+          (item) =>
+            item.runId === candidate.runId &&
+            (item.windowIndex || 1) < (candidate.windowIndex || 1),
+        )
+        return priorWindows.every((item) => item.phase === 'completed')
+      })
+    if (!nextWindow || uploadingWindowJobsRef.current.has(nextWindow.id)) return
+    const files = pendingWindowFilesRef.current.get(nextWindow.id)
+    if (!files) {
+      updateJob(nextWindow.id, (current) => ({
+        ...current,
+        error: t('errors.windowFilesUnavailable'),
+        phase: 'failed',
+      }))
+      return
+    }
+    const field =
+      nextWindow.windowKind === 'memory' ? 'memoryFiles' : 'documentFiles'
+    uploadingWindowJobsRef.current.add(nextWindow.id)
+    updateJob(nextWindow.id, (current) => ({
+      ...current,
+      error: null,
+      phase: 'uploading',
+    }))
+    void (async () => {
+      for (const [index, file] of files.entries()) {
+        const progress =
+          field === 'memoryFiles'
+            ? nextWindow.memoryFiles[index]
+            : nextWindow.documentFiles[index]
+        if (progress.status === 'completed') continue
+        updateJob(nextWindow.id, (current) => ({
+          ...current,
+          [field]: current[field].map((fileProgress, progressIndex) =>
+            progressIndex === index
+              ? { ...fileProgress, percent: 0, status: 'uploading' }
+              : fileProgress,
+          ),
+        }))
+        await uploadKnowledgeFile(
+          file,
+          nextWindow.documentSourceUri,
+          (percent) => {
+            updateJob(nextWindow.id, (current) => ({
+              ...current,
+              [field]: current[field].map((fileProgress, progressIndex) =>
+                progressIndex === index
+                  ? { ...fileProgress, percent, status: 'uploading' }
+                  : fileProgress,
+              ),
+            }))
+          },
+          `${nextWindow.documentSourceUri}/${String(index + 1).padStart(6, '0')}`,
+        )
+        updateJob(nextWindow.id, (current) => ({
+          ...current,
+          [field]: current[field].map((fileProgress, progressIndex) =>
+            progressIndex === index
+              ? { ...fileProgress, percent: 100, status: 'completed' }
+              : fileProgress,
+          ),
+        }))
+      }
+    })()
+      .then(() => {
+        pendingWindowFilesRef.current.delete(nextWindow.id)
+        updateJob(nextWindow.id, (current) => ({
+          ...current,
+          phase: 'queued',
+        }))
+      })
+      .catch((error: unknown) => {
+        updateJob(nextWindow.id, (current) => ({
+          ...current,
+          error: getErrorMessage(error),
+          phase: 'failed',
+        }))
+        toast.error(getErrorMessage(error))
+      })
+      .finally(() => uploadingWindowJobsRef.current.delete(nextWindow.id))
+  }, [history.jobs, schedulingJobs, t, updateJob])
+
+  React.useEffect(() => {
     if (!serverHistoryQuery.isSuccess) return
     const queuedJob = nextQueuedMiningJob(schedulingJobs)
     if (!queuedJob || queueStartingJobsRef.current.has(queuedJob.id)) return
@@ -1028,16 +1311,34 @@ function KnowledgeMiningRoute() {
     void startCompile({
       from: [queuedJob.documentSourceUri],
       okfConfig: queuedJob.okfConfigUri,
-      reason: queuedJob.reason,
+      reason:
+        queuedJob.windowKind === 'memory'
+          ? `${queuedJob.reason}\n\n${t('memory.incrementalReason')}`
+          : (queuedJob.windowIndex || 1) > 1
+            ? `${queuedJob.reason}\n\n${t('window.incrementalReason', {
+                count: queuedJob.windowCount || 1,
+                index: queuedJob.windowIndex || 1,
+              })}`
+            : queuedJob.reason,
       skill: queuedJob.skillUri,
       to: queuedJob.targetUri,
     })
       .then((accepted) => {
         updateJob(queuedJob.id, (current) => ({
           ...current,
-          documentTaskId: accepted.task_id,
+          documentTaskId:
+            current.windowKind === 'memory'
+              ? current.documentTaskId
+              : accepted.task_id,
           error: null,
-          phase: 'compiling_documents',
+          memoryTaskId:
+            current.windowKind === 'memory'
+              ? accepted.task_id
+              : current.memoryTaskId,
+          phase:
+            current.windowKind === 'memory'
+              ? 'compiling_memory'
+              : 'compiling_documents',
           taskId: accepted.task_id,
         }))
         toast.success(t('queue.started', { name: queuedJob.reason }))
@@ -1354,88 +1655,42 @@ function KnowledgeMiningRoute() {
   const startMutation = useMutation({
     mutationFn: async () => {
       const effectiveReason = reason.trim() || t('reason.default')
-      const nextJob = newJob(documentFiles, memoryFiles, effectiveReason)
+      const windowByteLimit = Math.max(1, windowByteLimitMiB) * 1024 * 1024
+      const plannedJobs = await newJobs(
+        documentFiles,
+        memoryFiles,
+        effectiveReason,
+        Math.max(1, Math.floor(windowFileLimit)),
+        windowByteLimit,
+        Math.max(1, Math.floor(windowPageLimit)),
+        Math.max(1, Math.floor(windowProbeLimit)),
+      )
+      if (plannedJobs.length === 0) throw new Error(t('errors.missingJob'))
       setSelectedUri(null)
       setSelectedViewId('main')
       setQuestionnaireAnswers({})
-      addJob(nextJob)
       try {
-        try {
-          await checkVikingBot()
-        } catch (error) {
-          throw new Error(t('errors.botUnavailable'), { cause: error })
-        }
-        const skillUri = await ensureLlmWikiSkill()
-        updateJob(nextJob.id, (current) => ({
-          ...current,
-          phase: 'uploading',
-          skillUri,
-        }))
-
-        const uploadBatch = async (
-          batch: File[],
-          parentUri: string,
-          field: 'documentFiles' | 'memoryFiles',
-        ) => {
-          for (const [index, file] of batch.entries()) {
-            updateJob(nextJob.id, (current) => ({
-              ...current,
-              [field]: current[field].map((progress, progressIndex) =>
-                progressIndex === index
-                  ? { ...progress, percent: 0, status: 'uploading' }
-                  : progress,
-              ),
-            }))
-            await uploadKnowledgeFile(file, parentUri, (percent) => {
-              updateJob(nextJob.id, (current) => ({
-                ...current,
-                [field]: current[field].map((progress, progressIndex) =>
-                  progressIndex === index
-                    ? { ...progress, percent, status: 'uploading' }
-                    : progress,
-                ),
-              }))
-            })
-            updateJob(nextJob.id, (current) => ({
-              ...current,
-              [field]: current[field].map((progress, progressIndex) =>
-                progressIndex === index
-                  ? { ...progress, percent: 100, status: 'completed' }
-                  : progress,
-              ),
-            }))
-          }
-        }
-
-        await uploadBatch(
-          documentFiles,
-          nextJob.documentSourceUri,
-          'documentFiles',
-        )
-        if (memoryFiles.length > 0) {
-          await uploadBatch(memoryFiles, nextJob.memorySourceUri, 'memoryFiles')
-        }
-
-        const okfConfigUri = await writeOkfConfig(
-          nextJob.documentSourceUri,
-          okfConfigFile ? await okfConfigFile.text() : DEFAULT_OKF_CONFIG,
-        )
-        updateJob(nextJob.id, (current) => ({
-          ...current,
-          okfConfigUri,
-          phase: 'queued',
-          skillUri,
-        }))
-        return nextJob.id
+        await checkVikingBot()
       } catch (error) {
-        const message = getErrorMessage(error)
-        updateJob(nextJob.id, (current) => ({
-          ...current,
-          error: message,
-          phase: 'failed',
-        }))
-        throw error
+        throw new Error(t('errors.botUnavailable'), { cause: error })
       }
+      const skillUri = await ensureLlmWikiSkill()
+      const rootUri = plannedJobs[0].job.targetUri.replace(/\/wiki\/?$/, '')
+      const okfConfigUri = await writeOkfConfig(
+        rootUri,
+        okfConfigFile ? await okfConfigFile.text() : DEFAULT_OKF_CONFIG,
+      )
+      for (const planned of plannedJobs) {
+        pendingWindowFilesRef.current.set(planned.job.id, planned.files)
+      }
+      addJobs(
+        plannedJobs.map(({ job: plannedJob }) => ({
+          ...plannedJob,
+          okfConfigUri,
+          skillUri,
+        })),
+      )
+      return plannedJobs[0].job.id
     },
     onError: (error) => toast.error(getErrorMessage(error)),
     onSuccess: () => toast.success(t('queue.added')),
@@ -1448,17 +1703,32 @@ function KnowledgeMiningRoute() {
 
   const resumeMutation = useMutation({
     mutationFn: async () => {
-      if (!job?.taskId) throw new Error(t('errors.missingJob'))
+      if (!job) throw new Error(t('errors.missingJob'))
       if (hasOtherPendingMiningJob(schedulingJobs, job.id)) {
         throw new Error(t('errors.queueBusy'))
       }
       const jobId = job.id
+      if (!job.taskId) {
+        if (!pendingWindowFilesRef.current.has(job.id)) {
+          throw new Error(t('errors.windowFilesUnavailable'))
+        }
+        return { accepted: null, jobId, uploadRetry: true as const }
+      }
       await ensureLlmWikiSkill()
       const accepted = await resumeCompile(job.taskId)
-      return { accepted, jobId }
+      return { accepted, jobId, uploadRetry: false as const }
     },
     onError: (error) => toast.error(getErrorMessage(error)),
-    onSuccess: ({ accepted, jobId }) => {
+    onSuccess: ({ accepted, jobId, uploadRetry }) => {
+      if (uploadRetry) {
+        updateJob(jobId, (current) => ({
+          ...current,
+          error: null,
+          phase: 'preparing',
+        }))
+        toast.success(t('actions.resumeAccepted'))
+        return
+      }
       updateJob(jobId, (current) => {
         const resumesHuman = current.taskId === current.humanTaskId
         const resumesMemory = current.taskId === current.memoryTaskId
@@ -1646,6 +1916,14 @@ function KnowledgeMiningRoute() {
                               {t(`cliImport.origins.${historyJob.origin}`)}
                             </Badge>
                           ) : null}
+                          {(historyJob.windowCount || 1) > 1 ? (
+                            <Badge variant="outline">
+                              {t('window.badge', {
+                                count: historyJob.windowCount || 1,
+                                index: historyJob.windowIndex || 1,
+                              })}
+                            </Badge>
+                          ) : null}
                           {selected ? (
                             <span className="text-[10px] font-medium text-primary">
                               {t('history.current')}
@@ -1761,7 +2039,7 @@ function KnowledgeMiningRoute() {
                   <p className="font-medium">{t('upload.dropzone')}</p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {t('upload.formats', {
-                      size: formatFileSize(MAX_UPLOAD_FILE_SIZE_BYTES),
+                      size: formatFileSize(MAX_KNOWLEDGE_MINING_FILE_BYTES),
                     })}
                   </p>
                 </div>
@@ -1972,6 +2250,96 @@ function KnowledgeMiningRoute() {
                 </div>
 
                 <div className="space-y-2">
+                  <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <label
+                        className="text-xs font-medium"
+                        htmlFor="mining-window-files"
+                      >
+                        {t('window.fileLimit')}
+                      </label>
+                      <Input
+                        id="mining-window-files"
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={windowFileLimit}
+                        disabled={isActive}
+                        onChange={(event) =>
+                          setWindowFileLimit(
+                            Math.max(1, Number(event.target.value) || 1),
+                          )
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label
+                        className="text-xs font-medium"
+                        htmlFor="mining-window-bytes"
+                      >
+                        {t('window.byteLimit')}
+                      </label>
+                      <Input
+                        id="mining-window-bytes"
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={windowByteLimitMiB}
+                        disabled={isActive}
+                        onChange={(event) =>
+                          setWindowByteLimitMiB(
+                            Math.max(1, Number(event.target.value) || 1),
+                          )
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label
+                        className="text-xs font-medium"
+                        htmlFor="mining-window-pages"
+                      >
+                        {t('window.pageLimit')}
+                      </label>
+                      <Input
+                        id="mining-window-pages"
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={windowPageLimit}
+                        disabled={isActive}
+                        onChange={(event) =>
+                          setWindowPageLimit(
+                            Math.max(1, Number(event.target.value) || 1),
+                          )
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label
+                        className="text-xs font-medium"
+                        htmlFor="mining-window-probes"
+                      >
+                        {t('window.probeLimit')}
+                      </label>
+                      <Input
+                        id="mining-window-probes"
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={windowProbeLimit}
+                        disabled={isActive}
+                        onChange={(event) =>
+                          setWindowProbeLimit(
+                            Math.max(1, Number(event.target.value) || 1),
+                          )
+                        }
+                      />
+                    </div>
+                    <p className="text-xs leading-5 text-muted-foreground sm:col-span-2">
+                      {t('window.preview', { count: plannedWindowCount })}
+                    </p>
+                  </div>
+
                   <label
                     className="text-sm font-medium"
                     htmlFor="mining-reason"
@@ -2065,6 +2433,20 @@ function KnowledgeMiningRoute() {
                   </div>
 
                   <dl className="grid gap-2 text-xs text-muted-foreground">
+                    {job.windowFileLimit ? (
+                      <div className="grid grid-cols-[5rem_1fr] gap-2">
+                        <dt>{t('status.window')}</dt>
+                        <dd className="font-medium text-foreground">
+                          {t('window.badge', {
+                            count: job.windowCount || 1,
+                            index: job.windowIndex || 1,
+                          })}
+                          {job.oversizedSingleton
+                            ? t('window.singletonSuffix')
+                            : ''}
+                        </dd>
+                      </div>
+                    ) : null}
                     {queuePosition ? (
                       <div className="grid grid-cols-[5rem_1fr] gap-2">
                         <dt>{t('status.queuePosition')}</dt>
@@ -2112,6 +2494,14 @@ function KnowledgeMiningRoute() {
                         {job.targetUri}
                       </dd>
                     </div>
+                    {job.windowLogUri ? (
+                      <div className="grid grid-cols-[5rem_1fr] gap-2">
+                        <dt>{t('status.windowLog')}</dt>
+                        <dd className="break-all font-mono text-foreground">
+                          {job.windowLogUri}
+                        </dd>
+                      </div>
+                    ) : null}
                   </dl>
 
                   {job.error ? (
@@ -2154,7 +2544,7 @@ function KnowledgeMiningRoute() {
                       {t('actions.cancelQueued')}
                     </Button>
                   ) : null}
-                  {job.taskId &&
+                  {(job.taskId || pendingWindowFilesRef.current.has(job.id)) &&
                   ['failed', 'cancelled', 'partial'].includes(job.phase) ? (
                     <Button
                       className="w-full"

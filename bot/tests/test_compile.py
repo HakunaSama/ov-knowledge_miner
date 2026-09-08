@@ -38,7 +38,7 @@ from vikingbot.compile.models import (
     WikiBundleDraft,
     utc_now,
 )
-from vikingbot.compile.okf_config import parse_okf_config
+from vikingbot.compile.okf_config import OKFConfig, parse_okf_config
 from vikingbot.compile.readlist import (
     READLIST_PATH,
     ReadlistTracker,
@@ -205,6 +205,17 @@ def test_compile_request_schema_defers_runtime_max_but_requires_positive_finite_
     )
     assert request.runtime_timeout_seconds == 24 * 60 * 60
     assert request.okf_config == "viking://resources/source/OKF_CONFIG.yaml"
+    assert request.allow_invalid_okf_output is False
+
+    relaxed = CompileRequest.model_validate(
+        {
+            "from": ["viking://resources/source"],
+            "to": "viking://resources/wiki",
+            "skill": "viking://agent/skills/wiki",
+            "allow_invalid_okf_output": True,
+        }
+    )
+    assert relaxed.allow_invalid_okf_output is True
 
     for invalid in (0, float("inf"), float("nan")):
         with pytest.raises(ValueError):
@@ -377,14 +388,11 @@ async def test_mining_checkpoints_enforce_coverage_then_candidates_then_pages():
                     "title": "Candidate",
                     "summary": "Source-grounded candidate prepared before page generation.",
                     "kind": "concept",
-                    "source_resources": [source],
-                    "disposition": "promoted",
-                    "meta_id": "candidate",
-                    "page_paths": [
-                        "knowledge/topic/candidate/what/candidate.md",
-                        "knowledge/topic/candidate/why/candidate-rationale.md",
-                        "knowledge/topic/candidate/how/candidate-procedure.md",
-                    ],
+                        "source_resources": [source],
+                        "disposition": "promoted",
+                        "page_path": (
+                            "knowledge/topic/products-services/portfolio/candidate.md"
+                        ),
                     "stage": "documents",
                 }
             ],
@@ -1606,7 +1614,7 @@ async def test_export_materializes_sources_into_workspace(monkeypatch):
         async def stat(self, uri):
             return {"size": 3, "isDir": False}
 
-        async def list_resources(self, path, recursive, node_limit):
+        async def list_resources(self, path, recursive, node_limit, show_all_hidden=False):
             return [{"uri": "viking://resources/s/rollout.jsonl"}]
 
         async def download_bytes(self, uri):
@@ -1631,7 +1639,7 @@ async def test_export_directory_strips_namespace_and_skips_binary(monkeypatch):
         async def stat(self, uri):
             return {"size": 0, "isDir": uri.endswith("/dream-sessions")}
 
-        async def list_resources(self, path, recursive, node_limit):
+        async def list_resources(self, path, recursive, node_limit, show_all_hidden=False):
             return [
                 {
                     "uri": "viking://resources/dream-sessions/08/05/a.jsonl",
@@ -1671,7 +1679,7 @@ async def test_export_reports_when_single_file_exceeds_byte_budget(monkeypatch):
         async def stat(self, uri):
             return {"size": 100, "isDir": False}
 
-        async def list_resources(self, path, recursive, node_limit):
+        async def list_resources(self, path, recursive, node_limit, show_all_hidden=False):
             return []
 
         async def download_bytes(self, uri):
@@ -1691,7 +1699,7 @@ async def test_export_reports_mid_run_byte_budget_hit(monkeypatch):
         async def stat(self, uri):
             return {"size": 10, "isDir": uri.endswith("/bigdir")}
 
-        async def list_resources(self, path, recursive, node_limit):
+        async def list_resources(self, path, recursive, node_limit, show_all_hidden=False):
             return [
                 {"uri": f"viking://resources/bigdir/f{i}.jsonl", "size": 10, "isDir": False}
                 for i in range(5)
@@ -1714,7 +1722,7 @@ async def test_export_reports_listing_cap(monkeypatch):
         async def stat(self, uri):
             return {"size": 0, "isDir": uri.endswith("/bigdir")}
 
-        async def list_resources(self, path, recursive, node_limit):
+        async def list_resources(self, path, recursive, node_limit, show_all_hidden=False):
             return [
                 {"uri": f"viking://resources/bigdir/f{i}.jsonl", "size": 1, "isDir": False}
                 for i in range(10)
@@ -2089,6 +2097,111 @@ def test_source_units_require_distributed_pdf_depth_including_exact_middle():
     assert unit["leaves"][0]["sha256"] == content_hash
 
 
+def test_source_units_expose_preserved_original_pdf_identity():
+    original_uri = "viking://resources/source/paper/.source/paper.pdf"
+    rows = [
+        (
+            "src_1",
+            "viking://resources/source/paper/page-1.md",
+            "compile_resources/src_1/source/paper/page-1.md",
+            100,
+            "materialized",
+        ),
+        (
+            "src_1",
+            original_uri,
+            "compile_resources/src_1/source/paper/.source/paper.pdf",
+            200,
+            "skipped:binary",
+        ),
+    ]
+    digest = "b" * 64
+    units = BotCompileService._build_source_units(
+        sources=[
+            {
+                "source_id": "src_1",
+                "directory_uri": "viking://resources/source",
+                "entries": [],
+            }
+        ],
+        rows=rows,
+        provenance_records={
+            ("src_1", original_uri): {
+                "document_id": f"sha256:{digest}",
+                "original_filename": "paper.pdf",
+                "original_uri": original_uri,
+            }
+        },
+    )
+
+    assert len(units) == 1
+    assert units[0]["original_uri"] == original_uri
+    assert units[0]["original_filename"] == "paper.pdf"
+    assert units[0]["document_id"] == f"sha256:{digest}"
+
+
+@pytest.mark.asyncio
+async def test_materialize_sources_does_not_download_preserved_original_pdf():
+    original_uri = "viking://resources/source/paper/.source/paper.pdf"
+    provenance_uri = "viking://resources/source/paper/.source/provenance.json"
+    digest = "c" * 64
+
+    class Client:
+        def __init__(self):
+            self.downloads = []
+
+        async def download_bytes(self, uri):
+            self.downloads.append(uri)
+            if uri == provenance_uri:
+                return json.dumps(
+                    {
+                        "document_id": f"sha256:{digest}",
+                        "original_filename": "paper.pdf",
+                        "original_uri": original_uri,
+                    }
+                ).encode()
+            return b"# Page 1"
+
+    class Sandbox:
+        def __init__(self):
+            self.writes = {}
+
+        async def write_file(self, path, content):
+            self.writes[path] = content
+
+    service = object.__new__(BotCompileService)
+    service.limits = CompileLimits()
+    sources = [
+        {
+            "source_id": "src_1",
+            "directory_uri": "viking://resources/source",
+            "entries": [
+                {
+                    "uri": "viking://resources/source/paper/page-1.md",
+                    "is_dir": False,
+                    "size": 8,
+                },
+                {"uri": original_uri, "is_dir": False, "size": 200_000_000},
+                {"uri": provenance_uri, "is_dir": False, "size": 200},
+            ],
+        }
+    ]
+    client = Client()
+
+    _, _, _, units = await service._materialize_sources(
+        client=client,
+        sources=sources,
+        sandbox=Sandbox(),
+    )
+
+    assert original_uri not in client.downloads
+    assert provenance_uri in client.downloads
+    assert units[0]["original_uri"] == original_uri
+    assert units[0]["document_id"] == f"sha256:{digest}"
+    original_leaf = next(leaf for leaf in units[0]["leaves"] if leaf["uri"] == original_uri)
+    assert original_leaf["status"] == "skipped:original-binary"
+
+
 @pytest.mark.asyncio
 async def test_materialize_sources_enforces_limits_before_download():
     class Client:
@@ -2339,9 +2452,9 @@ def test_compile_prompt_states_exact_configured_main_view_structure():
     )
 
     assert "`knowledge/`" in system
-    assert "`facet/route/meta_id/filename`" in system
-    assert "what, why, how" in system
-    assert "Do not add, omit, reorder, or invent any directory level" in system
+    assert "`page_role/business_domain/subdomain/subject_path/filename`" in system
+    assert "topic, reference, procedure, synthesis" in system
+    assert "Do not add, omit, reorder, or invent a fixed taxonomy level" in system
     assert "any undeclared `view/...` tag is invalid" in system
     assert "immediate-parent leaf category" not in system
 
@@ -2805,6 +2918,60 @@ async def test_submit_tool_checkout_rejects_incomplete_wiki_frontmatter():
     incomplete = await tool.execute(context)
     assert "must have non-empty YAML frontmatter fields: title, description" in incomplete
     assert tool.bundle is None
+
+
+@pytest.mark.asyncio
+async def test_submit_tool_checkout_writes_when_okf_validation_is_non_blocking():
+    workspace_path = "__compile_staging__/target_checkout/knowledge/incomplete.md"
+
+    class Sandbox:
+        payload = (
+            b"---\ntype: concept\ntitle: Best available\n"
+            b"description: Best available output.\n---\n\n# Best available output"
+        )
+
+        async def list_files(self, path, *, max_entries):
+            del path, max_entries
+            return [SandboxFileInfo(path=workspace_path, size=len(self.payload))]
+
+        async def read_file_bytes(self, path, *, max_bytes=None):
+            del path, max_bytes
+            return self.payload
+
+    class Manager:
+        async def get_sandbox(self, session_key):
+            del session_key
+            return Sandbox()
+
+    tool = SubmitTargetCheckoutTool(
+        target_uri="viking://resources/wiki",
+        source_roots={},
+        limits=CompileLimits(),
+        okf_config=OKFConfig(
+            version="test",
+            required_frontmatter=("type", "title", "description", "status"),
+            allowed_types=("concept",),
+        ),
+        allow_invalid_okf_output=True,
+    )
+    context = ToolContext(
+        session_key=SessionKey(type="compile", channel_id="cmp", chat_id="cmp"),
+        sandbox_manager=Manager(),
+    )
+
+    accepted = await tool.execute(context)
+
+    assert accepted.startswith("Target checkout accepted with 1 changed file(s)")
+    assert tool.validation_passed is False
+    assert "missing configured frontmatter fields: status" in tool.validation_warnings[0]
+    assert tool.bundle is not None
+    assert tool.bundle.operations == [
+        {
+            "uri": "viking://resources/wiki/knowledge/incomplete.md",
+            "content_base64": base64.b64encode(Sandbox.payload).decode("ascii"),
+            "mode": "upsert",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -3757,8 +3924,11 @@ async def test_source_context_builds_complete_compact_recursive_catalog():
         async def stat(self, uri):
             return {"isDir": True}
 
-        async def list_resources(self, *, path, recursive, node_limit):
+        async def list_resources(
+            self, *, path, recursive, node_limit, show_all_hidden=False
+        ):
             assert recursive is False
+            assert show_all_hidden is True
             if path == "viking://resources/source":
                 assert node_limit == CompileLimits(source_catalog_entries=3).source_nodes + 1
                 return [
@@ -3774,7 +3944,7 @@ async def test_source_context_builds_complete_compact_recursive_catalog():
                     },
                 ]
             assert path == "viking://resources/source/docs"
-            assert node_limit == CompileLimits(source_catalog_entries=3).source_nodes - 1
+            assert node_limit == CompileLimits(source_catalog_entries=3).source_nodes
             return [
                 {
                     "name": "guide.md",
@@ -3820,6 +3990,44 @@ async def test_source_context_builds_complete_compact_recursive_catalog():
 
 
 @pytest.mark.asyncio
+async def test_source_tree_includes_only_preserved_source_hidden_directory():
+    class Client:
+        def __init__(self):
+            self.hidden_flags = []
+
+        async def list_resources(
+            self, *, path, recursive, node_limit, show_all_hidden=False
+        ):
+            self.hidden_flags.append(show_all_hidden)
+            if path == "viking://resources/source":
+                return [
+                    {"uri": f"{path}/.source", "isDir": True},
+                    {"uri": f"{path}/.private", "isDir": True},
+                    {"uri": f"{path}/page.md", "isDir": False},
+                ]
+            if path == "viking://resources/source/.source":
+                return [
+                    {"uri": f"{path}/paper.pdf", "isDir": False},
+                    {"uri": f"{path}/provenance.json", "isDir": False},
+                ]
+            raise AssertionError(f"unexpected hidden directory traversal: {path}")
+
+    client = Client()
+    service = object.__new__(BotCompileService)
+    service.limits = CompileLimits(source_nodes=20)
+
+    entries = await service._list_complete_source_tree(
+        client, "viking://resources/source"
+    )
+
+    uris = {str(entry["uri"]) for entry in entries}
+    assert "viking://resources/source/.source/paper.pdf" in uris
+    assert "viking://resources/source/.source/provenance.json" in uris
+    assert all("/.private" not in uri for uri in uris)
+    assert client.hidden_flags and all(client.hidden_flags)
+
+
+@pytest.mark.asyncio
 async def test_source_context_rejects_node_overflow_instead_of_truncating():
     class Client:
         client = None
@@ -3833,7 +4041,9 @@ async def test_source_context_rejects_node_overflow_instead_of_truncating():
         async def stat(self, uri):
             return {"isDir": True}
 
-        async def list_resources(self, *, path, recursive, node_limit):
+        async def list_resources(
+            self, *, path, recursive, node_limit, show_all_hidden=False
+        ):
             assert recursive is False
             assert node_limit == 3
             return [{"uri": f"{path}/file-{index}.md", "isDir": False} for index in range(3)]
@@ -3857,7 +4067,9 @@ async def test_source_file_synthesizes_single_entry_without_listing():
         async def stat(self, uri):
             return {"name": "2024.md", "size": 512, "isDir": False}
 
-        async def list_resources(self, *, path, recursive, node_limit):
+        async def list_resources(
+            self, *, path, recursive, node_limit, show_all_hidden=False
+        ):
             self.listed = True
             raise AssertionError("file sources must not be listed")
 
@@ -5272,8 +5484,8 @@ async def test_timeout_salvage_rejects_pages_outside_configured_main_view_struct
         b"meta_id: alice\n---\n\n# Alice\n"
     )
     files = {
-        "__compile_staging__/target_checkout/knowledge/what/products/alice/alice.md": page,
-        "__compile_staging__/target_checkout/knowledge/what/invented/alice/alice.md": page,
+        "__compile_staging__/target_checkout/knowledge/topic/products-services/portfolio/alice/alice.md": page,
+        "__compile_staging__/target_checkout/knowledge/topic/products-services/invented/alice/alice.md": page,
     }
 
     class Client:
@@ -5304,7 +5516,7 @@ async def test_timeout_salvage_rejects_pages_outside_configured_main_view_struct
 
     assert result is not None
     assert [operation["uri"] for operation in client.operations] == [
-        "viking://resources/wiki/knowledge/what/products/alice/alice.md"
+        "viking://resources/wiki/knowledge/topic/products-services/portfolio/alice/alice.md"
     ]
     assert any("Skipped 1" in warning for warning in result.warnings)
 

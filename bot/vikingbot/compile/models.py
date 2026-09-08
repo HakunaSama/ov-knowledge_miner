@@ -71,6 +71,7 @@ class CompileRequest(BaseModel):
     reason: str | None = None
     skill: str = Field(min_length=1)
     okf_config: str | None = None
+    allow_invalid_okf_output: bool = False
     runtime_timeout_seconds: float | None = Field(
         default=None,
         gt=0,
@@ -89,6 +90,7 @@ class SanitizedCompileRequest(BaseModel):
     reason_provided: bool = False
     skill: str
     okf_config: str | None = None
+    allow_invalid_okf_output: bool = False
     runtime_timeout_seconds: float | None = Field(
         default=None,
         gt=0,

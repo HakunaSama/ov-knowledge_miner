@@ -34,6 +34,7 @@ from vikingbot.compile.models import (
 )
 from vikingbot.compile.okf_config import OKFConfig
 from vikingbot.compile.renderer import (
+    FinalizedCheckout,
     RenderedBundle,
     finalize_resource_checkout,
     is_reserved_wiki_page_uri,
@@ -363,8 +364,11 @@ class _SubmitMiningCheckpointTool(Tool):
             for field_name in ("title", "summary"):
                 if not isinstance(raw.get(field_name), str) or not str(raw[field_name]).strip():
                     raise ValueError(f'candidate "{candidate_id}" needs non-empty {field_name}')
-            if raw.get("kind") not in {"entity", "concept", "synthesis"}:
-                raise ValueError(f'candidate "{candidate_id}" has invalid kind')
+            if raw.get("kind") not in self.okf_config.allowed_types:
+                raise ValueError(
+                    f'candidate "{candidate_id}" kind must be one of: '
+                    + ", ".join(self.okf_config.allowed_types)
+                )
             if raw.get("stage") != stage:
                 raise ValueError(f'candidate "{candidate_id}" stage must match the run manifest')
             disposition = raw.get("disposition")
@@ -388,15 +392,14 @@ class _SubmitMiningCheckpointTool(Tool):
                 for source in sources
             )
             if disposition == "promoted":
-                if not isinstance(raw.get("meta_id"), str) or not str(raw["meta_id"]).strip():
-                    raise ValueError(f'promoted candidate "{candidate_id}" needs meta_id')
-                planned_paths = _string_list(
-                    raw.get("page_paths"),
-                    label=f'promoted candidate "{candidate_id}" page_paths',
-                    allow_empty=False,
+                page_path = raw.get("page_path")
+                if not isinstance(page_path, str) or not page_path.strip():
+                    raise ValueError(f'promoted candidate "{candidate_id}" needs page_path')
+                validate_relative_page_path(page_path)
+            elif raw.get("page_path") not in {None, ""}:
+                raise ValueError(
+                    f'{disposition} candidate "{candidate_id}" must not declare page_path'
                 )
-                for path in planned_paths:
-                    validate_relative_page_path(path)
             elif disposition == "merged":
                 if not isinstance(raw.get("merged_into"), str) or not str(
                     raw["merged_into"]
@@ -624,6 +627,8 @@ class SubmitTargetCheckoutTool(Tool):
         baseline_intermediates: Mapping[str, bytes] | None = None,
         baseline_checkout: Mapping[str, bytes] | None = None,
         phase_gate: CompilePhaseGate | None = None,
+        allow_invalid_okf_output: bool = False,
+        initial_validation_warning: str | None = None,
     ):
         self.target_uri = target_uri.rstrip("/")
         self.source_roots = dict(source_roots)
@@ -639,6 +644,8 @@ class SubmitTargetCheckoutTool(Tool):
         self.baseline_intermediates = dict(baseline_intermediates or {})
         self.baseline_checkout = dict(baseline_checkout or {})
         self.phase_gate = phase_gate
+        self.allow_invalid_okf_output = allow_invalid_okf_output
+        self.initial_validation_warning = initial_validation_warning
         self.bundle: RenderedBundle | None = None
         self.page_count = 0
         self.file_count = 0
@@ -646,6 +653,10 @@ class SubmitTargetCheckoutTool(Tool):
         self.investigation_status: str | None = None
         self.question_count = 0
         self.source_coverage: dict[str, Any] | None = None
+        self.validation_passed = initial_validation_warning is None
+        self.validation_warnings = (
+            [initial_validation_warning] if initial_validation_warning is not None else []
+        )
 
     @property
     def name(self) -> str:
@@ -655,11 +666,16 @@ class SubmitTargetCheckoutTool(Tool):
 
     @property
     def description(self) -> str:
+        validation_rule = (
+            "OKF conformance findings are recorded as warnings and do not block this write."
+            if self.allow_invalid_okf_output
+            else "Compile commits only validated changes."
+        )
         return (
             f"Submit the complete Resource output already written under "
             f"{COMPILE_TARGET_CHECKOUT_ROOT}/. Pass no pages, files, paths, or content; "
-            "Compile scans the checkout, preserves omitted existing files, and commits "
-            "only validated changes."
+            "Compile scans the checkout and preserves omitted existing files. "
+            f"{validation_rule}"
         )
 
     @property
@@ -678,6 +694,12 @@ class SubmitTargetCheckoutTool(Tool):
         self.investigation_status = None
         self.question_count = 0
         self.source_coverage = None
+        self.validation_passed = self.initial_validation_warning is None
+        self.validation_warnings = (
+            [self.initial_validation_warning]
+            if self.initial_validation_warning is not None
+            else []
+        )
         if self.phase_gate is not None and not self.phase_gate.candidates_passed:
             return (
                 "Error: Invalid target checkout: candidate knowledge checkpoint must pass "
@@ -738,17 +760,26 @@ class SubmitTargetCheckoutTool(Tool):
                 await self.readlist.summary()
                 read_paths = self.readlist.read_paths
             if self.okf_config is not None and self.okf_config.intermediates is not None:
-                checkout = prepare_persistent_intermediates(
-                    checkout,
-                    baseline=self.baseline_intermediates,
-                    config=self.okf_config,
-                    task_id=self.task_id,
-                    recorded_at=utc_now(),
-                    source_units=self.source_units,
-                    read_paths=read_paths,
-                    target_uri=self.target_uri,
-                    source_roots=self.source_roots,
-                )
+                try:
+                    checkout = prepare_persistent_intermediates(
+                        checkout,
+                        baseline=self.baseline_intermediates,
+                        config=self.okf_config,
+                        task_id=self.task_id,
+                        recorded_at=utc_now(),
+                        source_units=self.source_units,
+                        read_paths=read_paths,
+                        target_uri=self.target_uri,
+                        source_roots=self.source_roots,
+                    )
+                except ValueError as exc:
+                    if not self.allow_invalid_okf_output:
+                        raise
+                    self.validation_passed = False
+                    self.validation_warnings.append(
+                        "OKF intermediate validation failed; the checkout was committed "
+                        f"without blocking: {exc}"
+                    )
                 # Persist platform-owned repairs before strict validation. A later
                 # validation failure or salvage therefore sees canonical JSON,
                 # immutable evidence history, the read ledger, and restored baseline
@@ -758,20 +789,38 @@ class SubmitTargetCheckoutTool(Tool):
                         continue
                     workspace_path = f"{COMPILE_TARGET_CHECKOUT_ROOT}/{relative}"
                     await sandbox.write_file_bytes(workspace_path, payload)
-            finalized = finalize_resource_checkout(
-                checkout,
-                target_uri=self.target_uri,
-                source_roots=self.source_roots,
-                okf_config=self.okf_config,
-                control_uris=self.control_uris,
-                generated_metadata=(
-                    {"by": self.generated_by, "at": utc_now()}
-                    if self.generated_by is not None
-                    else None
-                ),
-                source_units=self.source_units,
-                read_paths=read_paths,
-            )
+            try:
+                finalized = finalize_resource_checkout(
+                    checkout,
+                    target_uri=self.target_uri,
+                    source_roots=self.source_roots,
+                    okf_config=self.okf_config,
+                    control_uris=self.control_uris,
+                    generated_metadata=(
+                        {"by": self.generated_by, "at": utc_now()}
+                        if self.generated_by is not None
+                        else None
+                    ),
+                    source_units=self.source_units,
+                    read_paths=read_paths,
+                )
+            except ValueError as exc:
+                if not self.allow_invalid_okf_output:
+                    raise
+                self.validation_passed = False
+                self.validation_warnings.append(
+                    "OKF final validation failed; the checkout was committed without "
+                    f"blocking: {exc}"
+                )
+                wiki_paths = {
+                    path
+                    for path in checkout
+                    if path.casefold().endswith(".md") and not path.startswith("_mining/")
+                }
+                finalized = FinalizedCheckout(
+                    files=dict(checkout),
+                    wiki_paths=wiki_paths,
+                )
             rendered = RenderedBundle(link_count=finalized.link_count)
             self.page_count = len(finalized.wiki_paths)
             self.file_count = len(finalized.files)

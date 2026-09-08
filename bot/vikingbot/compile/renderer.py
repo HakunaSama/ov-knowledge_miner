@@ -271,41 +271,16 @@ def _frontmatter_with_defaults(
     return frontmatter, f"---\n{dumped}---\n{body}"
 
 
-def _meta_knowledge_id(
-    path: str,
-    frontmatter: Mapping[str, Any],
-    *,
-    config: OKFConfig,
-) -> str | None:
-    main_view = config.main_view
-    meta = main_view.meta_knowledge if main_view is not None else None
-    if meta is None:
-        return None
-    value = frontmatter.get(meta.id_field)
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(
-            f'OKF Markdown file "{path}" must declare a non-empty '
-            f'frontmatter "{meta.id_field}" for its meta-knowledge unit'
-        )
-    normalized = value.strip()
-    if "/" in normalized or normalized in {".", ".."}:
-        raise ValueError(
-            f'OKF Markdown file "{path}" frontmatter "{meta.id_field}" '
-            "must be a safe id without slashes"
-        )
-    return normalized
-
-
 def _validate_main_view_path(
     path: str,
     frontmatter: Mapping[str, Any],
     *,
     config: OKFConfig,
-) -> str | None:
-    """Validate the exact configured main-view hierarchy and return its facet."""
+) -> None:
+    """Validate one atomic page against the configured business taxonomy."""
     main_view = config.main_view
     if main_view is None or path in main_view.exempt_paths:
-        return None
+        return
     root_segments = main_view.root_path.split("/")
     segments = path.split("/")
     if segments[: len(root_segments)] != root_segments:
@@ -313,69 +288,62 @@ def _validate_main_view_path(
             f'OKF Markdown file "{path}" must live under main-view root "{main_view.root_path}/"'
         )
     relative_segments = segments[len(root_segments) :]
-    meta_id = _meta_knowledge_id(path, frontmatter, config=config)
-    if "route" in main_view.path_structure:
-        if len(relative_segments) < 4:
-            raise ValueError(
-                f'OKF Markdown file "{path}" must follow configured main-view '
-                "facet/route/meta_id/filename hierarchy"
-            )
-        facet = relative_segments[0]
-        if facet not in main_view.facet_categories:
-            categories = ", ".join(main_view.facet_categories)
-            raise ValueError(
-                f'OKF Markdown file "{path}" must use a configured main-view facet '
-                f"at the facet level: {categories}"
-            )
-        route = "/".join(relative_segments[1:-2])
-        allowed_routes = main_view.directory_routes.get(facet, ())
-        if route not in allowed_routes:
-            allowed = ", ".join(allowed_routes)
-            raise ValueError(
-                f'OKF Markdown file "{path}" must use one configured directory route '
-                f'for facet "{facet}": {allowed}'
-            )
-        if relative_segments[-2] != meta_id:
-            raise ValueError(
-                f'OKF Markdown file "{path}" must use frontmatter meta-knowledge id '
-                f'"{meta_id}" at the configured meta_id level'
-            )
-        if not relative_segments[-1].casefold().endswith(".md"):
-            raise ValueError(
-                f'OKF Markdown file "{path}" must use a Markdown filename at the '
-                "configured filename level"
-            )
-        return facet
-
-    if len(relative_segments) != len(main_view.path_structure):
+    variable_index = (
+        main_view.path_structure.index("subject_path")
+        if "subject_path" in main_view.path_structure
+        else -1
+    )
+    fixed_segments = len(main_view.path_structure) - (1 if variable_index >= 0 else 0)
+    subject_segment_count = len(relative_segments) - fixed_segments
+    if subject_segment_count < 0 or (variable_index < 0 and subject_segment_count != 0):
         configured = "/".join(main_view.path_structure)
         raise ValueError(
             f'OKF Markdown file "{path}" must exactly follow configured main-view '
-            f'path_structure "{configured}"; arbitrary or missing directory levels '
-            "are not allowed"
+            f'path_structure "{configured}"; subject_path is the only variable-length level'
         )
 
-    facet: str | None = None
-    for level, segment in zip(main_view.path_structure, relative_segments, strict=True):
-        if level == "facet":
-            if segment not in main_view.facet_categories:
-                categories = ", ".join(main_view.facet_categories)
-                raise ValueError(
-                    f'OKF Markdown file "{path}" must use a configured main-view facet '
-                    f"at the facet level: {categories}"
-                )
-            facet = segment
-        elif level == "meta_id" and segment != meta_id:
+    role_ids = {item.id for item in main_view.page_roles}
+    domains = {item.id: item for item in main_view.business_domains}
+    page_role = ""
+    business_domain = ""
+    subdomain = ""
+    cursor = 0
+    for level in main_view.path_structure:
+        if level == "subject_path":
+            subject_segments = relative_segments[cursor : cursor + subject_segment_count]
+            if any(segment.startswith(".") or segment in {"", ".", ".."} for segment in subject_segments):
+                raise ValueError(f'OKF Markdown file "{path}" has an invalid subject_path')
+            cursor += subject_segment_count
+            continue
+        segment = relative_segments[cursor] if cursor < len(relative_segments) else ""
+        cursor += 1
+        if level == "page_role":
+            page_role = segment
+        elif level == "business_domain":
+            business_domain = segment
+        elif level == "subdomain":
+            subdomain = segment
+        elif level == "filename" and not segment.casefold().endswith(".md"):
             raise ValueError(
-                f'OKF Markdown file "{path}" must use frontmatter meta-knowledge id '
-                f'"{meta_id}" at the configured meta_id level'
+                f'OKF Markdown file "{path}" must use a Markdown filename at the filename level'
             )
-        elif level == "filename" and (not segment.casefold().endswith(".md")):
-            raise ValueError(
-                f'OKF Markdown file "{path}" must use a Markdown filename at the '
-                "configured filename level"
-            )
-    return facet
+    if page_role not in role_ids:
+        raise ValueError(
+            f'OKF Markdown file "{path}" must use a configured page_role: '
+            + ", ".join(sorted(role_ids))
+        )
+    domain = domains.get(business_domain)
+    if domain is None:
+        raise ValueError(
+            f'OKF Markdown file "{path}" must use a configured business_domain: '
+            + ", ".join(sorted(domains))
+        )
+    subdomain_ids = {item.id for item in domain.subdomains}
+    if subdomain not in subdomain_ids:
+        raise ValueError(
+            f'OKF Markdown file "{path}" must use a configured subdomain for '
+            f'"{business_domain}": ' + ", ".join(sorted(subdomain_ids))
+        )
 
 
 def validate_configured_main_view_payload_path(
@@ -414,16 +382,6 @@ def _validate_configured_frontmatter(
         raise ValueError(
             f'OKF Markdown file "{path}" frontmatter type must be one of: '
             + ", ".join(config.allowed_types)
-        )
-    expected_type = config.expected_type(path)
-    if expected_type is None:
-        raise ValueError(
-            f'OKF Markdown file "{path}" does not match any configured path_types rule'
-        )
-    if page_type.strip() != expected_type:
-        raise ValueError(
-            f'OKF Markdown file "{path}" must use type "{expected_type}" according to '
-            "the configured path_types rules"
         )
     _validate_main_view_path(path, frontmatter, config=config)
 
@@ -833,6 +791,7 @@ def _validate_intermediate_artifacts(
     target_uri: str,
     source_roots: Mapping[str, str],
     wiki_paths: set[str],
+    frontmatter_by_path: Mapping[str, Mapping[str, Any]],
     config: OKFConfig,
     source_units: list[dict[str, Any]],
     read_paths: set[str],
@@ -1270,9 +1229,10 @@ def _validate_intermediate_artifacts(
         for field_name in ("title", "summary"):
             if not isinstance(entry.get(field_name), str) or not str(entry[field_name]).strip():
                 raise ValueError(f'Compile candidate "{candidate_id}" needs non-empty {field_name}')
-        if entry.get("kind") not in {"entity", "concept", "synthesis"}:
+        if entry.get("kind") not in config.allowed_types:
             raise ValueError(
-                f'Compile candidate "{candidate_id}" kind must be entity, concept, or synthesis'
+                f'Compile candidate "{candidate_id}" kind must be one of: '
+                + ", ".join(config.allowed_types)
             )
         disposition = entry.get("disposition")
         if disposition not in {"promoted", "merged", "deferred", "rejected"}:
@@ -1287,21 +1247,31 @@ def _validate_intermediate_artifacts(
         ):
             raise ValueError(f'Compile candidate "{candidate_id}" references an unknown source')
         candidate_sources.update(resource.rstrip("/") for resource in source_resources)
-        page_paths = _string_array(
-            entry.get("page_paths", []), label=f'candidate "{candidate_id}" page_paths'
-        )
-        unknown_pages = sorted(set(page_paths) - wiki_paths)
-        if unknown_pages:
-            raise ValueError(
-                f'Compile candidate "{candidate_id}" references unknown pages: '
-                + ", ".join(unknown_pages)
-            )
+        page_path = entry.get("page_path")
         if disposition == "promoted":
-            if not isinstance(entry.get("meta_id"), str) or not str(entry["meta_id"]).strip():
-                raise ValueError(f'Compile promoted candidate "{candidate_id}" needs meta_id')
-            if not page_paths:
-                raise ValueError(f'Compile promoted candidate "{candidate_id}" needs page_paths')
-            promoted_pages.update(page_paths)
+            if not isinstance(page_path, str) or not page_path.strip():
+                raise ValueError(f'Compile promoted candidate "{candidate_id}" needs page_path')
+            normalized_page_path = page_path.strip("/")
+            if normalized_page_path not in wiki_paths:
+                raise ValueError(
+                    f'Compile candidate "{candidate_id}" references unknown page: '
+                    f"{normalized_page_path}"
+                )
+            if normalized_page_path in promoted_pages:
+                raise ValueError(
+                    f'Compile page "{normalized_page_path}" is assigned to multiple promoted '
+                    "candidates"
+                )
+            if frontmatter_by_path[normalized_page_path].get("type") != entry.get("kind"):
+                raise ValueError(
+                    f'Compile candidate "{candidate_id}" kind must match frontmatter type for '
+                    f'page "{normalized_page_path}"'
+                )
+            promoted_pages.add(normalized_page_path)
+        elif page_path not in {None, ""}:
+            raise ValueError(
+                f'Compile {disposition} candidate "{candidate_id}" must not declare page_path'
+            )
         current_candidate = any(
             source == resource or bool(relative_uri_path(resource, source))
             for resource in expected_units
@@ -1437,72 +1407,6 @@ def _validate_intermediate_artifacts(
     return artifacts, str(investigation_status), len(questions), coverage_summary
 
 
-def _validate_meta_knowledge_units(
-    wiki_paths: set[str],
-    frontmatter_by_path: Mapping[str, Mapping[str, Any]],
-    *,
-    config: OKFConfig,
-) -> None:
-    """Require one complete configured facet set for every explicit meta id."""
-    main_view = config.main_view
-    meta = main_view.meta_knowledge if main_view is not None else None
-    if main_view is None or meta is None:
-        return
-
-    required_facets = set(main_view.facet_categories)
-    units: dict[str, dict[str, str]] = {}
-    for path in sorted(wiki_paths - set(main_view.exempt_paths)):
-        frontmatter = frontmatter_by_path[path]
-        normalized_meta_id = _meta_knowledge_id(path, frontmatter, config=config)
-        if normalized_meta_id is None:
-            continue
-        facet = _validate_main_view_path(path, frontmatter, config=config)
-        if facet is None:
-            continue
-        unit_key = normalized_meta_id
-        facet_paths = units.setdefault(unit_key, {})
-        if facet in facet_paths:
-            raise ValueError(
-                f'Meta-knowledge unit "{unit_key}" contains more than one "{facet}" page'
-            )
-        facet_paths[facet] = path
-
-    for unit_key, facet_paths in units.items():
-        present_facets = set(facet_paths)
-        if meta.require_complete and present_facets != required_facets:
-            missing = sorted(required_facets - present_facets)
-            extra = sorted(present_facets - required_facets)
-            details: list[str] = []
-            if missing:
-                details.append("missing " + ", ".join(missing))
-            if extra:
-                details.append("unexpected " + ", ".join(extra))
-            raise ValueError(
-                f'Meta-knowledge unit "{unit_key}" must contain exactly one page for every '
-                f"main-view facet ({', '.join(main_view.facet_categories)}): " + "; ".join(details)
-            )
-
-        if not meta.shared_view_tags:
-            continue
-        for view in config.views:
-            expected: tuple[str, ...] | None = None
-            expected_path = ""
-            known_tags = {group.tag for group in view.groups}
-            for path in facet_paths.values():
-                tags = frontmatter_by_path[path].get("tags", [])
-                selected = tuple(sorted(set(tags) & known_tags))
-                if expected is None:
-                    expected = selected
-                    expected_path = path
-                    continue
-                if selected != expected:
-                    raise ValueError(
-                        f'Meta-knowledge unit "{unit_key}" must use identical tags for view '
-                        f'"{view.id}" across its configured facet pages; "{expected_path}" and '
-                        f'"{path}" disagree'
-                    )
-
-
 def finalize_resource_checkout(
     files: Mapping[str, bytes],
     *,
@@ -1587,16 +1491,11 @@ def finalize_resource_checkout(
             target_uri=target_uri,
             source_roots=source_roots,
             wiki_paths=wiki_paths,
+            frontmatter_by_path=frontmatter_by_path,
             config=okf_config,
             source_units=list(source_units or []),
             read_paths=set(read_paths or set()),
         )
-        _validate_meta_knowledge_units(
-            wiki_paths,
-            frontmatter_by_path,
-            config=okf_config,
-        )
-
     wiki_uris = {safe_join_viking_uri(target_uri, path).rstrip("/") for path in wiki_paths}
     mention_targets = _wiki_mention_targets(wiki_uris)
     finalized = dict(files)

@@ -23,7 +23,14 @@ function queuedJobs(jobs: MiningJob[]): MiningJob[] {
 }
 
 export function nextQueuedMiningJob(jobs: MiningJob[]): MiningJob | null {
-  if (jobs.some((job) => isMiningWorkflowBlocking(job.phase))) return null
+  if (
+    jobs.some(
+      (job) =>
+        !(job.phase === 'preparing' && Boolean(job.windowFileLimit)) &&
+        isMiningWorkflowBlocking(job.phase),
+    )
+  )
+    return null
   return queuedJobs(jobs)[0] || null
 }
 
@@ -39,9 +46,16 @@ export function hasOtherPendingMiningJob(
   jobs: MiningJob[],
   jobId: string,
 ): boolean {
+  const selected = jobs.find((job) => job.id === jobId)
   return jobs.some(
     (job) =>
       job.id !== jobId &&
+      !(
+        selected?.runId &&
+        job.runId === selected.runId &&
+        job.phase === 'preparing' &&
+        (job.windowIndex || 1) > (selected.windowIndex || 1)
+      ) &&
       (job.phase === 'queued' || isMiningWorkflowBlocking(job.phase)),
   )
 }

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fnmatch
 import re
 from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping
@@ -11,12 +10,6 @@ import yaml
 
 DEFAULT_OKF_CONFIG_NAME = "OKF_CONFIG.yaml"
 MAX_OKF_CONFIG_BYTES = 256 * 1024
-
-
-@dataclass(frozen=True, slots=True)
-class OKFPathRule:
-    pattern: str
-    page_type: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,50 +73,58 @@ class OKFView:
 
 
 @dataclass(frozen=True, slots=True)
+class OKFNamedCategory:
+    id: str
+    title: str
+    description: str
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class OKFBusinessDomain:
+    id: str
+    title: str
+    description: str
+    subdomains: tuple[OKFNamedCategory, ...]
+
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "subdomains": [item.public_dict() for item in self.subdomains],
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class OKFMainView:
     single_source_of_truth: bool
     root_path: str
-    facet_categories: tuple[str, ...]
-    path_structure: tuple[Literal["facet", "route", "meta_id", "filename"], ...]
+    path_structure: tuple[
+        Literal["page_role", "business_domain", "subdomain", "subject_path", "filename"],
+        ...,
+    ]
+    page_roles: tuple[OKFNamedCategory, ...]
+    business_domains: tuple[OKFBusinessDomain, ...]
     exempt_paths: tuple[str, ...]
-    directory_routes: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
-    meta_knowledge: "OKFMetaKnowledgeConfig | None" = None
     derived_views_include_exempt: bool = False
 
     def public_dict(self) -> dict[str, Any]:
         return {
             "single_source_of_truth": self.single_source_of_truth,
             "root_path": self.root_path,
-            "facet_categories": list(self.facet_categories),
             "path_structure": list(self.path_structure),
-            "directory_routes": {
-                facet: list(routes) for facet, routes in self.directory_routes.items()
-            },
+            "page_roles": [item.public_dict() for item in self.page_roles],
+            "business_domains": [item.public_dict() for item in self.business_domains],
             "exempt_paths": list(self.exempt_paths),
             "derived_views_include_exempt": self.derived_views_include_exempt,
-            "meta_knowledge": (
-                self.meta_knowledge.public_dict() if self.meta_knowledge is not None else None
-            ),
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class OKFMetaKnowledgeConfig:
-    """Contract for one meta-knowledge unit represented by a facet page set."""
-
-    group_by: Literal["frontmatter_field"]
-    id_field: str
-    require_complete: bool
-    shared_view_tags: bool
-    require_id_directory: bool = False
-
-    def public_dict(self) -> dict[str, Any]:
-        return {
-            "group_by": self.group_by,
-            "id_field": self.id_field,
-            "require_complete": self.require_complete,
-            "shared_view_tags": self.shared_view_tags,
-            "require_id_directory": self.require_id_directory,
         }
 
 
@@ -190,21 +191,11 @@ class OKFConfig:
     source_require_intermediate: bool = False
     generated_fields: tuple[str, ...] = ("by", "at")
     generated_by_template: str = "{skill}/{model}"
-    path_rules: tuple[OKFPathRule, ...] = ()
     wikilinks: OKFWikiLinkConfig = field(default_factory=OKFWikiLinkConfig)
     views: tuple[OKFView, ...] = ()
     main_view: OKFMainView | None = None
     intermediates: OKFIntermediateConfig | None = None
     cross_knowledge: OKFCrossKnowledgeConfig | None = None
-
-    def expected_type(self, path: str) -> str | None:
-        """Return the last matching path rule, allowing exact rules to override groups."""
-        expected: str | None = None
-        for rule in self.path_rules:
-            if fnmatch.fnmatchcase(path, rule.pattern):
-                expected = rule.page_type
-        return expected
-
 
 def _mapping(value: Any, *, field_name: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
@@ -257,29 +248,90 @@ def _relative_path(value: Any, *, field_name: str, allow_slash: bool = True) -> 
     return normalized
 
 
+def _parse_named_categories(value: Any, *, field_name: str) -> tuple[OKFNamedCategory, ...]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f'OKF config field "{field_name}" must be a non-empty YAML list')
+    result: list[OKFNamedCategory] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(value):
+        item_path = f"{field_name}[{index}]"
+        item = _mapping(raw, field_name=item_path)
+        item_id = _required_string(item.get("id"), field_name=f"{item_path}.id")
+        if not _VIEW_ID_RE.fullmatch(item_id):
+            raise ValueError(
+                f'OKF config field "{item_path}.id" must use lowercase letters, '
+                "digits, and hyphens"
+            )
+        if item_id in seen:
+            raise ValueError(f'OKF config field "{field_name}" contains duplicate id: {item_id}')
+        seen.add(item_id)
+        title = _required_string(item.get("title"), field_name=f"{item_path}.title")
+        description = item.get("description", title)
+        description = _required_string(description, field_name=f"{item_path}.description")
+        result.append(OKFNamedCategory(id=item_id, title=title, description=description))
+    return tuple(result)
+
+
+def _parse_business_domains(value: Any) -> tuple[OKFBusinessDomain, ...]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(
+            'OKF config field "main_view.business_domains" must be a non-empty YAML list'
+        )
+    result: list[OKFBusinessDomain] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(value):
+        item_path = f"main_view.business_domains[{index}]"
+        item = _mapping(raw, field_name=item_path)
+        domain_id = _required_string(item.get("id"), field_name=f"{item_path}.id")
+        if not _VIEW_ID_RE.fullmatch(domain_id):
+            raise ValueError(
+                f'OKF config field "{item_path}.id" must use lowercase letters, '
+                "digits, and hyphens"
+            )
+        if domain_id in seen:
+            raise ValueError(
+                f'OKF config field "main_view.business_domains" contains duplicate id: '
+                f"{domain_id}"
+            )
+        seen.add(domain_id)
+        title = _required_string(item.get("title"), field_name=f"{item_path}.title")
+        description = _required_string(
+            item.get("description", title), field_name=f"{item_path}.description"
+        )
+        subdomains = _parse_named_categories(
+            item.get("subdomains"), field_name=f"{item_path}.subdomains"
+        )
+        result.append(
+            OKFBusinessDomain(
+                id=domain_id,
+                title=title,
+                description=description,
+                subdomains=subdomains,
+            )
+        )
+    return tuple(result)
+
+
 def _parse_main_view(value: Any) -> OKFMainView | None:
     if value is None:
         return None
     view = _mapping(value, field_name="main_view")
+    legacy_fields = sorted(
+        set(view) & {"facet_categories", "leaf_categories", "directory_routes", "meta_knowledge"}
+    )
+    if legacy_fields:
+        raise ValueError(
+            "OKF config main_view contains removed What/Why/How meta-knowledge fields: "
+            + ", ".join(legacy_fields)
+        )
     single_source = _boolean(
         view.get("single_source_of_truth"),
         field_name="main_view.single_source_of_truth",
         default=True,
     )
-    root_path = _relative_path(view.get("root_path", "knowledge"), field_name="main_view.root_path")
-    raw_facets = view.get("facet_categories")
-    if raw_facets is None:
-        # Parse the pre-1.1 name so an existing user contract fails only when its
-        # structure is actually ambiguous. Public results always expose the new,
-        # position-neutral name.
-        raw_facets = view.get("leaf_categories")
-    facet_categories = _string_list(raw_facets, field_name="main_view.facet_categories")
-    if len(facet_categories) > 8 or any(
-        not _VIEW_ID_RE.fullmatch(item) for item in facet_categories
-    ):
-        raise ValueError(
-            'OKF config field "main_view.facet_categories" must contain at most 8 lowercase slugs'
-        )
+    root_path = _relative_path(
+        view.get("root_path", "knowledge"), field_name="main_view.root_path"
+    )
     raw_path_structure = view.get("path_structure")
     if (
         isinstance(raw_path_structure, list)
@@ -288,65 +340,37 @@ def _parse_main_view(value: Any) -> OKFMainView | None:
     ):
         raise ValueError('OKF config field "main_view.path_structure" must not repeat levels')
     path_structure = _string_list(raw_path_structure, field_name="main_view.path_structure")
-    allowed_structure = {"facet", "route", "meta_id", "filename"}
+    allowed_structure = {
+        "page_role",
+        "business_domain",
+        "subdomain",
+        "subject_path",
+        "filename",
+    }
     unknown_structure = sorted(set(path_structure) - allowed_structure)
     if unknown_structure:
         raise ValueError(
             'OKF config field "main_view.path_structure" contains unsupported levels: '
             + ", ".join(unknown_structure)
         )
+    required_structure = {"page_role", "business_domain", "subdomain", "filename"}
+    missing_structure = sorted(required_structure - set(path_structure))
+    if missing_structure:
+        raise ValueError(
+            'OKF config field "main_view.path_structure" is missing required levels: '
+            + ", ".join(missing_structure)
+        )
     if path_structure[-1] != "filename":
         raise ValueError('OKF config field "main_view.path_structure" must end with filename')
-    if "facet" not in path_structure:
-        raise ValueError('OKF config field "main_view.path_structure" must contain facet')
-    raw_directory_routes = view.get("directory_routes")
-    directory_routes: dict[str, tuple[str, ...]] = {}
-    if raw_directory_routes is not None:
-        routes = _mapping(raw_directory_routes, field_name="main_view.directory_routes")
-        unknown_facets = sorted(set(routes) - set(facet_categories))
-        missing_facets = sorted(set(facet_categories) - set(routes))
-        if unknown_facets or missing_facets:
-            details: list[str] = []
-            if missing_facets:
-                details.append("missing " + ", ".join(missing_facets))
-            if unknown_facets:
-                details.append("unknown " + ", ".join(unknown_facets))
-            raise ValueError(
-                'OKF config field "main_view.directory_routes" must define exactly '
-                "the configured facets: " + "; ".join(details)
-            )
-        for facet in facet_categories:
-            raw_routes = _string_list(
-                routes[facet], field_name=f"main_view.directory_routes.{facet}"
-            )
-            normalized_routes = tuple(
-                _relative_path(
-                    route,
-                    field_name=f"main_view.directory_routes.{facet}[]",
-                )
-                for route in raw_routes
-            )
-            directory_routes[facet] = normalized_routes
-    if "route" in path_structure and not directory_routes:
+    if "subject_path" in path_structure and path_structure[-2] != "subject_path":
         raise ValueError(
-            'OKF config field "main_view.path_structure" uses route but '
-            "main_view.directory_routes is missing"
+            'OKF config field "main_view.path_structure" must place subject_path immediately '
+            "before filename"
         )
-    if directory_routes and "route" not in path_structure:
-        raise ValueError(
-            'OKF config field "main_view.path_structure" must contain route when '
-            "main_view.directory_routes is configured"
-        )
-    if "route" in path_structure and tuple(path_structure) != (
-        "facet",
-        "route",
-        "meta_id",
-        "filename",
-    ):
-        raise ValueError(
-            'OKF config field "main_view.path_structure" must be '
-            "facet/route/meta_id/filename when directory routes are configured"
-        )
+    page_roles = _parse_named_categories(
+        view.get("page_roles"), field_name="main_view.page_roles"
+    )
+    business_domains = _parse_business_domains(view.get("business_domains"))
     exempt_paths = _string_list(
         view.get("exempt_paths", ["index.md"]),
         field_name="main_view.exempt_paths",
@@ -355,57 +379,13 @@ def _parse_main_view(value: Any) -> OKFMainView | None:
     exempt_paths = tuple(
         _relative_path(item, field_name="main_view.exempt_paths[]") for item in exempt_paths
     )
-    meta_value = view.get("meta_knowledge")
-    meta_knowledge: OKFMetaKnowledgeConfig | None = None
-    if meta_value is not None:
-        meta = _mapping(meta_value, field_name="main_view.meta_knowledge")
-        group_by = meta.get("group_by", "frontmatter_field")
-        if group_by != "frontmatter_field":
-            raise ValueError(
-                'OKF config field "main_view.meta_knowledge.group_by" must be frontmatter_field'
-            )
-        id_field = meta.get("id_field", "meta_id")
-        if not isinstance(id_field, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", id_field):
-            raise ValueError(
-                'OKF config field "main_view.meta_knowledge.id_field" must be a lowercase slug'
-            )
-        meta_knowledge = OKFMetaKnowledgeConfig(
-            group_by="frontmatter_field",
-            id_field=id_field,
-            require_complete=_boolean(
-                meta.get("require_complete"),
-                field_name="main_view.meta_knowledge.require_complete",
-                default=True,
-            ),
-            shared_view_tags=_boolean(
-                meta.get("shared_view_tags"),
-                field_name="main_view.meta_knowledge.shared_view_tags",
-                default=True,
-            ),
-            require_id_directory=_boolean(
-                meta.get("require_id_directory"),
-                field_name="main_view.meta_knowledge.require_id_directory",
-                default=False,
-            ),
-        )
-        if "meta_id" not in path_structure:
-            raise ValueError(
-                'OKF config field "main_view.path_structure" must contain meta_id when '
-                "main_view.meta_knowledge is configured"
-            )
-    elif "meta_id" in path_structure:
-        raise ValueError(
-            'OKF config field "main_view.path_structure" cannot contain meta_id without '
-            "main_view.meta_knowledge"
-        )
     return OKFMainView(
         single_source_of_truth=single_source,
         root_path=root_path,
-        facet_categories=facet_categories,
         path_structure=path_structure,
-        directory_routes=directory_routes,
+        page_roles=page_roles,
+        business_domains=business_domains,
         exempt_paths=exempt_paths,
-        meta_knowledge=meta_knowledge,
         derived_views_include_exempt=_boolean(
             view.get("derived_views_include_exempt"),
             field_name="main_view.derived_views_include_exempt",
@@ -656,6 +636,11 @@ def parse_okf_config(content: str, *, source: str = DEFAULT_OKF_CONFIG_NAME) -> 
     except yaml.YAMLError as exc:
         raise ValueError(f'OKF config "{source}" is not valid YAML') from exc
     root = _mapping(raw, field_name="root")
+    if "path_types" in root:
+        raise ValueError(
+            'OKF config field "path_types" was removed; a promoted candidate now declares one '
+            "page_path and its kind must match that page's frontmatter type"
+        )
     version = root.get("version")
     if not isinstance(version, (str, int, float)) or not str(version).strip():
         raise ValueError('OKF config field "version" must be a non-empty scalar')
@@ -716,23 +701,6 @@ def parse_okf_config(content: str, *, source: str = DEFAULT_OKF_CONFIG_NAME) -> 
             'OKF config field "frontmatter.generated.by_template" must be a non-empty string'
         )
 
-    raw_rules = root.get("path_types")
-    if not isinstance(raw_rules, list) or not raw_rules:
-        raise ValueError('OKF config field "path_types" must be a non-empty YAML list')
-    path_rules: list[OKFPathRule] = []
-    for index, item in enumerate(raw_rules):
-        rule = _mapping(item, field_name=f"path_types[{index}]")
-        pattern = rule.get("pattern")
-        page_type = rule.get("type")
-        if not isinstance(pattern, str) or not pattern.strip():
-            raise ValueError(f'OKF config field "path_types[{index}].pattern" is required')
-        if not isinstance(page_type, str) or page_type.strip() not in allowed_types:
-            raise ValueError(
-                f'OKF config field "path_types[{index}].type" must be one of: '
-                + ", ".join(allowed_types)
-            )
-        path_rules.append(OKFPathRule(pattern.strip(), page_type.strip()))
-
     raw_wikilinks = _mapping(root.get("wikilinks") or {}, field_name="wikilinks")
     syntax = raw_wikilinks.get("syntax", "double-bracket")
     if syntax != "double-bracket":
@@ -766,7 +734,6 @@ def parse_okf_config(content: str, *, source: str = DEFAULT_OKF_CONFIG_NAME) -> 
         source_require_intermediate=source_require_intermediate,
         generated_fields=generated_fields,
         generated_by_template=generated_by_template.strip(),
-        path_rules=tuple(path_rules),
         wikilinks=OKFWikiLinkConfig(
             enabled=boolean("enabled", True),
             auto_link=boolean("auto_link", True),
@@ -784,12 +751,12 @@ def parse_okf_config(content: str, *, source: str = DEFAULT_OKF_CONFIG_NAME) -> 
 __all__ = [
     "DEFAULT_OKF_CONFIG_NAME",
     "MAX_OKF_CONFIG_BYTES",
+    "OKFBusinessDomain",
     "OKFConfig",
     "OKFCrossKnowledgeConfig",
     "OKFIntermediateConfig",
     "OKFMainView",
-    "OKFMetaKnowledgeConfig",
-    "OKFPathRule",
+    "OKFNamedCategory",
     "OKFView",
     "OKFViewGroup",
     "OKFWikiLinkConfig",

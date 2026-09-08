@@ -180,6 +180,8 @@ struct CompileCreateRequest<'a> {
     reason: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     runtime_timeout_seconds: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    allow_invalid_okf_output: Option<bool>,
 }
 
 // ============ HttpClient ============
@@ -374,6 +376,7 @@ impl HttpClient {
         okf_config: Option<&str>,
         reason: Option<&str>,
         runtime_timeout_seconds: Option<f64>,
+        allow_invalid_okf_output: Option<bool>,
     ) -> Result<CompileAccepted> {
         let body = CompileCreateRequest {
             from_uris,
@@ -382,12 +385,21 @@ impl HttpClient {
             okf_config,
             reason,
             runtime_timeout_seconds,
+            allow_invalid_okf_output,
         };
         self.post("/bot/v1/compile", &body).await
     }
 
     pub async fn get_compile(&self, task_id: &str) -> Result<CompileTaskStatus> {
         self.get(&format!("/bot/v1/compile/{task_id}"), &[]).await
+    }
+
+    pub async fn resume_compile(&self, task_id: &str) -> Result<CompileAccepted> {
+        self.post(
+            &format!("/bot/v1/compile/{task_id}/resume"),
+            &serde_json::json!({}),
+        )
+        .await
     }
 
     pub async fn read(&self, uri: &str) -> Result<String> {
@@ -1859,7 +1871,7 @@ impl HttpClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{BaseClient, CompileResult, HttpClient, TimeoutConfig};
+    use super::{BaseClient, CompileCreateRequest, CompileResult, HttpClient, TimeoutConfig};
     use crate::base_client::api_error_from_envelope;
     use reqwest::StatusCode;
     use serde_json::{Map, json};
@@ -2286,6 +2298,7 @@ mod tests {
             let read = stream.read(&mut buffer).await.expect("request should read");
             let request = String::from_utf8_lossy(&buffer[..read]);
             assert!(request.contains(r#""runtime_timeout_seconds":86400.0"#));
+            assert!(!request.contains("allow_invalid_okf_output"));
             assert!(
                 request.contains(r#""okf_config":"viking://resources/source/OKF_CONFIG.yaml""#)
             );
@@ -2318,10 +2331,28 @@ mod tests {
                 Some("viking://resources/source/OKF_CONFIG.yaml"),
                 None,
                 Some(86_400.0),
+                None,
             )
             .await
             .expect("202 response body should deserialize");
         assert_eq!(accepted.task_id, "cmp_1");
+    }
+
+    #[test]
+    fn compile_create_request_serializes_non_blocking_okf_mode() {
+        let sources = vec!["viking://resources/source".to_owned()];
+        let request = CompileCreateRequest {
+            from_uris: &sources,
+            to: "viking://resources/wiki",
+            skill: "viking://agent/skills/llm-wiki",
+            okf_config: Some("viking://resources/source/OKF_CONFIG.yaml"),
+            reason: None,
+            runtime_timeout_seconds: None,
+            allow_invalid_okf_output: Some(true),
+        };
+
+        let value = serde_json::to_value(request).expect("compile request should serialize");
+        assert_eq!(value["allow_invalid_okf_output"], true);
     }
 
     #[test]

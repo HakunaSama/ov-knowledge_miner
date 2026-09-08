@@ -40,6 +40,19 @@ export type MiningJob = {
   targetUri: string
   taskId: string | null
   updatedAt: string
+  runId?: string
+  windowByteLimit?: number
+  windowCount?: number
+  windowFileLimit?: number
+  windowPageLimit?: number
+  windowProbeLimit?: number
+  windowIndex?: number
+  windowKind?: 'documents' | 'memory'
+  windowLogUri?: string
+  windowSizeBytes?: number
+  oversizedSingleton?: boolean
+  windowPdfPages?: number
+  windowEstimatedProbes?: number
 }
 
 export type MiningHistory = {
@@ -166,6 +179,28 @@ export function normalizeMiningJob(value: unknown): MiningJob | null {
     targetUri,
     taskId: nullableString(value.taskId),
     updatedAt: nullableString(value.updatedAt) || createdAt,
+    runId: nullableString(value.runId) || jobIdForTarget(targetUri),
+    windowByteLimit:
+      typeof value.windowByteLimit === 'number' ? value.windowByteLimit : 0,
+    windowCount: typeof value.windowCount === 'number' ? value.windowCount : 1,
+    windowFileLimit:
+      typeof value.windowFileLimit === 'number' ? value.windowFileLimit : 0,
+    windowPageLimit:
+      typeof value.windowPageLimit === 'number' ? value.windowPageLimit : 0,
+    windowProbeLimit:
+      typeof value.windowProbeLimit === 'number' ? value.windowProbeLimit : 0,
+    windowIndex: typeof value.windowIndex === 'number' ? value.windowIndex : 1,
+    windowKind: value.windowKind === 'memory' ? 'memory' : 'documents',
+    windowLogUri: stringValue(value.windowLogUri),
+    windowSizeBytes:
+      typeof value.windowSizeBytes === 'number' ? value.windowSizeBytes : 0,
+    oversizedSingleton: value.oversizedSingleton === true,
+    windowPdfPages:
+      typeof value.windowPdfPages === 'number' ? value.windowPdfPages : 0,
+    windowEstimatedProbes:
+      typeof value.windowEstimatedProbes === 'number'
+        ? value.windowEstimatedProbes
+        : 0,
   }
 }
 
@@ -247,14 +282,22 @@ export function jobsFromCompileTasks(
         .at(-1) === 'llm-wiki' ||
       Boolean(task.result?.main_view?.meta_knowledge)
     if (!isStudioTask && !isLlmWikiTask) continue
-    const current = grouped.get(task.request.to) || []
+    const source = task.request.from[0] || ''
+    const windowMatch = source.match(
+      /\/windows\/(\d{4,})\/(?:document-sources|team-memory)/,
+    )
+    const groupingKey = windowMatch
+      ? `${task.request.to}#window-${windowMatch[1]}`
+      : task.request.to
+    const current = grouped.get(groupingKey) || []
     current.push(task)
-    grouped.set(task.request.to, current)
+    grouped.set(groupingKey, current)
   }
-  return [...grouped.entries()].map(([targetUri, group]) => {
+  return [...grouped.entries()].map(([groupingKey, group]) => {
     group.sort((left, right) => left.created_at.localeCompare(right.created_at))
     const latest = group.at(-1)!
     const first = group[0]
+    const targetUri = latest.request.to
     const isStudioTask = targetUri.startsWith(KNOWLEDGE_MINING_ROOT)
     const root = isStudioTask ? targetUri.replace(/\/wiki\/?$/, '') : targetUri
     const documents = group.filter((task) => taskKind(task) === 'documents')
@@ -263,6 +306,12 @@ export function jobsFromCompileTasks(
     const documentTask = documents.at(-1)
     const memoryTask = memory.at(-1)
     const humanTask = human.at(-1)
+    const sourceUri = first.request.from[0] || ''
+    const windowMatch = sourceUri.match(
+      /\/windows\/(\d{4,})\/(document-sources|team-memory)/,
+    )
+    const windowIndex = windowMatch ? Number(windowMatch[1]) : 1
+    const runId = jobIdForTarget(targetUri)
     const latestResult = [...group]
       .reverse()
       .find((task) => Boolean(task.result))?.result
@@ -270,13 +319,17 @@ export function jobsFromCompileTasks(
       createdAt: first.created_at,
       documentFiles: [],
       documentSourceUri:
-        documents[0]?.request.from[0] || `${root}/document-sources`,
+        documents[0]?.request.from[0] ||
+        memory[0]?.request.from[0] ||
+        `${root}/document-sources`,
       documentTaskId: documentTask?.task_id || null,
       error: latest.error
         ? `${latest.error.code}: ${latest.error.message}`
         : null,
       humanTaskId: humanTask?.task_id || null,
-      id: jobIdForTarget(targetUri),
+      id: windowMatch
+        ? `${runId}-w${windowMatch[1]}`
+        : jobIdForTarget(targetUri),
       memoryFiles: [],
       memorySourceUri: memory.at(-1)?.request.from[0] || `${root}/team-memory`,
       memoryTaskId: memoryTask?.task_id || null,
@@ -289,6 +342,21 @@ export function jobsFromCompileTasks(
       targetUri,
       taskId: latest.task_id,
       updatedAt: latest.updated_at,
+      runId,
+      windowByteLimit: 0,
+      windowCount: 1,
+      windowFileLimit: 0,
+      windowPageLimit: 0,
+      windowProbeLimit: 0,
+      windowIndex,
+      windowKind: windowMatch?.[2] === 'team-memory' ? 'memory' : 'documents',
+      windowLogUri: windowMatch
+        ? `${root}/logs/windows/${windowMatch[1]}.json`
+        : '',
+      windowSizeBytes: 0,
+      oversizedSingleton: false,
+      windowPdfPages: 0,
+      windowEstimatedProbes: 0,
     }
   })
 }
@@ -310,11 +378,26 @@ export function mergeMiningJobs(
             memoryFiles: local.memoryFiles,
             reason: local.reason || server.reason,
             result: server.result || local.result,
+            runId: local.runId || server.runId,
+            windowByteLimit: local.windowByteLimit || server.windowByteLimit,
+            windowCount: local.windowCount || server.windowCount,
+            windowFileLimit: local.windowFileLimit || server.windowFileLimit,
+            windowPageLimit: local.windowPageLimit || server.windowPageLimit,
+            windowProbeLimit: local.windowProbeLimit || server.windowProbeLimit,
+            windowIndex: local.windowIndex || server.windowIndex,
+            windowKind: local.windowKind || server.windowKind,
+            windowLogUri: local.windowLogUri || server.windowLogUri,
+            windowSizeBytes: local.windowSizeBytes || server.windowSizeBytes,
+            oversizedSingleton:
+              local.oversizedSingleton || server.oversizedSingleton,
+            windowPdfPages: local.windowPdfPages || server.windowPdfPages,
+            windowEstimatedProbes:
+              local.windowEstimatedProbes || server.windowEstimatedProbes,
           }
         : server,
     )
   }
   return [...merged.values()]
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-    .slice(0, 100)
+    .slice(0, 1000)
 }

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -936,9 +937,10 @@ class BotCompileService:
                     raise CompileFailure(
                         "INVALID_ARGUMENT", "okf_config must resolve to a YAML file", stage="queued"
                     )
-                parse_okf_config(
-                    await client.read_raw(canonical_okf_config), source=canonical_okf_config
-                )
+                if not request.allow_invalid_okf_output:
+                    parse_okf_config(
+                        await client.read_raw(canonical_okf_config), source=canonical_okf_config
+                    )
         except CompileFailure:
             raise
         except OpenVikingError as exc:
@@ -957,6 +959,7 @@ class BotCompileService:
                 "reason_provided": bool(reason),
                 "skill": canonical_skill,
                 "okf_config": canonical_okf_config,
+                "allow_invalid_okf_output": request.allow_invalid_okf_output,
                 "runtime_timeout_seconds": request.runtime_timeout_seconds,
             }
         )
@@ -1195,17 +1198,28 @@ class BotCompileService:
 
             okf_config: OKFConfig | None = None
             okf_config_content: str | None = None
+            okf_validation_warning: str | None = None
             if request.okf_config is not None:
                 try:
                     okf_config_content = await client.read_raw(request.okf_config)
+                except OpenVikingError as exc:
+                    raise CompileFailure(
+                        "INVALID_ARGUMENT", str(exc), stage="loading_skill"
+                    ) from exc
+                try:
                     okf_config = parse_okf_config(
                         okf_config_content,
                         source=request.okf_config,
                     )
-                except (OpenVikingError, ValueError) as exc:
-                    raise CompileFailure(
-                        "INVALID_ARGUMENT", str(exc), stage="loading_skill"
-                    ) from exc
+                except ValueError as exc:
+                    if not request.allow_invalid_okf_output:
+                        raise CompileFailure(
+                            "INVALID_ARGUMENT", str(exc), stage="loading_skill"
+                        ) from exc
+                    okf_validation_warning = (
+                        "OKF config validation failed; knowledge-mining continued without "
+                        f"enforcing that config: {exc}"
+                    )
                 await sandbox.write_file(
                     f"{COMPILE_CONFIG_ROOT}/{DEFAULT_OKF_CONFIG_NAME}",
                     okf_config_content,
@@ -1378,6 +1392,10 @@ class BotCompileService:
                 "readlist": readlist,
                 "source_units": source_units,
             }
+            if request.allow_invalid_okf_output:
+                registry_kwargs["allow_invalid_okf_output"] = True
+            if okf_validation_warning is not None:
+                registry_kwargs["okf_validation_warning"] = okf_validation_warning
             if target_checkout_enabled:
                 registry_kwargs["task_id"] = task_id
                 registry_kwargs["baseline_intermediates"] = baseline_intermediates
@@ -1420,6 +1438,7 @@ class BotCompileService:
                 "target_checkout_warnings": target_checkout_warnings,
                 "catalog_truncated": catalog_truncated,
                 "wiki_language": wiki_language,
+                "allow_invalid_okf_output": request.allow_invalid_okf_output,
             }
             if okf_config_content is not None:
                 prompt_kwargs["okf_config_content"] = okf_config_content
@@ -1692,7 +1711,7 @@ class BotCompileService:
             unchanged = list(
                 dict.fromkeys([*rendered.unchanged, *batch_result.get("unchanged", [])])
             )
-            warnings = []
+            warnings = list(getattr(submit_tool, "validation_warnings", []))
             if output_file_count == 0:
                 warnings.append("No reliable output was produced from the supplied materials.")
             result = CompileResult(
@@ -1706,6 +1725,9 @@ class BotCompileService:
                     "unchanged": unchanged,
                     "page_count": page_count,
                     "link_count": rendered.link_count,
+                    "validation_passed": bool(
+                        getattr(submit_tool, "validation_passed", True)
+                    ),
                     "warnings": warnings,
                     "views": (
                         [view.public_dict() for view in okf_config.views]
@@ -2625,6 +2647,7 @@ class BotCompileService:
                 path=directory,
                 recursive=False,
                 node_limit=remaining + 1,
+                show_all_hidden=True,
             )
             if len(children) > remaining:
                 raise CompileFailure(
@@ -2637,6 +2660,10 @@ class BotCompileService:
                     continue
                 entry_uri = str(raw.get("uri") or "").rstrip("/")
                 if not entry_uri or entry_uri == directory:
+                    continue
+                relative = relative_uri_path(root, entry_uri)
+                top_level = relative.split("/", 1)[0] if relative else ""
+                if top_level.startswith(".") and top_level != ".source":
                     continue
                 entries.append(raw)
                 is_dir = bool(raw.get("isDir", raw.get("is_dir", False)))
@@ -2692,6 +2719,7 @@ class BotCompileService:
         warnings: list[str] = []
         rows: list[tuple[str, str, str, int, str]] = []
         content_hashes: dict[tuple[str, str], str] = {}
+        provenance_records: dict[tuple[str, str], dict[str, Any]] = {}
         entries = [
             (str(source.get("source_id") or ""), entry)
             for source in sources
@@ -2737,6 +2765,9 @@ class BotCompileService:
             )
             size = entry.get("size")
             size_int = int(size) if isinstance(size, int) and size >= 0 else 0
+            if "/.source/" in uri and not uri.casefold().endswith("/provenance.json"):
+                rows.append((source_id, uri, workspace_path, size_int, "skipped:original-binary"))
+                return
             try:
                 payload = await client.download_bytes(uri)
             except Exception as exc:
@@ -2756,6 +2787,12 @@ class BotCompileService:
             except UnicodeDecodeError:
                 rows.append((source_id, uri, workspace_path, size_int, "skipped:binary"))
                 return
+            if uri.casefold().endswith("/.source/provenance.json"):
+                with contextlib.suppress(json.JSONDecodeError, TypeError):
+                    record = json.loads(text)
+                    original_uri = str(record.get("original_uri") or "")
+                    if original_uri:
+                        provenance_records[(source_id, original_uri)] = record
             if uri in sample_uris:
                 language_samples.append((uri, text[:_LANGUAGE_SAMPLE_CHARS_PER_FILE]))
             await sandbox.write_file(workspace_path, text)
@@ -2783,6 +2820,7 @@ class BotCompileService:
             sources=sources,
             rows=rows,
             content_hashes=content_hashes,
+            provenance_records=provenance_records,
         )
         source_units_path = f"{COMPILE_MATERIALIZED_ROOT}/{COMPILE_SOURCE_UNITS_NAME}"
         await sandbox.write_file(
@@ -2820,6 +2858,7 @@ class BotCompileService:
         sources: list[dict[str, Any]],
         rows: list[tuple[str, str, str, int, str]],
         content_hashes: Mapping[tuple[str, str], str] | None = None,
+        provenance_records: Mapping[tuple[str, str], Mapping[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """Group materialized leaves back into user-visible upload-level sources."""
         rows_by_source: dict[str, list[tuple[str, str, str, int, str]]] = {}
@@ -2883,10 +2922,22 @@ class BotCompileService:
                     and not str(leaf["workspace_path"])
                     .casefold()
                     .endswith(
-                        ("/.overview.md", "/.abstract.md", "/.source.json", "/okf_config.yaml")
+                        (
+                            "/.overview.md",
+                            "/.abstract.md",
+                            "/.source.json",
+                            "/.source/provenance.json",
+                            "/okf_config.yaml",
+                        )
                     )
                 ]
                 materialized.sort(key=_natural_path_key)
+                original_leaves = [
+                    leaf
+                    for leaf in leaf_records
+                    if "/.source/" in str(leaf["uri"])
+                    and not str(leaf["uri"]).casefold().endswith("/provenance.json")
+                ]
                 probe_count = required_probe_count(len(materialized))
                 if probe_count >= len(materialized):
                     required_read_paths = materialized
@@ -2895,17 +2946,35 @@ class BotCompileService:
                     probe_indexes = distributed_probe_indexes(len(materialized))
                     required_read_paths = [materialized[index] for index in probe_indexes]
                     inspection_strategy = "adaptive_distributed_head_middle_tail"
-                units.append(
-                    {
-                        "source_id": source_id,
-                        "resource": resource,
-                        "title": title,
-                        "leaves": leaf_records,
-                        "materialized_fragment_count": len(materialized),
-                        "inspection_strategy": inspection_strategy,
-                        "required_read_paths": required_read_paths,
-                    }
-                )
+                unit = {
+                    "source_id": source_id,
+                    "resource": resource,
+                    "title": title,
+                    "leaves": leaf_records,
+                    "materialized_fragment_count": len(materialized),
+                    "inspection_strategy": inspection_strategy,
+                    "required_read_paths": required_read_paths,
+                }
+                if original_leaves:
+                    original = original_leaves[0]
+                    unit["original_uri"] = original["uri"]
+                    unit["original_filename"] = str(original["uri"]).rsplit("/", 1)[-1]
+                    provenance = (
+                        provenance_records.get((source_id, str(original["uri"])), {})
+                        if provenance_records is not None
+                        else {}
+                    )
+                    unit["original_filename"] = str(
+                        provenance.get("original_filename") or unit["original_filename"]
+                    )
+                    if provenance.get("document_id"):
+                        unit["document_id"] = str(provenance["document_id"])
+                    elif provenance.get("sha256"):
+                        unit["document_id"] = f"sha256:{provenance['sha256']}"
+                    elif original.get("sha256"):
+                        unit["document_id"] = f"sha256:{original['sha256']}"
+                    unit["original_sources"] = original_leaves
+                units.append(unit)
         return units
 
     async def _materialize_target_checkout(
@@ -3165,6 +3234,8 @@ class BotCompileService:
         baseline_checkout: Mapping[str, bytes] | None = None,
         checkpoint_callback: Callable[[str], Awaitable[None]] | None = None,
         resume_completed_stage: str | None = None,
+        allow_invalid_okf_output: bool = False,
+        okf_validation_warning: str | None = None,
     ) -> tuple[ToolRegistry, set[str]]:
         selected = _COMPILE_CORE_TOOLS | _OV_READ_TOOLS
         if materialized:
@@ -3240,6 +3311,8 @@ class BotCompileService:
                     baseline_intermediates=baseline_intermediates or {},
                     baseline_checkout=baseline_checkout or {},
                     phase_gate=phase_gate,
+                    allow_invalid_okf_output=allow_invalid_okf_output,
+                    initial_validation_warning=okf_validation_warning,
                 )
             )
         else:
@@ -3275,6 +3348,7 @@ class BotCompileService:
         wiki_language: WikiLanguage | None = None,
         okf_config_content: str | None = None,
         okf_config: OKFConfig | None = None,
+        allow_invalid_okf_output: bool = False,
     ) -> tuple[str, str]:
         if capabilities.exec_enabled:
             command_rule = (
@@ -3299,12 +3373,22 @@ class BotCompileService:
                 "append provenance while leaving stale values presented as current. "
                 "Do not enumerate pages, files, paths, or content in the final submission: call "
                 "submit_wiki_bundle with no arguments after the checkout is complete. Compile "
-                "scans and validates the complete tree, writes it back with upsert, and never "
-                "deletes target files merely because they are absent from the checkout. It "
-                "commits only validated changes."
+                "scans the complete tree, writes it back with upsert, and never deletes target "
+                "files merely because they are absent from the checkout. "
+                + (
+                    "OKF validation findings are advisory for this knowledge-mining request and "
+                    "must not prevent the final write."
+                    if allow_invalid_okf_output
+                    else "It commits only validated changes."
+                )
             )
         phase_gate_rule = ""
-        if target_checkout_enabled and okf_config_content is not None and source_units:
+        if (
+            target_checkout_enabled
+            and okf_config_content is not None
+            and okf_config is not None
+            and source_units
+        ):
             phase_gate_rule = (
                 "\nThis mining run has three platform-enforced sequential phases. They cannot "
                 "be skipped or reordered:\n"
@@ -3318,11 +3402,18 @@ class BotCompileService:
                 "level source participates in at least one promote/merge/defer/reject decision. "
                 "Still do not create or modify final pages. Call submit_candidate_knowledge with "
                 "no arguments and continue only after it is accepted. Promoted candidates need "
-                "stable meta_id values; their final page_paths are validated at final submission.\n"
-                "3. PAGE GENERATION: only now create/update index, configured facet pages, evidence "
+                "one stable page_path each; its kind must match that page's frontmatter type at "
+                "final submission.\n"
+                "3. PAGE GENERATION: only now create/update index, configured knowledge pages, evidence "
                 "artifacts, and other final output. Finish with submit_wiki_bundle. The final tool "
                 "is locked until both prior checkpoints have passed. Use scratch paths outside "
-                f"{COMPILE_TARGET_CHECKOUT_ROOT}/ while planning the first two phases.\n"
+                f"{COMPILE_TARGET_CHECKOUT_ROOT}/ while planning the first two phases."
+                + (
+                    " In this CLI knowledge-mining run, final OKF conformance checks are "
+                    "non-blocking: submit once after writing the best available output.\n"
+                    if allow_invalid_okf_output
+                    else "\n"
+                )
             )
         skill_read_rule = (
             f"The selected Skill package is at `skills/{skill_name}/` in the task workspace; "
@@ -3335,31 +3426,31 @@ class BotCompileService:
             if okf_config is not None and okf_config.main_view is not None:
                 main_view = okf_config.main_view
                 structure = "/".join(main_view.path_structure)
-                facets = ", ".join(main_view.facet_categories)
-                route_rule = ""
-                if main_view.directory_routes:
-                    route_summary = "; ".join(
-                        f"{facet}: {', '.join(routes)}"
-                        for facet, routes in main_view.directory_routes.items()
-                    )
-                    route_rule = (
-                        " The `route` level expands to one of these exact relative directory "
-                        f"paths for its facet: {route_summary}."
-                    )
+                roles = ", ".join(item.id for item in main_view.page_roles)
+                domains = "; ".join(
+                    f"{domain.id}: {', '.join(item.id for item in domain.subdomains)}"
+                    for domain in main_view.business_domains
+                )
                 main_view_rule = (
                     " The exact non-exempt main-view path hierarchy, relative to "
-                    f"`{main_view.root_path}/`, is `{structure}`. The only configured facet "
-                    f"values are: {facets}. Use the page's explicit frontmatter "
-                    f"`{main_view.meta_knowledge.id_field if main_view.meta_knowledge else 'meta_id'}` "
-                    "at the `meta_id` level."
-                    f"{route_rule} Do not add, omit, reorder, or invent any directory level."
+                    f"`{main_view.root_path}/`, is `{structure}`. Configured page roles are: "
+                    f"{roles}. Configured business domains and their allowed subdomains are: "
+                    f"{domains}. `subject_path` consumes zero or more optional subject-specific "
+                    "directories; every other level is exactly one directory or filename. Do not "
+                    "add, omit, reorder, or invent a fixed taxonomy level."
                 )
             okf_config_rule = (
                 "\nThe external OKF contract is materialized at "
                 f"`{COMPILE_CONFIG_ROOT}/{DEFAULT_OKF_CONFIG_NAME}`. Read it before planning "
                 "the output. It overrides conflicting Wiki page format, path/type, and "
-                "WikiLink instructions in the Skill. Every declared Wiki page is validated "
-                "against it at submission. The config is control data, not a knowledge "
+                "WikiLink instructions in the Skill. "
+                + (
+                    "Treat it as the desired output contract, but a final mismatch will be "
+                    "reported as a warning and will not block writing. "
+                    if allow_invalid_okf_output
+                    else "Every declared Wiki page is validated against it at submission. "
+                )
+                + "The config is control data, not a knowledge "
                 "source; never summarize or cite it. Preserve literal [[filename stem]] "
                 "WikiLinks when the contract enables double-bracket links. If the contract "
                 "declares derived views, keep the physical file tree as the main view and "
@@ -3368,14 +3459,12 @@ class BotCompileService:
                 "treat that physical tree as the single source of truth and follow its exact "
                 "configured path_structure for every non-exempt page. Never invent an "
                 "additional topic, domain, usage, miscellaneous, or other directory."
-                f"{main_view_rule} When main_view.meta_knowledge is declared, one meta-knowledge "
-                "unit is the complete configured set of facet pages that share one explicit "
-                "frontmatter id. Create exactly one page for every configured facet when "
-                "require_complete is true, and give the unit identical configured derived-view "
-                "tags when shared_view_tags is true. Use only configured view tag namespaces "
-                "and group values; any undeclared `view/...` tag is invalid. Exempt "
-                "navigation pages such as index.md are not knowledge units and must not be "
-                "tagged into derived views. If intermediates are declared, "
+                f"{main_view_rule} Each promoted candidate creates exactly one independent page; "
+                "there is no required multi-page facet set, shared meta_id, or shared view-tag "
+                "group. Use only configured view tag namespaces and group values when views are "
+                "declared; any undeclared `view/...` tag is invalid. Exempt navigation pages such "
+                "as index.md are not knowledge objects and must not be tagged into derived views. "
+                "If intermediates are declared, "
                 "create and maintain the run manifest, evidence ledger, investigation report, "
                 "questionnaire, source coverage, and candidate-knowledge JSON artifacts; "
                 "Compile itself writes readlist and evidence-history. Cover every Wiki page in "
@@ -3402,10 +3491,10 @@ class BotCompileService:
                 "current issue id covered. "
                 "Candidate knowledge is mandatory before page synthesis: its `candidates` "
                 "array must account for every upload-level source and every non-index final "
-                "page. Each item has unique `id`, non-empty `title` and `summary`, `kind` "
-                "(`entity`, `concept`, or `synthesis`), exact `source_resources`, `stage`, and "
-                "`disposition` (`promoted`, `merged`, `deferred`, or `rejected`). Promoted "
-                "items require `meta_id` and `page_paths`; merged items require `merged_into` "
+                "page. Each item has unique `id`, non-empty `title` and `summary`, `kind` drawn "
+                "from the effective OKF `frontmatter.allowed_types`, exact `source_resources`, "
+                "`stage`, and `disposition` (`promoted`, `merged`, `deferred`, or `rejected`). "
+                "Promoted items require exactly one `page_path`; merged items require `merged_into` "
                 "and `reason`; deferred/rejected items require `reason`. Its exact summary "
                 "counts are total/promoted/merged/deferred/rejected. Do not manually create "
                 "readlist or evidence-history; the platform injects and merges them. Record "

@@ -159,6 +159,19 @@ const workspace = {
         incremental: '2 · Team Memory updates it incrementally',
       },
     },
+    window: {
+      fileLimit: 'Maximum files per window',
+      byteLimit: 'Window byte budget (MiB)',
+      pageLimit: 'Maximum PDF pages per window',
+      probeLimit: 'Estimated required probes per window',
+      preview:
+        'The current selection is estimated at {{count}} serial windows. Actual PDF page counts are read and the plan is recalculated at start. A file over any window budget gets a singleton window.',
+      incrementalReason:
+        'This is serial window {{index}}/{{count}}. Preserve the complete existing target knowledge base and use only this window’s new evidence to extend, correct, and deduplicate it.',
+      badge: 'Window {{index}}/{{count}}',
+      singleton: 'Large-file singleton',
+      singletonSuffix: ' · large-file singleton',
+    },
     reason: {
       label: 'Mining objective',
       default:
@@ -194,6 +207,8 @@ const workspace = {
       skill: 'Skill',
       okfConfig: 'OKF config',
       output: 'Output',
+      window: 'Serial window',
+      windowLog: 'Window log',
       cancelledDescription:
         'The task was cancelled. Its saved phase checkpoint can be resumed.',
     },
@@ -417,6 +432,8 @@ const workspace = {
         'This queued job is missing its Skill or OKF config and cannot start safely. Create a new job and upload it again.',
       queueBusy:
         'Another mining job is running or queued. This checkpoint cannot resume until the serial queue is clear.',
+      windowFilesUnavailable:
+        'The browser cannot restore local files that were not uploaded before a reload. Create the run again; completed windows and remote logs remain intact.',
     },
     queue: {
       added: 'The isolated dataset was saved and added to the mining queue.',

@@ -79,11 +79,9 @@ def _page_metadata(
             frontmatter = yaml.safe_load(match.group(1)) or {}
         except yaml.YAMLError:
             continue
-        if not isinstance(frontmatter, Mapping) or frontmatter.get("type") not in {
-            "entity",
-            "concept",
-            "synthesis",
-        }:
+        if not isinstance(frontmatter, Mapping) or frontmatter.get("type") not in set(
+            config.allowed_types
+        ):
             continue
         source_resources: list[str] = []
         for source in frontmatter.get("sources") or []:
@@ -96,7 +94,6 @@ def _page_metadata(
             "type": str(frontmatter.get("type") or "synthesis"),
             "title": str(frontmatter.get("title") or path.rsplit("/", 1)[-1]),
             "description": str(frontmatter.get("description") or "").strip(),
-            "meta_id": str(frontmatter.get("meta_id") or "").strip(),
             "source_resources": list(dict.fromkeys(source_resources)),
         }
     return pages
@@ -280,6 +277,7 @@ def _merge_candidates(
     current: Mapping[str, Any],
     *,
     stage: str,
+    allowed_types: tuple[str, ...],
     pages: Mapping[str, Mapping[str, Any]] | None = None,
     exempt_paths: set[str] | None = None,
 ) -> dict[str, Any]:
@@ -303,53 +301,39 @@ def _merge_candidates(
     if pages is not None:
         exempt = exempt_paths or set()
         knowledge_pages = {path: value for path, value in pages.items() if path not in exempt}
-        grouped: dict[str, list[str]] = {}
-        for path, metadata in knowledge_pages.items():
-            meta_id = str(metadata.get("meta_id") or "").strip()
-            if meta_id:
-                grouped.setdefault(meta_id, []).append(path)
-
-        candidate_for_meta: dict[str, str] = {}
+        candidate_for_path: dict[str, str] = {}
         for candidate_id, entry in by_id.items():
-            meta_id = str(entry.get("meta_id") or "").strip()
-            if meta_id:
-                candidate_for_meta[meta_id] = candidate_id
+            page_path = str(entry.get("page_path") or "").strip("/")
+            if page_path:
+                candidate_for_path[page_path] = candidate_id
 
-        for meta_id, page_paths in grouped.items():
-            candidate_id = candidate_for_meta.get(meta_id)
+        for page_path, metadata in knowledge_pages.items():
+            candidate_id = candidate_for_path.get(page_path)
             if candidate_id is None:
                 # Candidate creation is an explicit mining stage. Reconstructing one
                 # from final pages would hide that the agent skipped that stage.
                 continue
-            metadata = knowledge_pages[sorted(page_paths)[0]]
             entry = by_id.get(candidate_id, {"id": candidate_id})
-            page_sources = list(
-                dict.fromkeys(
-                    source
-                    for path in page_paths
-                    for source in _strings(knowledge_pages[path].get("source_resources"))
-                )
-            )
+            page_sources = _strings(metadata.get("source_resources"))
             entry.update(
                 {
                     "id": candidate_id,
-                    "title": str(entry.get("title") or metadata.get("title") or meta_id),
+                    "title": str(entry.get("title") or metadata.get("title") or candidate_id),
                     "kind": (
                         entry.get("kind")
-                        if entry.get("kind") in {"entity", "concept", "synthesis"}
+                        if entry.get("kind") in allowed_types
                         else metadata.get("type", "synthesis")
                     ),
                     "summary": str(
                         entry.get("summary")
                         or metadata.get("description")
-                        or f"Knowledge candidate {meta_id}."
+                        or f"Knowledge candidate {candidate_id}."
                     ),
                     "source_resources": _strings(
                         [*_strings(entry.get("source_resources")), *page_sources]
                     ),
                     "disposition": "promoted",
-                    "meta_id": meta_id,
-                    "page_paths": sorted(page_paths),
+                    "page_path": page_path,
                 }
             )
             entry.setdefault("stage", stage)
@@ -360,10 +344,8 @@ def _merge_candidates(
         valid_pages = set(knowledge_pages)
         for candidate_id in list(by_id):
             entry = by_id[candidate_id]
-            entry["page_paths"] = [
-                path for path in _strings(entry.get("page_paths")) if path in valid_pages
-            ]
-            if entry.get("disposition") == "promoted" and not entry["page_paths"]:
+            page_path = str(entry.get("page_path") or "").strip("/")
+            if entry.get("disposition") == "promoted" and page_path not in valid_pages:
                 del by_id[candidate_id]
 
     for candidate_id, entry in by_id.items():
@@ -372,10 +354,11 @@ def _merge_candidates(
         entry["summary"] = str(
             entry.get("summary") or "The candidate was recorded during knowledge mining."
         )
-        if entry.get("kind") not in {"entity", "concept", "synthesis"}:
-            entry["kind"] = "synthesis"
+        if entry.get("kind") not in allowed_types:
+            entry["kind"] = allowed_types[-1]
         entry["source_resources"] = _strings(entry.get("source_resources"))
-        entry["page_paths"] = _strings(entry.get("page_paths"))
+        entry.pop("meta_id", None)
+        entry.pop("page_paths", None)
         entry.setdefault("stage", stage)
         disposition = entry.get("disposition")
         if disposition not in {"promoted", "merged", "deferred", "rejected"}:
@@ -390,6 +373,8 @@ def _merge_candidates(
                 entry.setdefault("reason", "The merge target is unavailable in this checkout.")
         elif disposition in {"deferred", "rejected"}:
             entry.setdefault("reason", "The candidate was not promoted in this run.")
+        if entry.get("disposition") != "promoted":
+            entry.pop("page_path", None)
     dispositions = ("promoted", "merged", "deferred", "rejected")
     counts = {"total": len(by_id), **dict.fromkeys(dispositions, 0)}
     for entry in by_id.values():
@@ -545,6 +530,7 @@ def prepare_persistent_intermediates(
         _load(baseline, paths["candidate_knowledge"]),
         _load(result, paths["candidate_knowledge"]),
         stage=stage,
+        allowed_types=config.allowed_types,
         pages=canonical_pages,
         exempt_paths=(set(config.main_view.exempt_paths) if config.main_view is not None else set()),
     )

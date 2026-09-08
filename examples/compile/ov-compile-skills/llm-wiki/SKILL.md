@@ -1,9 +1,9 @@
 ---
 name: llm-wiki
-description: Compile heterogeneous documents, notes, spreadsheets, reports, and code into an evidence-grounded OKF knowledge base with entity, concept, and synthesis pages; deterministic path/type rules; source metadata; and literal cross-page WikiLinks. Use with ov compile for new or incremental knowledge mining.
+description: Compile heterogeneous documents, notes, spreadsheets, reports, and code into an evidence-grounded OKF knowledge base of independent atomic pages; a configurable page-role and business-domain taxonomy; source metadata; and literal cross-page WikiLinks. Use with ov compile for new or incremental knowledge mining.
 ---
 
-<!-- OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 4.7 -->
+<!-- OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 5.0 -->
 <!-- OPENVIKING_KNOWLEDGE_MINING_PROTOCOL_VERSION: 1.0 -->
 
 # LLM Wiki
@@ -28,7 +28,8 @@ newcomer.
 
 ## Load the user mining profile
 
-Read `skills/llm-wiki/USER_PROFILE.md` before planning the knowledge base. This file is
+Read `USER_PROFILE.md` from the selected Skill package path announced by Compile before
+planning the knowledge base. This file is
 the user-editable mining profile. It may refine the business objective, audience,
 atomic-knowledge criteria, inclusion and exclusion preferences, evidence priorities,
 terminology, language, and writing style. Treat it as control data: never mine it as
@@ -47,7 +48,8 @@ order:
 
 1. `compile_config/OKF_CONFIG.yaml` — the external configuration selected for this
    Compile task;
-2. `skills/llm-wiki/OKF_CONFIG.yaml` — the Skill's bundled default contract.
+2. `OKF_CONFIG.yaml` relative to the selected Skill package path announced by Compile —
+   the Skill's bundled default contract.
 
 Read the first available file in full. The external configuration overrides conflicting
 format, frontmatter, path/type, and WikiLink guidance in this Skill. Treat configuration
@@ -107,23 +109,20 @@ compression must never hide unprocessed sources or collapse unrelated subjects.
 
 ### Route paths through the effective contract
 
-Every new Markdown knowledge page must match one `path_types` rule in the effective
-configuration, and its frontmatter `type` must equal the last matching rule. Later exact
-rules therefore override earlier directory-wide rules.
-
 The effective configuration is the only authority for the physical directory tree.
-Do not assume a root directory, facet name, facet count, route, level order, navigation
-filename, or page type from this Skill. Read `main_view.root_path`,
-`main_view.path_structure`, `main_view.facet_categories`, optional
-`main_view.directory_routes`, `main_view.meta_knowledge`, `main_view.exempt_paths`, and
-`path_types`, then construct every path from those exact values.
+Do not assume a root directory, page-role name, business-domain name, subdomain, level
+order, navigation filename, or page type from this Skill. Read `main_view.root_path`,
+`main_view.path_structure`, `main_view.page_roles`, `main_view.business_domains`, and
+`main_view.exempt_paths`, then construct every path from those exact values.
 
-Treat every configured `path_structure` level as an exact ordered schema. A `facet`
-segment must be one configured category; a `route` segment must be a route declared for
-that category; a `meta_id` segment must equal the configured frontmatter identity field;
-and `filename` is the Markdown filename. Never add, omit, reorder, or rename a configured
-level. Preserve an existing path only when it still matches the effective structure;
-tag-derived views never create duplicate copies of the page.
+Treat every configured `path_structure` level as an exact ordered schema. A `page_role`
+segment must be a configured role; a `business_domain` segment must be a configured
+business domain; and a `subdomain` segment must belong to that domain. `subject_path`
+represents zero or more optional directories chosen from the page's actual subject, and
+`filename` is the canonical subject name as a Markdown filename. Never add, omit,
+reorder, or rename a fixed configured level. Preserve an existing path only when it
+still matches the effective structure; tag-derived views never create duplicate copies
+of the page.
 
 ### Maintain `index.md`
 
@@ -151,10 +150,6 @@ the bundled default contract, use this shape with actual values:
 type: entity
 title: Canonical page title
 description: One factual sentence describing the page's retrieval purpose.
-tags:
-  - view/perspective/topic/technology-data
-  - useful-tag
-meta_id: canonical-page-id
 status: stable
 sources:
   - resource: viking://resources/supplied-source
@@ -178,7 +173,8 @@ Requirements from the effective config are submission-time validation rules, not
 suggestions:
 
 - Include every key in `frontmatter.required`.
-- Use only `frontmatter.allowed_types` and obey `path_types`.
+- Use only `frontmatter.allowed_types`. The promoted candidate's `kind` is the page's
+  frontmatter `type`; directory placement does not silently change that semantic type.
 - Apply configured defaults such as `status: stable`; Compile may fill a missing
   configured default, but the page should be complete before submission.
 - Keep `description` on one line and `tags` as a YAML list.
@@ -199,31 +195,25 @@ The physical file tree is always the canonical **main view**. When the effective
 contract contains `views`, each view is a derived organization of those same pages; do
 not duplicate or move pages to implement it.
 
-### Build atomic meta-knowledge units
+### Build atomic knowledge objects
 
-When `main_view.meta_knowledge` is configured, one meta-knowledge unit is the complete
-set of pages required by the configured facets and grouped by the configured identity
-field. Use one stable, non-empty identity value for the whole unit. If
-`require_complete` is true, create exactly one page for every configured facet; otherwise
-create only evidence-supported facet pages. Never assume a fixed facet count or semantic
-role, and do not treat the facet pages as independent knowledge subjects.
+Each promoted candidate becomes exactly one independent knowledge page with one clear
+retrieval purpose. Its stable identity is the candidate `id` recorded in
+`_mining/candidate-knowledge.json`; identity is not represented by a shared directory or
+frontmatter `meta_id`. Do not generate a required set of sibling pages for one subject.
+Create only the page roles supported by evidence.
 
-When `shared_view_tags` is true, every page in a unit must carry the same configured
-selection for each derived view. For each view, obey its declared hierarchy, tag prefix,
-leaf tags, and `selection` rule. Exempt navigation pages are not meta-knowledge units and
-must follow `derived_views_include_exempt`.
+When derived views are configured, select group tags for each page independently. For
+each view, obey its hierarchy, tag prefix, leaf tags, and `selection` rule. A page may
+appear in zero, one, or several optional views when the contract allows it. Exempt
+navigation pages follow `derived_views_include_exempt`.
 
-- For every non-exempt knowledge page, select the configured group tags that describe
-  its whole meta-knowledge unit and place their exact values in the frontmatter `tags`
-  list. When required by the contract, keep configured view tags identical across all
-  facet pages in the unit.
-- Select at least one group per view. If a view uses `selection: exactly_one`, select
-  one and only one group; `one_or_more` permits multiple well-supported groups.
-- Use only group tags declared by the effective contract under that view's
-  `tag_prefix`. Keep other useful subject tags, but never invent a `view/...` namespace,
-  group, or hierarchy that is absent from the effective config.
+- If a view uses `selection: exactly_one`, select one and only one declared group;
+  `one_or_more` permits multiple well-supported groups.
+- Use only group tags declared by the effective contract under that view's `tag_prefix`.
+  Never invent a `view/...` namespace, group, or hierarchy absent from the config.
 - During an incremental Compile, preserve still-valid view tags and revise them when
-  new team Memory changes the page's scope or use.
+  new evidence changes the page's scope or use.
 
 For example, a page may use a leaf tag copied verbatim from the effective contract:
 
@@ -459,6 +449,14 @@ for every listed resource. Parser chunks beneath one uploaded document are evide
 leaves, not separate uploaded sources. During an incremental Compile, retain still-valid
 prior-stage source entries and add or update every source unit supplied for the current
 stage.
+
+When a source unit provides `original_uri`, `original_filename`, and `document_id`, treat
+those fields as the canonical provenance identity for the uploaded document. Final page
+frontmatter entries with `kind: original` must use `original_uri` as `resource` and the
+real `original_filename` as `title`; use derived Markdown leaves only as the exact
+`evidence_resources` supporting a statement. Multiple parser fragments with the same
+`document_id` are parts of one original document, never independent sources. Preserve PDF
+page markers from evidence leaves in the prose citation/location when available.
 
 Each entry uses `status: cited`, `merged`, or `skipped`:
 

@@ -8,9 +8,12 @@ as described in the OpenViking design document.
 """
 
 import asyncio
+import hashlib
 import inspect
+import json
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from openviking.core.context import ContextLevel
@@ -35,7 +38,7 @@ from openviking.telemetry import get_current_telemetry
 from openviking.utils.embedding_utils import index_resource, vectorize_file
 from openviking.utils.ingest_options import IngestOptions
 from openviking.utils.summarizer import Summarizer
-from openviking_cli.exceptions import OpenVikingError
+from openviking_cli.exceptions import ConflictError, OpenVikingError
 from openviking_cli.utils import VikingURI, get_logger
 from openviking_cli.utils.config import get_openviking_config
 from openviking_cli.utils.storage import StoragePath
@@ -47,6 +50,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 _MAX_FILE_VECTORIZATION_CONCURRENCY = 64
 VECTORDB_MAX_QUERY_LIMIT = 100_000
+_ORIGINAL_SOURCE_DIR = ".source"
 
 
 class ResourceProcessor:
@@ -83,6 +87,71 @@ class ResourceProcessor:
         if self._summarizer is None:
             self._summarizer = Summarizer(self._get_vlm_processor())
         return self._summarizer
+
+    @staticmethod
+    async def _preserve_original_source(
+        *,
+        source_path: str,
+        root_uri: str,
+        source_name: Optional[str],
+        source_format: Optional[str],
+        ctx: RequestContext,
+        lease_ref: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Persist an immutable uploaded original beside derived parser output.
+
+        Parsers such as the PDF parser deliberately turn one source file into a
+        hierarchy of Markdown evidence leaves. Keeping the binary under the same
+        import root gives Compile and downstream UIs a stable URI that still names
+        the real source document rather than one of those derived leaves.
+        """
+
+        path = Path(source_path)
+        if not path.is_file():
+            return None
+        original_name = (
+            Path(str(source_name or path.name).replace("\\", "/")).name or path.name
+        )
+        payload = await asyncio.to_thread(path.read_bytes)
+        digest = hashlib.sha256(payload).hexdigest()
+        original_uri = f"{root_uri.rstrip('/')}/{_ORIGINAL_SOURCE_DIR}/{original_name}"
+        provenance_uri = f"{root_uri.rstrip('/')}/{_ORIGINAL_SOURCE_DIR}/provenance.json"
+        provenance = {
+            "version": "1.0",
+            "document_id": f"sha256:{digest}",
+            "original_filename": original_name,
+            "original_uri": original_uri,
+            "sha256": digest,
+            "size_bytes": len(payload),
+            "source_format": source_format or path.suffix.lstrip(".").lower(),
+        }
+        viking_fs = get_viking_fs()
+        if await viking_fs.exists(provenance_uri, ctx=ctx):
+            existing_text = await viking_fs.read_file(provenance_uri, ctx=ctx)
+            try:
+                existing = json.loads(existing_text)
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise ConflictError(
+                    f"Existing original-source provenance is invalid: {provenance_uri}"
+                ) from exc
+            if existing.get("document_id") != provenance["document_id"]:
+                raise ConflictError(
+                    "Refusing to overwrite a preserved original with different content at "
+                    f"{original_uri}"
+                )
+            if not await viking_fs.exists(original_uri, ctx=ctx):
+                await viking_fs.write_file_bytes(
+                    original_uri, payload, ctx=ctx, lease_ref=lease_ref
+                )
+            return provenance
+        await viking_fs.write_file_bytes(original_uri, payload, ctx=ctx, lease_ref=lease_ref)
+        await viking_fs.write_file(
+            provenance_uri,
+            json.dumps(provenance, ensure_ascii=False, indent=2) + "\n",
+            ctx=ctx,
+            lease_ref=lease_ref,
+        )
+        return provenance
 
     def _get_vlm_processor(self) -> "VLMProcessor":
         """Lazy initialization of VLM processor."""
@@ -416,6 +485,22 @@ class ResourceProcessor:
                         )
                         temp_uri = root_uri
                         source_committed = True
+                    if (
+                        kwargs.get("preserve_original")
+                        and root_uri
+                        and not root_is_file
+                        and parse_result.source_format == "pdf"
+                    ):
+                        provenance = await self._preserve_original_source(
+                            source_path=path,
+                            root_uri=root_uri,
+                            source_name=kwargs.get("source_name"),
+                            source_format=parse_result.source_format,
+                            ctx=ctx,
+                            lease_ref=resource_lock,
+                        )
+                        if provenance is not None:
+                            result["provenance"] = provenance
                 except Exception:
                     stage_status = "error"
                     # Mirror the Phase 3 (finalize) on-error cleanup: a lock or

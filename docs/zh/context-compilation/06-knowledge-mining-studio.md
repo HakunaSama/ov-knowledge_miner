@@ -21,17 +21,18 @@ curl http://localhost:1933/bot/v1/health
 
 ## 使用流程
 
-1. 在“知识挖掘”页面选择文件，或一次选择包含 `documents/` 与 `team-memory/` 的完整资源文件夹。页面会递归分类子目录。支持 `.pdf`、`.md`、`.markdown`、`.doc`、`.docx`、`.xls` 和 `.xlsx`；文件总数不限，单文件上限 10 MiB。
+1. 在“知识挖掘”页面选择文件，或一次选择包含 `documents/` 与 `team-memory/` 的完整资源文件夹。页面会递归分类子目录。支持 `.pdf`、`.md`、`.markdown`、`.doc`、`.docx`、`.xls` 和 `.xlsx`；文件总数不限，单文件上限 512 MiB。
 2. 可选上传团队 Memory 文件（`.md`、`.txt`、`.json`、`.yaml`、`.yml`）。它们会进入独立来源目录，不会混入首轮文档 Compile。
 3. “OKF 格式配置”默认使用 `llm-wiki/OKF_CONFIG.yaml`；也可以选择自定义 `.yaml`/`.yml`，严格指定必需 frontmatter、`main_view.path_structure`、facet、目录类型映射、派生视图和 WikiLink 规则。配置外目录或 `view/...` 分组会被提交器拒绝。
 4. 在“挖掘目标”中说明问题、受众、时间范围、输出语言和侧重点。这段内容会作为 Compile 的 `reason`。
-5. 点击“开始知识挖掘”。页面先把本批数据完整保存到独立目录，再按创建时间加入串行队列。可以立即新建另一批、上传另一份数据并继续排队；不同批次不会共享来源目录或产物目录。队首先用文档生成主知识库；如果上传了团队 Memory，文档任务成功后会自动对同一目标启动第二个增量 Compile。
-6. 页面顶部的“挖掘历史”会列出当前 principal 最近 90 天内的历史、运行中批次和排队位置；点击任一批次即可用同一套完整界面查看目录、覆盖账本、中间产物、调查问卷和知识点阵。队列严格一次只运行一个完整挖掘流程；文档、Memory、人工补证都属于同一流程，“等待人工补证”也会阻塞后续任务。当前流程完成、产出部分结果、失败或取消后才释放下一项。切换到其他历史不会停止后台轮询或后续自动阶段；运行中的 Compile 可以协作式取消，排队项可以取消排队，失败或已取消的任务只有在队列空闲时才能从检查点恢复。
-7. 主视图以可展开目录树展示真实知识文件。默认物理结构严格是 `knowledge/<facet>/<meta_id>/<filename>`，what、why、how 位于顶层 facet，而不是文件的末级父目录；一个元知识仍由共享同一 `meta_id` 的三页构成。根 `index.md` 只是导航，不计入知识文件，旧版结果仍会按 `meta_id` 显示兼容目录。
-8. 主视图、知识域和使用场景始终展示同一批文件且总数一致。“知识域”表示整个元知识的一个主要主题归属，“使用场景”表示它的一个主要用途；两者只重组整组三页，不复制或拆散文件。“中间产物”用于审计证据链，“人工调查”是最终完成前的补证门禁。
-9. “知识点阵”直接复用 `examples/compile/graph-show/knowledge-graph/knowledge_graph.py` 中的官方 KG Explorer HTML/CSS/D3 渲染器；Studio 只负责把元知识、what/why/how、WikiLink、跨知识引用和证据链适配为官方 `nodes` / `links` 数据。保留类型筛选、关系图例、检索、邻居聚焦、平移缩放和实体检查器。
-10. “来源覆盖”逐项展示已上传、已检查、已引用、已合并和已跳过的材料及原因。缺失来源、未实际读取、无理由跳过或引用与证据账本不一致都会拒绝提交，让 VikingBot 继续处理。
-11. 当报告发现来源冲突或证据缺口时，Studio 将整次工作流切换到“等待人工知识补证”，立即展示阶段性知识与问卷，但不会宣布挖掘完成。提交答案后，答案作为新的 `human-answer` 来源触发同目标增量 Compile；只有问题处理完成后才进入“已完成”。
+5. 设置串行窗口。默认每窗最多 10 份文件、200 MiB 原文件、1,500 个 PDF 实际页和 300 个预计必读探针，任一预算先达到就切窗。单文件自身超过窗口预算、但仍不超过 512 MiB 单文件硬上限时会独占一窗，不会被客户端物理拆 PDF。
+6. 点击“开始知识挖掘”。同一运行的所有窗口使用隔离的来源目录并固定指向同一个 `wiki` 目标。系统严格执行“上传当前窗 → Compile 当前窗 → 当前窗完成 → 上传下一窗”；首窗创建主知识库，后续文档窗和 Memory 窗都是增量更新。
+7. 页面顶部的“挖掘历史”会列出当前 principal 最近 90 天内的历史、运行中窗口和排队位置；点击任一窗口即可用同一套完整界面查看目录、覆盖账本、中间产物、调查问卷和知识点阵。每个终态窗口都会留下日志；运行中的 Compile 可以协作式取消，失败或已取消的任务只有在队列空闲时才能从检查点恢复。
+8. 主视图以可展开目录树展示真实知识文件。默认物理结构严格是 `knowledge/<facet>/<meta_id>/<filename>`，what、why、how 位于顶层 facet，而不是文件的末级父目录；一个元知识仍由共享同一 `meta_id` 的三页构成。根 `index.md` 只是导航，不计入知识文件，旧版结果仍会按 `meta_id` 显示兼容目录。
+9. 主视图、知识域和使用场景始终展示同一批文件且总数一致。“知识域”表示整个元知识的一个主要主题归属，“使用场景”表示它的一个主要用途；两者只重组整组三页，不复制或拆散文件。“中间产物”用于审计证据链，“人工调查”是最终完成前的补证门禁。
+10. “知识点阵”直接复用 `examples/compile/graph-show/knowledge-graph/knowledge_graph.py` 中的官方 KG Explorer HTML/CSS/D3 渲染器；Studio 只负责把元知识、what/why/how、WikiLink、跨知识引用和证据链适配为官方 `nodes` / `links` 数据。保留类型筛选、关系图例、检索、邻居聚焦、平移缩放和实体检查器。
+11. “来源覆盖”逐项展示已上传、已检查、已引用、已合并和已跳过的材料及原因。缺失来源、未实际读取、无理由跳过或引用与证据账本不一致都会拒绝提交，让 VikingBot 继续处理。
+12. 最后一个窗口发现来源冲突或证据缺口时，Studio 会切换到“等待人工知识补证”，展示阶段性知识与问卷。提交答案后，答案作为新的 `human-answer` 来源触发同目标增量 Compile；只有问题处理完成后才进入“已完成”。
 
 ## 使用 CLI 一键上传并开始挖掘
 
@@ -63,7 +64,10 @@ ov knowledge-mining \
 - `--okf-config` 接收本地 YAML 文件；省略时使用随 CLI 编译的默认配置。
 - `--skill` 可指定已有 Skill URI；省略时优先使用当前身份可见的用户级 `llm-wiki`，找不到时自动安装内置版本。
 - `--to` 可固定知识库目标；省略时自动使用本批次的 `wiki/` 目录。
-- 不传 `--wait` 时，命令完成上传并启动文档任务后立即返回 `document_task_id`，可用 `ov task status <task-id>` 查询。
+- `--window-files`、`--window-bytes`、`--window-pages` 和 `--window-probes` 分别控制每窗文件数（默认 10）、原文件字节（默认 200 MiB）、PDF 实际页数（默认 1500）与预计必读探针（默认 300）。多窗口完整流程必须使用 `--wait`。
+- `knowledge-mining` CLI 将最终 OKF 一致性校验作为非阻断告警：目录、frontmatter、来源或 WikiLink 不符合 OKFConfig 时仍会写入当前 checkout，并在任务结果与窗口日志中记录 `validation_passed: false` 和告警。路径安全、文件数量、输出大小及前两个挖掘阶段的门禁仍然生效。普通 `ov compile` 保持严格校验。
+- `--state-file` 可指定本地原子 JSON 检查点；省略时写到 `.openviking/knowledge-mining/<batch-id>.json`。中断后运行 `ov knowledge-mining --resume-state <file>`，无需再次提供 `--documents`，会跳过已完成窗口和已确认上传的文件，并恢复运行中、失败或部分成功的窗口。
+- 不传 `--wait` 只适用于单窗口；命令启动任务后返回 `task_ids`、`state_file` 和 `run_log_uri`。
 - 加 `-o json` 可获得便于脚本消费的批次 URI、来源 URI、任务 ID、阶段和最终 Compile 结果。
 - CLI 当前不启用人工补充门禁：即使调查报告生成了问卷或标记为 `needs_human_input`，顶层 `phase` 仍返回 `completed`，不会出现 `awaiting_human`，也不会自动提交人工答案。调查报告和问卷仍保留在结果中用于审计。
 
@@ -91,9 +95,14 @@ Studio 使用官方 OVPack 导入接口校验 manifest、文件集合与 checksu
 
 ```text
 viking://resources/knowledge-mining/<batch-id>/
-├── document-sources/   # 上传并解析后的文档来源
-│   └── OKF_CONFIG.yaml  # 本次 Compile 使用的外部 OKF 契约
-├── team-memory/        # 可选的团队 Memory 增量来源
+├── OKF_CONFIG.yaml
+├── windows/
+│   ├── 0001/document-sources/
+│   ├── 0002/document-sources/
+│   └── 0003/team-memory/
+├── logs/
+│   ├── run.json
+│   └── windows/0001.json
 └── wiki/                # llm-wiki 编译产物
     ├── index.md
     ├── knowledge/what/<meta_id>/*.md
@@ -116,7 +125,7 @@ viking://resources/knowledge-mining/<batch-id>/
 POST /bot/v1/compile
 ```
 
-排队状态和顺序按当前 Studio 身份持久化在浏览器中；刷新或重新打开知识挖掘页面后会继续调度。已经启动的 Compile 在服务端独立运行，关闭页面不会中断它；尚未启动的排队项会在下次打开页面、确认没有其他运行中 Compile 后继续。队列启动前会同时检查服务端历史与本地状态，避免在页面刚恢复时误启动第二个流程。
+每个终态窗口都会写入 `logs/windows/NNNN.json`，聚合运行状态写入 `logs/run.json`。已经上传或已经启动 Compile 的窗口可以从服务端历史与日志恢复。浏览器安全模型不允许刷新后重新读取尚未上传的本地 `File`，因此如果刷新发生在后续窗口上传之前，Studio 会把该窗明确标记为失败；需要无人值守、可跨进程续跑的大批量任务时应使用 CLI 的 `--state-file` / `--resume-state`。
 
 首轮请求中的 `from` 指向 `document-sources`，`to` 指向 `wiki`。如果存在团队 Memory，第二轮请求严格使用 `from=team-memory`、`to=wiki`；VikingBot 会先读取现有目标，再把新增证据合并到规范页面中。增量提交允许保留首轮页面已有的文档出处，同时要求新 Memory 出处仍来自第二轮 supplied source。
 
@@ -138,6 +147,8 @@ Studio 启动 Compile 时不再提交一小时运行时限，服务端默认也�
 ## 谱系、跨库引用与人工确认
 
 每个知识页的 `sources` 必须同时包含至少一个输入来源（`original`、`team-memory` 或 `human-answer`）和一个配置声明的 `intermediate` 来源。`_mining/evidence-ledger.json` 还必须逐页列出输入 URI、中间产物 URI 和关键声明，因此可以从最终知识回溯到上传文档及处理过程。
+
+PDF 的解析片段不会变成互不相关的“原始文件”。知识挖掘上传 PDF 时会在该文档资源的 `.source/` 下保存原始二进制文件和 `provenance.json`；后者记录 `original_uri`、真实文件名、大小和 SHA-256 `document_id`。Compile 只读取小型 provenance sidecar 与派生 Markdown 证据，不把大 PDF 下载进 Agent 沙箱；最终 `kind: original` 的来源 URI 指回原 PDF，页码位置继续来自派生证据中的 PDF page marker。
 
 `_mining/source-coverage.json` 以用户上传级文档为单位，而不是把解析后的 chunk 当成独立来源。每个来源必须标记为 `cited`、`merged` 或 `skipped`；小文档的全部片段、大文档自适应且确定性的首/中/尾探针都必须出现在平台生成的 `readlist.json` 中，`cited` 必须指向证据账本中的有效页面，`merged` 必须指向另一个直接引用来源，`skipped` 必须给出不可跨来源复制的具体理由。`candidate-knowledge.json` 是最终页面之前的强制候选检查点，逐项解释候选为何晋升、合并、延后或拒绝；平台不会为缺失来源伪造 rejected 候选。增量 Compile 会合并旧证据并追加 `evidence-history.json` 快照。
 

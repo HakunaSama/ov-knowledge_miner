@@ -860,6 +860,14 @@ const COMMAND_HELP_SPECS: &[CommandHelpSpec] = &[
                 label: "ov knowledge-mining --documents ./documents --memory ./team-memory --okf-config ./OKF_CONFIG.yaml --wait",
                 description: "Run document mining followed by a team Memory incremental update.",
             },
+            HelpItem {
+                label: "ov knowledge-mining --documents ./documents --window-files 10 --window-bytes 209715200 --window-pages 1500 --window-probes 300 --state-file ./mining.json --wait",
+                description: "Run serial windows into one target with a durable local checkpoint.",
+            },
+            HelpItem {
+                label: "ov knowledge-mining --resume-state ./mining.json",
+                description: "Resume the first unfinished window and reuse completed uploads.",
+            },
         ],
         next_steps: &[
             HelpItem {

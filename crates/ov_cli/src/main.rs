@@ -1071,7 +1071,7 @@ enum Commands {
         /// Local document file or directory; repeat the flag or separate entries with commas
         #[arg(
             long = "documents",
-            required = true,
+            required_unless_present = "resume_state",
             value_delimiter = ',',
             value_name = "path"
         )]
@@ -1088,6 +1088,28 @@ enum Commands {
         /// Local OKF YAML file; uses the bundled OKF config when omitted
         #[arg(long = "okf-config", value_name = "file")]
         okf_config_path: Option<String>,
+        /// Maximum number of files in one serial end-to-end window
+        #[arg(long = "window-files", default_value_t = 10, value_name = "count")]
+        window_files: usize,
+        /// Maximum source bytes in one window; a larger single file gets its own window
+        #[arg(
+            long = "window-bytes",
+            default_value_t = 209_715_200,
+            value_name = "bytes"
+        )]
+        window_bytes: u64,
+        /// Maximum actual PDF pages in one window
+        #[arg(long = "window-pages", default_value_t = 1500, value_name = "pages")]
+        window_pages: usize,
+        /// Maximum estimated required source probes in one window
+        #[arg(long = "window-probes", default_value_t = 300, value_name = "count")]
+        window_probes: usize,
+        /// Local JSON run log/checkpoint path; generated automatically when omitted
+        #[arg(long = "state-file", value_name = "file")]
+        state_file: Option<String>,
+        /// Resume an interrupted serial run from its JSON state file
+        #[arg(long = "resume-state", value_name = "file")]
+        resume_state: Option<String>,
         /// Knowledge-mining objective
         #[arg(long, value_name = "text")]
         reason: Option<String>,
@@ -3507,6 +3529,12 @@ async fn main() {
             target_uri,
             skill_uri,
             okf_config_path,
+            window_files,
+            window_bytes,
+            window_pages,
+            window_probes,
+            state_file,
+            resume_state,
             reason,
             wait,
             timeout,
@@ -3524,6 +3552,12 @@ async fn main() {
                     target_uri,
                     skill_uri,
                     okf_config_path,
+                    window_files,
+                    window_bytes,
+                    window_pages,
+                    window_probes,
+                    state_file,
+                    resume_state,
                     reason,
                     wait,
                     timeout,
@@ -4000,6 +4034,12 @@ mod tests {
             "./OKF_CONFIG.yaml",
             "--reason",
             "提炼产品知识",
+            "--window-files",
+            "80",
+            "--window-bytes",
+            "104857600",
+            "--state-file",
+            "./mining-state.json",
             "--wait",
             "--timeout",
             "600",
@@ -4011,6 +4051,11 @@ mod tests {
                 document_paths,
                 memory_paths,
                 okf_config_path,
+                window_files,
+                window_bytes,
+                window_pages,
+                window_probes,
+                state_file,
                 reason,
                 wait,
                 timeout,
@@ -4020,8 +4065,38 @@ mod tests {
                 assert_eq!(memory_paths, vec!["./memory"]);
                 assert_eq!(okf_config_path.as_deref(), Some("./OKF_CONFIG.yaml"));
                 assert_eq!(reason.as_deref(), Some("提炼产品知识"));
+                assert_eq!(window_files, 80);
+                assert_eq!(window_bytes, 104_857_600);
+                assert_eq!(window_pages, 1_500);
+                assert_eq!(window_probes, 300);
+                assert_eq!(state_file.as_deref(), Some("./mining-state.json"));
                 assert!(wait);
                 assert_eq!(timeout, Some(600.0));
+            }
+            _ => panic!("expected knowledge-mining command"),
+        }
+    }
+
+    #[test]
+    fn cli_knowledge_mining_can_resume_without_document_flags() {
+        let cli = Cli::try_parse_from([
+            "ov",
+            "knowledge-mining",
+            "--resume-state",
+            "./mining-state.json",
+        ])
+        .expect("resume state should replace document arguments");
+
+        match cli.command {
+            Commands::KnowledgeMining {
+                document_paths,
+                resume_state,
+                window_files,
+                ..
+            } => {
+                assert!(document_paths.is_empty());
+                assert_eq!(resume_state.as_deref(), Some("./mining-state.json"));
+                assert_eq!(window_files, 10);
             }
             _ => panic!("expected knowledge-mining command"),
         }

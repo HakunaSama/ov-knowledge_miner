@@ -1,11 +1,10 @@
-version: "1.2"
+version: "2.0"
 
 frontmatter:
   required:
     - type
     - title
     - description
-    - tags
     - status
     - sources
     - generated
@@ -36,55 +35,146 @@ frontmatter:
       - at
     by_template: "{skill}/{model}"
 
-# Rules are applied from top to bottom; the last matching rule wins.
-path_types:
-  - pattern: "index.md"
-    type: synthesis
-  - pattern: "knowledge/what/**/*.md"
-    type: entity
-  - pattern: "knowledge/why/**/*.md"
-    type: synthesis
-  - pattern: "knowledge/how/**/*.md"
-    type: concept
-
-# The physical tree is the canonical write model. Each configured route expands to
-# one or more directory levels between the top-level facet and meta_id.
+# The physical tree is the canonical write model. Each promoted candidate becomes one
+# independent page. The first three levels are configured taxonomy nodes; subject_path
+# represents zero or more optional directories chosen from the page's actual subject.
 main_view:
   single_source_of_truth: true
   root_path: knowledge
-  facet_categories:
-    - what
-    - why
-    - how
   path_structure:
-    - facet
-    - route
-    - meta_id
+    - page_role
+    - business_domain
+    - subdomain
+    - subject_path
     - filename
-  directory_routes:
-    what:
-      - products
-      - operations
-      - technology
-    why:
-      - compliance
-      - management
-      - finance
-    how:
-      - operations/pickup-delivery
-      - technology/backend
-      - technology/data
-      - training/onboarding
+  page_roles:
+    - id: topic
+      title: "TOPIC"
+      description: "围绕业务对象、能力、系统或主题形成的解释性知识。"
+    - id: reference
+      title: "REFERENCE"
+      description: "适合快速查询的定义、事实、清单、参数、规则或约束。"
+    - id: procedure
+      title: "PROCEDURE"
+      description: "可执行的步骤、流程、SOP、检查表或操作规范。"
+    - id: synthesis
+      title: "SYNTHESIS"
+      description: "跨来源形成的结论、比较、决策、解释或综合洞察。"
+  business_domains:
+    - id: operations
+      title: "运营与履约"
+      description: "业务规划、供应链、履约、服务交付与质量管理。"
+      subdomains:
+        - id: planning
+          title: "运营规划"
+        - id: supply-chain
+          title: "供应链"
+        - id: fulfillment
+          title: "履约"
+        - id: service-delivery
+          title: "服务交付"
+        - id: quality
+          title: "质量管理"
+    - id: products-services
+      title: "产品与服务"
+      description: "产品和服务的组合、设计、定价、生命周期与支持。"
+      subdomains:
+        - id: portfolio
+          title: "产品服务组合"
+        - id: design
+          title: "产品服务设计"
+        - id: pricing
+          title: "定价"
+        - id: lifecycle
+          title: "生命周期"
+        - id: support
+          title: "产品服务支持"
+    - id: customers-markets
+      title: "客户与市场"
+      description: "客户洞察、市场、营销、销售、渠道与增长。"
+      subdomains:
+        - id: customer-insight
+          title: "客户洞察"
+        - id: marketing
+          title: "市场营销"
+        - id: sales
+          title: "销售"
+        - id: channels
+          title: "渠道"
+        - id: growth
+          title: "增长"
+    - id: technology-data
+      title: "技术与数据"
+      description: "架构、工程研发、基础设施、安全、数据与人工智能。"
+      subdomains:
+        - id: architecture
+          title: "架构"
+        - id: engineering
+          title: "工程研发"
+        - id: infrastructure
+          title: "基础设施"
+        - id: security
+          title: "信息安全"
+        - id: data-ai
+          title: "数据与人工智能"
+    - id: strategy-finance
+      title: "战略与财务"
+      description: "战略、公司治理、财务、采购与资产配置。"
+      subdomains:
+        - id: strategy
+          title: "战略"
+        - id: governance
+          title: "公司治理"
+        - id: finance
+          title: "财务"
+        - id: procurement
+          title: "采购"
+        - id: assets
+          title: "资产管理"
+    - id: people-organization
+      title: "人才与组织"
+      description: "组织设计、岗位角色、人才、学习发展与组织文化。"
+      subdomains:
+        - id: organization
+          title: "组织设计"
+        - id: roles
+          title: "岗位与角色"
+        - id: talent
+          title: "人才管理"
+        - id: learning
+          title: "学习与发展"
+        - id: culture
+          title: "组织文化"
+    - id: legal-compliance-risk
+      title: "法务、合规与风险"
+      description: "法律事务、合规、风险、审计与隐私保护。"
+      subdomains:
+        - id: legal
+          title: "法律事务"
+        - id: compliance
+          title: "合规"
+        - id: risk
+          title: "风险管理"
+        - id: audit
+          title: "审计"
+        - id: privacy
+          title: "隐私保护"
+    - id: brand-communications
+      title: "品牌与传播"
+      description: "品牌、企业传播、公共关系、声誉与社会责任。"
+      subdomains:
+        - id: brand
+          title: "品牌"
+        - id: communications
+          title: "企业传播"
+        - id: public-relations
+          title: "公共关系"
+        - id: reputation
+          title: "声誉管理"
+        - id: social-responsibility
+          title: "社会责任"
   exempt_paths:
     - index.md
-  # One meta-knowledge unit is three pages sharing one explicit frontmatter meta_id.
-  meta_knowledge:
-    group_by: frontmatter_field
-    id_field: meta_id
-    require_complete: true
-    shared_view_tags: true
-    require_id_directory: true
-  # index.md is navigation, not another knowledge file in derived views.
   derived_views_include_exempt: false
 
 # Viewable mining artifacts are committed beside the canonical pages. The evidence
@@ -114,57 +204,6 @@ cross_knowledge:
     - depends-on
     - derived-from
     - supersedes
-
-# The perspective view is virtual and never duplicates physical pages. Every
-# meta-knowledge unit selects exactly one leaf in this two-level hierarchy:
-# knowledge form (TOPIC/REFERENCE/PROCEDURE/SYNTHESIS) -> enterprise domain.
-views:
-  - id: perspective
-    title: "企业知识透视图 · Perspective"
-    description: "按知识形态与企业知识域两级目录重新组织同一批知识页面。"
-    tag_prefix: "view/perspective/"
-    selection: exactly_one
-    groups:
-      - id: topic
-        title: "TOPIC"
-        description: "围绕业务对象、能力、系统或主题组织的知识。"
-        groups: &enterprise_domains
-          - id: operations
-            title: "operations"
-            description: "运营、履约、供应链与日常业务运作。"
-          - id: product-service
-            title: "product-service"
-            description: "产品、服务、项目及其生命周期。"
-          - id: customer-market
-            title: "customer-market"
-            description: "客户、用户、市场、销售与增长。"
-          - id: technology-data
-            title: "technology-data"
-            description: "技术系统、架构、平台、数据与算法。"
-          - id: management-finance
-            title: "management-finance"
-            description: "经营管理、战略、财务与资源配置。"
-          - id: people-organization
-            title: "people-organization"
-            description: "人员、角色、团队、组织与协作关系。"
-          - id: compliance-risk
-            title: "compliance-risk"
-            description: "合规、法律、安全、审计与风险控制。"
-          - id: corporate-brand
-            title: "corporate-brand"
-            description: "企业、品牌、文化、传播与公共形象。"
-      - id: reference
-        title: "REFERENCE"
-        description: "适合按定义、事实、清单、参数或索引快速查询的知识。"
-        groups: *enterprise_domains
-      - id: procedure
-        title: "PROCEDURE"
-        description: "可执行的步骤、流程、SOP、检查表与操作规范。"
-        groups: *enterprise_domains
-      - id: synthesis
-        title: "SYNTHESIS"
-        description: "跨来源形成的结论、解释、比较、决策与综合洞察。"
-        groups: *enterprise_domains
 
 wikilinks:
   enabled: true

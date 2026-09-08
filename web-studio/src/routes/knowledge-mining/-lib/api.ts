@@ -358,6 +358,7 @@ export async function uploadKnowledgeFile(
   file: File,
   parentUri: string,
   onUploadProgress?: (percent: number) => void,
+  targetUri?: string,
 ): Promise<string> {
   const uploaded = await getOvResult<TempUploadResult>(
     postResourcesTempUpload({
@@ -378,14 +379,18 @@ export async function uploadKnowledgeFile(
   const imported = await getOvResult<AddResourceResult>(
     ovClient.client.post({
       body: {
+        args: file.name.toLowerCase().endsWith('.pdf')
+          ? { preserve_original: true }
+          : {},
         create_parent: true,
-        parent: parentUri,
+        parent: targetUri ? undefined : parentUri,
         processing_mode: 'semantic_and_vectors',
         source_name: file.name,
         strict: false,
         telemetry: true,
         temp_file_id: uploaded.temp_file_id,
         timeout: 900,
+        to: targetUri,
         wait: true,
       },
       url: '/api/v1/resources',
@@ -518,6 +523,29 @@ export async function writeOkfConfig(
     }),
   )
   return uri
+}
+
+export async function writeKnowledgeMiningLog(
+  uri: string,
+  value: unknown,
+): Promise<void> {
+  await getOvResult(
+    ovClient.client.post({
+      body: {
+        operations: [
+          {
+            content: `${JSON.stringify(value, null, 2)}\n`,
+            mode: 'upsert',
+            uri,
+          },
+        ],
+        root_uri: uri.replace(/\/logs\/.*$/, ''),
+        telemetry: true,
+        wait: false,
+      },
+      url: '/api/v1/content/batch-write',
+    }),
+  )
 }
 
 export async function getCompileTask(taskId: string): Promise<CompileTask> {
