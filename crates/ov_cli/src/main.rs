@@ -1088,7 +1088,7 @@ enum Commands {
         /// Local OKF YAML file; uses the bundled OKF config when omitted
         #[arg(long = "okf-config", value_name = "file")]
         okf_config_path: Option<String>,
-        /// Maximum number of files in one serial end-to-end window
+        /// Maximum number of local files or OpenViking document items in one serial window
         #[arg(long = "window-files", default_value_t = 10, value_name = "count")]
         window_files: usize,
         /// Maximum source bytes in one window; a larger single file gets its own window

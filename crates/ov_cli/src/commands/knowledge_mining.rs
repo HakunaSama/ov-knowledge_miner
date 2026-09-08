@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -23,6 +23,7 @@ const DEFAULT_OKF_CONFIG: &str =
 const DEFAULT_REASON: &str = "将这些文档整理成便于团队检索和复用的 OKF 知识库。提取关键实体、概念、综合结论与关系，保留重要结论的出处，并使用中文输出。";
 const MEMORY_INCREMENTAL_REASON: &str = "这是团队 Memory 增量更新阶段。请完整检查现有目标知识库，以团队 Memory 为新增证据更新、补充或纠正已有页面；明确的新事实应取代旧事实。保留仍然准确的文档知识、出处、WikiLink 和所有配置视图标签，避免重复页面。";
 const MAX_UPLOAD_FILE_SIZE_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_COMPILE_SOURCE_ROOTS: usize = 16;
 const DOCUMENT_EXTENSIONS: &[&str] = &["doc", "docx", "md", "markdown", "pdf", "xls", "xlsx"];
 const MEMORY_EXTENSIONS: &[&str] = &["json", "markdown", "md", "text", "txt", "yaml", "yml"];
 
@@ -447,8 +448,13 @@ fn plan_kind_windows(
             planned.push((kind.clone(), vec![file], size, pages, probes, true));
             continue;
         }
+        let next_remote_roots =
+            current.iter().filter(|item| item.remote).count() + usize::from(file.remote);
+        let next_has_local_root = current.iter().any(|item| !item.remote) || !file.remote;
+        let next_compile_roots = next_remote_roots + usize::from(next_has_local_root);
         if !current.is_empty()
             && (current.len() >= file_limit
+                || next_compile_roots > MAX_COMPILE_SOURCE_ROOTS
                 || current_bytes + file.size_bytes > byte_limit
                 || current_pages + file.pdf_pages > page_limit
                 || current_probes + file.estimated_probes > probe_limit)
@@ -1156,10 +1162,15 @@ async fn collect_document_sources(
             .map(|path| window_file(path))
             .collect::<Result<Vec<_>>>()?
     };
+    let mut remote_sources = BTreeMap::new();
     for uri in remote_uris {
-        let stat = client.stat(&uri).await?;
-        sources.push(remote_folder_source(&uri, &stat)?);
+        for source in collect_remote_folder_sources(client, &uri).await? {
+            remote_sources
+                .entry(source.resource_uri.clone())
+                .or_insert(source);
+        }
     }
+    sources.extend(remote_sources.into_values());
     if sources.is_empty() {
         return Err(Error::Client(
             "No supported local documents or OpenViking folders were found".to_owned(),
@@ -1168,33 +1179,114 @@ async fn collect_document_sources(
     Ok(sources)
 }
 
-fn remote_folder_source(uri: &str, stat: &Value) -> Result<WindowFileState> {
+async fn collect_remote_folder_sources(
+    client: &HttpClient,
+    uri: &str,
+) -> Result<Vec<WindowFileState>> {
+    let stat = client.stat(uri).await?;
+    validate_remote_folder(uri, &stat)?;
+
+    // Compile treats each direct child of a supplied directory as one upload-level
+    // source unit. Expand that boundary here so remote sources use the same serial
+    // window planner as locally uploaded documents, while Compile still performs
+    // the recursive materialization of each individual child.
+    let listed = client
+        .ls(uri, false, false, "original", 256, false, i32::MAX)
+        .await?;
+    let entries = remote_listing_entries(&listed).ok_or_else(|| {
+        Error::Parse(format!(
+            "OpenViking folder listing returned an unexpected response for {uri}"
+        ))
+    })?;
+    let root = uri.trim_end_matches('/');
+    let mut sources = BTreeMap::new();
+    for entry in entries {
+        let resource_uri = entry
+            .get("uri")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.trim_end_matches('/'))
+            .ok_or_else(|| {
+                Error::Parse(format!(
+                    "OpenViking folder listing contains an item without a URI under {uri}"
+                ))
+            })?;
+        if resource_uri == root {
+            continue;
+        }
+        let relative = resource_uri
+            .strip_prefix(root)
+            .and_then(|value| value.strip_prefix('/'))
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                Error::Parse(format!(
+                    "OpenViking folder listing returned an item outside {uri}: {resource_uri}"
+                ))
+            })?;
+        if relative.contains('/') {
+            return Err(Error::Parse(format!(
+                "OpenViking non-recursive folder listing returned a nested item under {uri}: {resource_uri}"
+            )));
+        }
+        let name = entry
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(relative);
+        // Directory summaries and other hidden control files are not documents.
+        if name.starts_with('.') {
+            continue;
+        }
+        let source = remote_document_source(resource_uri, name, entry);
+        sources.entry(resource_uri.to_owned()).or_insert(source);
+    }
+    if sources.is_empty() {
+        return Err(Error::Client(format!(
+            "OpenViking documents folder contains no visible source items: {uri}"
+        )));
+    }
+    Ok(sources.into_values().collect())
+}
+
+fn validate_remote_folder(uri: &str, stat: &Value) -> Result<()> {
     let is_dir = stat.get("isDir").and_then(Value::as_bool).unwrap_or(false);
     if !is_dir {
         return Err(Error::InvalidPath(format!(
             "OpenViking documents source must be a folder: {uri}"
         )));
     }
-    let name = stat
-        .get("name")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| uri.rsplit('/').find(|part| !part.is_empty()))
-        .unwrap_or("source")
-        .to_owned();
-    Ok(WindowFileState {
+    Ok(())
+}
+
+fn remote_listing_entries(value: &Value) -> Option<&Vec<Value>> {
+    value
+        .as_array()
+        .or_else(|| value.get("result").and_then(Value::as_array))
+}
+
+fn remote_document_source(uri: &str, name: &str, metadata: &Value) -> WindowFileState {
+    let size_bytes = metadata
+        .get("size")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let estimated_fragments = usize::try_from(size_bytes.saturating_add(65_535) / 65_536)
+        .unwrap_or(usize::MAX)
+        .max(1);
+    WindowFileState {
         path: uri.to_owned(),
-        name,
-        size_bytes: 0,
+        name: name.to_owned(),
+        size_bytes,
         uploaded: true,
         remote: true,
         resource_uri: uri.to_owned(),
-        // Page counts are not part of OpenViking stat metadata. Compile applies
-        // its own source-tree limits after it expands a remote directory.
+        // OpenViking listings do not expose original PDF page counts. The file
+        // count is still exact; byte/probe estimates use the child metadata and
+        // Compile enforces the actual expanded-source limits server-side.
         pdf_pages: 0,
-        estimated_probes: 1,
-    })
+        estimated_probes: estimated_required_probes(estimated_fragments),
+    }
 }
 
 fn collect_supported_files(
@@ -1276,8 +1368,8 @@ mod tests {
     use super::{
         DOCUMENT_EXTENSIONS, MEMORY_EXTENSIONS, MiningRunState, WindowKind, build_window_states,
         collect_document_sources, collect_supported_files, compile_source_uris, completion_phase,
-        find_llm_wiki_skill, plan_kind_windows, primary_window_source_uri, remote_folder_source,
-        validate_resume_files, window_file,
+        find_llm_wiki_skill, plan_kind_windows, primary_window_source_uri, remote_document_source,
+        validate_remote_folder, validate_resume_files, window_file,
     };
     use crate::client::{CompileResult, HttpClient};
     use lopdf::{Document, Object, dictionary};
@@ -1306,29 +1398,43 @@ mod tests {
         }
     }
 
-    async fn openviking_folder_stat_server() -> String {
+    async fn openviking_folder_server(entries: serde_json::Value) -> String {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("test server should bind");
         let address = listener.local_addr().expect("test server address");
         tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.expect("stat request");
-            let mut request = vec![0; 4096];
-            let read = stream.read(&mut request).await.expect("read stat request");
-            let request = String::from_utf8_lossy(&request[..read]);
-            assert!(request.starts_with("GET /api/v1/fs/stat?"));
-            assert!(request.contains("existing-source"));
-            let body =
-                r#"{"status":"ok","result":{"name":"existing-source","size":0,"isDir":true}}"#;
-            let response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            );
-            stream
-                .write_all(response.as_bytes())
-                .await
-                .expect("write stat response");
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().await.expect("filesystem request");
+                let mut request = vec![0; 8192];
+                let read = stream
+                    .read(&mut request)
+                    .await
+                    .expect("read filesystem request");
+                let request = String::from_utf8_lossy(&request[..read]);
+                assert!(request.contains("existing-source"));
+                let result = if request.starts_with("GET /api/v1/fs/stat?") {
+                    json!({"name": "existing-source", "size": 0, "isDir": true})
+                } else {
+                    assert!(request.starts_with("GET /api/v1/fs/ls?"));
+                    assert!(request.contains("recursive=false"));
+                    entries.clone()
+                };
+                let body = serde_json::to_string(&json!({
+                    "status": "ok",
+                    "result": result,
+                }))
+                .expect("serialize response");
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write filesystem response");
+            }
         });
         format!("http://{address}")
     }
@@ -1423,23 +1529,41 @@ mod tests {
     #[test]
     fn accepts_openviking_directories_as_remote_sources() {
         let uri = "viking://resources/existing-source";
-        let source = remote_folder_source(
-            uri,
-            &json!({"name": "existing-source", "isDir": true, "size": 4096}),
-        )
-        .expect("remote directory");
+        let stat = json!({"name": "existing-source", "isDir": true, "size": 4096});
+        validate_remote_folder(uri, &stat).expect("remote directory");
+        let source = remote_document_source(uri, "existing-source", &stat);
 
         assert!(source.remote);
         assert!(source.uploaded);
         assert_eq!(source.path, uri);
         assert_eq!(source.resource_uri, uri);
-        assert_eq!(source.size_bytes, 0);
+        assert_eq!(source.size_bytes, 4096);
     }
 
     #[tokio::test]
-    async fn collects_an_openviking_documents_folder_via_stat() {
+    async fn expands_an_openviking_folder_into_direct_document_sources() {
         let client = HttpClient::new(
-            openviking_folder_stat_server().await,
+            openviking_folder_server(json!([
+                {
+                    "name": ".overview.md",
+                    "uri": "viking://resources/existing-source/.overview.md",
+                    "isDir": false,
+                    "size": 50
+                },
+                {
+                    "name": "document-02",
+                    "uri": "viking://resources/existing-source/document-02",
+                    "isDir": true,
+                    "size": 0
+                },
+                {
+                    "name": "document-01.md",
+                    "uri": "viking://resources/existing-source/document-01.md",
+                    "isDir": false,
+                    "size": 4096
+                }
+            ]))
+            .await,
             None,
             None,
             None,
@@ -1454,12 +1578,63 @@ mod tests {
                 .await
                 .expect("collect remote documents folder");
 
-        assert_eq!(sources.len(), 1);
-        assert!(sources[0].remote);
+        assert_eq!(sources.len(), 2);
+        assert!(sources.iter().all(|source| source.remote));
         assert_eq!(
             sources[0].resource_uri,
-            "viking://resources/existing-source"
+            "viking://resources/existing-source/document-01.md"
         );
+        assert_eq!(sources[0].size_bytes, 4096);
+        assert_eq!(
+            sources[1].resource_uri,
+            "viking://resources/existing-source/document-02"
+        );
+    }
+
+    #[test]
+    fn remote_document_sources_use_the_normal_file_window_limit() {
+        let sources = (1..=23)
+            .map(|index| {
+                let uri = format!("viking://resources/existing-source/document-{index:02}");
+                remote_document_source(
+                    &uri,
+                    &format!("document-{index:02}"),
+                    &json!({"name": format!("document-{index:02}"), "isDir": true}),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let windows = build_window_states(
+            "viking://resources/knowledge-mining/test",
+            &sources,
+            &[],
+            10,
+            1024,
+            1500,
+            300,
+        )
+        .expect("build windows");
+
+        assert_eq!(windows.len(), 3);
+        assert_eq!(windows[0].files.len(), 10);
+        assert_eq!(windows[1].files.len(), 10);
+        assert_eq!(windows[2].files.len(), 3);
+        assert_eq!(compile_source_uris(&windows[0]).len(), 10);
+        assert_eq!(compile_source_uris(&windows[2]).len(), 3);
+
+        let wide_windows = build_window_states(
+            "viking://resources/knowledge-mining/test",
+            &sources,
+            &[],
+            100,
+            1024,
+            1500,
+            300,
+        )
+        .expect("respect Compile source-root limit");
+        assert_eq!(wide_windows.len(), 2);
+        assert_eq!(wide_windows[0].files.len(), 16);
+        assert_eq!(wide_windows[1].files.len(), 7);
     }
 
     #[test]
@@ -1468,11 +1643,11 @@ mod tests {
         let path = dir.path().join("local.md");
         std::fs::write(&path, b"local source").expect("write local source");
         let local = window_file(&path).expect("local source");
-        let remote = remote_folder_source(
+        let remote = remote_document_source(
             "viking://resources/existing-source",
+            "existing-source",
             &json!({"name": "existing-source", "isDir": true}),
-        )
-        .expect("remote source");
+        );
         let windows = build_window_states(
             "viking://resources/knowledge-mining/test",
             &[local, remote],
@@ -1496,8 +1671,11 @@ mod tests {
     #[test]
     fn remote_only_windows_compile_the_original_folder() {
         let uri = "viking://resources/existing-source";
-        let remote = remote_folder_source(uri, &json!({"name": "existing-source", "isDir": true}))
-            .expect("remote source");
+        let remote = remote_document_source(
+            uri,
+            "existing-source",
+            &json!({"name": "existing-source", "isDir": true}),
+        );
         let windows = build_window_states(
             "viking://resources/knowledge-mining/test",
             &[remote],
@@ -1518,7 +1696,11 @@ mod tests {
         let uri = "viking://resources/existing-source";
         let mut windows = build_window_states(
             "viking://resources/knowledge-mining/test",
-            &[remote_folder_source(uri, &json!({"isDir": true})).expect("remote source")],
+            &[remote_document_source(
+                uri,
+                "existing-source",
+                &json!({"isDir": true}),
+            )],
             &[],
             10,
             1024,
@@ -1550,7 +1732,7 @@ mod tests {
 
     #[test]
     fn rejects_openviking_files_when_a_folder_is_required() {
-        let error = remote_folder_source(
+        let error = validate_remote_folder(
             "viking://resources/archive/source.zip",
             &json!({"name": "source.zip", "isDir": false, "size": 32}),
         )

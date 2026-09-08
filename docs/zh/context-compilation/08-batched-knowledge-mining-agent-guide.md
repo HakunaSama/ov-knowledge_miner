@@ -337,17 +337,17 @@ Agent 在结束时至少报告：
 
 ## 十三、使用 OpenViking 文件夹作为 documents
 
-`ov knowledge-mining --documents` 同时接受本地路径和 `viking://` 文件夹 URI。OpenViking 文件夹会先使用当前 CLI 身份执行 `stat` 校验，然后直接交给 Compile，不会下载到本地，也不会重复上传到知识挖掘批次目录。
+`ov knowledge-mining --documents` 同时接受本地路径和 `viking://` 文件夹 URI。OpenViking 文件夹会先使用当前 CLI 身份执行 `stat` 校验，再通过非递归目录列表展开为直接子文档；这些子文档仍然直接交给 Compile，不会下载到本地，也不会重复上传到知识挖掘批次目录。
 
 两种数据源进入的是同一套 Skill、OKF Config、Compile 和最终校验流程；差异只在 source 准备、窗口计数和溯源位置：
 
 | 项目 | 本地文件或文件夹 | OpenViking 文件夹 |
 |---|---|---|
-| 准备方式 | CLI 递归筛选支持的文件并逐份上传、解析 | CLI 校验目录后直接引用现有 URI |
-| 窗口计数 | 每个本地文件计为一个 source item | 每个 `viking://` 文件夹 URI 计为一个 source item |
-| 目录展开 | 上传后的批次 source 目录 | 由既有 Compile 逻辑递归展开原目录 |
-| 溯源 URI | 指向本次批次下上传后的资源 | 保留原 OpenViking 文件夹及其子资源 URI |
-| checkpoint | 记录每个本地文件的上传状态 | 从创建 state 起标记为远端已就绪，不执行上传 |
+| 准备方式 | CLI 递归筛选支持的文件并逐份上传、解析 | CLI 校验目录、列举直接子项并引用其现有 URI |
+| 窗口计数 | 每个本地文件计为一个 source item | 文件夹下每个可见的直接子项计为一个 source item |
+| 目录展开 | 上传后的批次 source 目录 | CLI 展开一层以规划窗口，Compile 再递归展开每个子项 |
+| 溯源 URI | 指向本次批次下上传后的资源 | 保留原 OpenViking 子文档及其内部资源 URI |
+| checkpoint | 记录每个本地文件的上传状态 | 记录展开后的子项清单并标记为远端已就绪，不执行上传 |
 
 OpenViking 输入只支持文件夹，不支持用远端单文件 URI 代替文件夹。`--memory`、`--okf-config` 仍只接受本地路径，`--skill` 仍必须是安装后可访问的 Skill URI。该能力只改变 `ov knowledge-mining` 的 CLI 编排，不改变 `ov compile` 的参数或服务端行为。
 
@@ -369,16 +369,16 @@ ov knowledge-mining \
   --wait
 ~~~
 
-窗口规划把每个 OpenViking 文件夹 URI 视为一个现有 source；文件夹内部的递归枚举、文件数和总字节限制仍由既有 Compile 服务端逻辑执行。本地文件保持原有行为，继续逐份上传到批次窗口。checkpoint 会把远端文件夹标记为已就绪，因此 `--resume-state` 不依赖远端 source 的本地副本。
+窗口规划把 OpenViking 文件夹的每个可见直接子项视为一个现有文档 source。因此默认 `--window-files 10` 时，包含 23 个直接子文档的远端文件夹会生成 `10 / 10 / 3` 三个串行窗口；每个窗口把对应子项 URI 直接传给 Compile。若子项本身是目录，Compile 仍会递归展开它。隐藏的目录摘要和控制文件不会被计为文档。本地文件保持原有行为，继续逐份上传到批次窗口。checkpoint 会保存展开后的远端子项 URI 并将其标记为已就绪，因此 `--resume-state` 不依赖远端 source 的本地副本，也不会重新按目录当前内容规划窗口。
 
 Agent 执行远端文件夹挖掘时必须遵守以下规则：
 
 1. URI 必须属于 CLI 当前连接的同一个 OpenViking 服务，且当前 account、user 和 actor peer 对它有读取权限。
 2. 启动前执行 `ov stat <folder-uri>`；需要确认内容范围时再执行 `ov ls <folder-uri>` 或 `ov tree <folder-uri>`，不要先导出到本地再挖掘。
-3. 一个远端文件夹在 CLI 窗口预算中计为一个 source，而不是按内部文件数计数。超大目录仍可能触发服务端 `RESOURCE_EXHAUSTED`；需要严格分批时，应传入多个更小的 OpenViking 子文件夹 URI。
+3. 一个远端文件夹的每个可见直接子项计为一个 source，并受 `--window-files` 约束；列表提供子项大小时也会参与 `--window-bytes` 和 `--window-probes` 估算。远端目录子项的递归大小以及原始 PDF 页数不会出现在列表中，因此这些实际限制仍由 Compile 展开后兜底。即使把 `--window-files` 设为大于 16，CLI 也会按 Compile 的 source-root 上限提前拆窗。
 4. 远端目录不会生成批次内的数据副本。挖掘页面的来源应指向原始 OpenViking URI，这是预期行为。
-5. `--resume-state` 不会重新上传或把 URI 当成本地路径，但恢复时原目录必须仍然存在、可访问。目录内容在窗口开始前发生变化时，挖掘使用当时可见的最新内容。
-6. 混合输入时，本地文件先上传到窗口 staging 目录，远端文件夹直接加入同一个 Compile 请求；不要手工复制远端目录到 staging URI。
+5. `--resume-state` 不会重新上传、重新列举父目录或把 URI 当成本地路径，但状态文件中记录的远端子项必须仍然存在且可访问。恢复使用首次规划时冻结的子项 URI 清单。
+6. 混合输入时，本地文件先上传到窗口 staging 目录，远端子项 URI 直接加入同一个 Compile 请求；不要手工复制远端目录到 staging URI。
 
 远端-only 自动化示例：
 
@@ -395,7 +395,7 @@ ov -o json knowledge-mining \
   --runtime-timeout 1800
 ~~~
 
-如果命令报告 source 不是文件夹、无权访问或不存在，Agent 应停止并报告对应 URI 与当前连接身份，不得退回成本地路径猜测。若服务端报告 source 文件数或总字节超限，应让用户提供更小的子文件夹边界，再以多个 `--documents viking://...` 参数重试。
+如果命令报告 source 不是文件夹、无权访问或不存在，Agent 应停止并报告对应 URI 与当前连接身份，不得退回成本地路径猜测。若某个远端直接子项本身包含过多递归文件并触发服务端 source 文件数或总字节限制，应让用户把该子项拆成更小的同级文档边界后重试。
 
 ## 十四、Agent 标准执行清单
 
