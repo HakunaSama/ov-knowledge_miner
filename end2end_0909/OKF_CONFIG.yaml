@@ -1,0 +1,652 @@
+# 这个文件规定“知识挖掘最后要产出什么样的知识库”。
+# 它不负责指定知识源，也不负责设置每批处理多少文件；这些由 ov knowledge-mining 命令控制。
+# 以 # 开头的内容都是说明文字，不会参与实际运行。
+
+# 配置格式版本。当前代码按 2.0 的规则读取下面这些字段。
+version: '2.0'
+
+# 每一篇最终 Markdown 知识页开头都要有一段 frontmatter（也就是 --- 包住的 YAML 信息）。
+# 这里规定 frontmatter 必须包含哪些信息，以及这些信息允许写成什么样。
+frontmatter:
+  # 每篇知识页都必须有下面五个字段。缺少任何一个，第三阶段会记录校验 warning。
+  required:
+    # 这篇页面属于哪种知识类型，例如概念、方法或分析。
+    - type
+    # 页面标题。
+    - title
+    # 一句话说明这篇页面讲什么，便于搜索和快速判断是否相关。
+    - description
+    # 这篇知识来自哪些原始文件或 OpenViking 资源。
+    - sources
+    # 由哪个 Skill、哪个模型、在什么时间生成。
+    - generated
+
+  # type 只能从下面六种类型中选择。
+  allowed_types:
+    # 人、组织、产品、系统、项目等可以被明确指认的对象。
+    - entity
+    # 概念、原理、规则、术语等解释性知识。
+    - concept
+    # 方法、流程、操作步骤、排障办法等可执行知识。
+    - method
+    # 多个对象、方案或口径之间的比较。
+    - comparison
+    # 综合判断、原因分析、趋势分析或复盘结论。
+    - analysis
+    # 目录导航页，只用于帮助读者进入下一级内容。
+    - index
+
+  # sources 用来把最终知识页追溯到真实的原始材料。
+  # 不再区分 document、memory 等来源类型，所有来源都按同一种方式处理。
+  sources:
+    # 每条来源记录都必须同时保留资源 URI 和可读标题。
+    required_fields:
+      # 原始资源在 OpenViking 中的准确 URI；这是溯源的关键字段。
+      - resource
+      # 原始资源的标题，方便人在阅读页面时识别来源。
+      - title
+
+  # generated 是系统生成信息，不是业务人员手工填写的知识内容。
+  generated:
+    required_fields:
+      # 记录使用了哪个 Skill 和模型。
+      - by
+      # 记录生成时间。
+      - at
+    # 系统会把 {skill} 和 {model} 替换成这次实际使用的名称。
+    by_template: '{skill}/{model}'
+
+# main_view 决定知识页真正保存在哪些目录中。
+# 当前只有这一个主视图，不再生成多套重复目录。
+main_view:
+  # 所有最终知识页都放在 knowledge/ 下面。
+  root_path: knowledge
+
+  # page_role 是知识的用途，也就是“这篇页面主要拿来做什么”。
+  # id 会成为目录名；title 和 description 用来帮助模型理解分类含义。
+  page_roles:
+    - id: topic
+      title: TOPIC(主题知识:解释对象、概念、产品、机制是什么)
+      description: TOPIC(主题知识:解释对象、概念、产品、机制是什么)
+    - id: reference
+      title: REFERENCE(精确参考:规则、参数、口径、FAQ、术语)
+      description: REFERENCE(精确参考:规则、参数、口径、FAQ、术语)
+    - id: procedure
+      title: PROCEDURE(操作方法:SOP、流程、排障、审批、实施步骤)
+      description: PROCEDURE(操作方法:SOP、流程、排障、审批、实施步骤)
+    - id: synthesis
+      title: SYNTHESIS(综合分析:对比、分析、决策、复盘、综合研究)
+      description: SYNTHESIS(综合分析:对比、分析、决策、复盘、综合研究)
+  # 普通知识页的目录顺序。当前实际路径是：
+  # knowledge/<page_role>/<business_domain>/<subdomain>/<filename>
+  # 例如：knowledge/procedure/technology/software-engineering/deployment.md
+  # 顺序会被代码严格检查，不能少一层，也不能随意增加一层。
+  path_structure:
+    - page_role
+    - business_domain
+    - subdomain
+    - filename
+
+  # business_domains 是业务分类表，用来决定页面应进入哪个业务目录。
+  # 每个一级分类中的 id 是实际目录名，title 是给人看的中文名称。
+  # subdomains 是二级目录。新增分类时，id 应使用小写英文、数字和连字符。
+  # 下面的分类很多，但结构完全相同，因此不再给每一项重复写相同注释。
+  business_domains:
+    - id: products
+      title: 产品与解决方案
+      description: 产品与解决方案
+      subdomains:
+        - id: product-management
+          title: 产品规划与生命周期
+          description: 产品规划与生命周期
+        - id: product-pricing
+          title: 产品定价与资费
+          description: 产品定价与资费
+        - id: express
+          title: 快递产品
+          description: 快递产品
+        - id: large-item
+          title: 大件产品
+          description: 大件产品
+        - id: less-than-truckload
+          title: 零担产品
+          description: 零担产品
+        - id: air-freight
+          title: 航空货运产品
+          description: 航空货运产品
+        - id: home-service
+          title: 到家服务
+          description: 到家服务
+        - id: cold-chain
+          title: 冷运医药
+          description: 冷运医药
+        - id: supply-chain
+          title: 供应链解决方案
+          description: 供应链解决方案
+        - id: international-freight
+          title: 国际与货代
+          description: 国际与货代
+        - id: industry-solutions
+          title: 行业解决方案
+          description: 行业解决方案
+        - id: digital-products
+          title: 数字化产品与服务
+          description: 数字化产品与服务
+    - id: marketing
+      title: 市场与营销
+      description: 市场与营销
+      subdomains:
+        - id: market-research
+          title: 市场研究与趋势
+          description: 市场研究与趋势
+        - id: segmentation-positioning
+          title: 市场细分与定位
+          description: 市场细分与定位
+        - id: brand-management
+          title: 品牌管理
+          description: 品牌管理
+        - id: go-to-market
+          title: 市场进入与推广策略
+          description: 市场进入与推广策略
+        - id: campaign-management
+          title: 营销活动
+          description: 营销活动
+        - id: channel-media
+          title: 渠道与媒介
+          description: 渠道与媒介
+        - id: content-creative
+          title: 内容与创意
+          description: 内容与创意
+        - id: lead-generation
+          title: 获客与线索
+          description: 获客与线索
+        - id: growth-conversion
+          title: 增长与转化
+          description: 增长与转化
+        - id: marketing-analytics
+          title: 营销分析
+          description: 营销分析
+        - id: public-relations-reputation
+          title: 公关、舆情与声誉
+          description: 公关、舆情与声誉
+    - id: sales
+      title: 销售与商业拓展
+      description: 销售与商业拓展
+      subdomains:
+        - id: sales-strategy
+          title: 销售策略与目标
+          description: 销售策略与目标
+        - id: account-prospecting
+          title: 客户拓展
+          description: 客户拓展
+        - id: opportunity-management
+          title: 商机管理
+          description: 商机管理
+        - id: solution-selling
+          title: 方案销售
+          description: 方案销售
+        - id: pricing-quotation
+          title: 报价与商务定价
+          description: 报价与商务定价
+        - id: visit-management
+          title: 客户拜访
+          description: 客户拜访
+        - id: sales-review
+          title: 销售评审
+          description: 销售评审
+        - id: bidding
+          title: 招投标
+          description: 招投标
+        - id: contract-handover
+          title: 签约与交接
+          description: 签约与交接
+        - id: channel-partner
+          title: 渠道与伙伴
+          description: 渠道与伙伴
+        - id: sales-force-management
+          title: 销售队伍与画像
+          description: 销售队伍与画像
+    - id: customer-development
+      title: 客户经营
+      description: 客户经营
+      subdomains:
+        - id: customer-master-data
+          title: 客户主数据与标签
+          description: 客户主数据与标签
+        - id: customer-insight
+          title: 客户画像与洞察
+          description: 客户画像与洞察
+        - id: customer-value
+          title: 客户价值、质量与收益
+          description: 客户价值、质量与收益
+        - id: customer-risk
+          title: 客户经营风险
+          description: 客户经营风险
+        - id: lifecycle-management
+          title: 客户生命周期
+          description: 客户生命周期
+        - id: customer-success
+          title: 客户运维与成功
+          description: 客户运维与成功
+        - id: retention-growth
+          title: 留存、续约与增购
+          description: 留存、续约与增购
+        - id: key-account-management
+          title: 大客户管理
+          description: 大客户管理
+        - id: customer-portfolio
+          title: 客群与组合管理
+          description: 客群与组合管理
+    - id: customer-service
+      title: 客户服务
+      description: 客户服务
+      subdomains:
+        - id: service-channels
+          title: 服务渠道与受理
+          description: 服务渠道与受理
+        - id: service-operation
+          title: 客服作业
+          description: 客服作业
+        - id: service-management
+          title: 客服管理
+          description: 客服管理
+        - id: knowledge-assistance
+          title: 客服知识与辅助
+          description: 客服知识与辅助
+        - id: voice-of-customer
+          title: 客户声音
+          description: 客户声音
+        - id: complaint-management
+          title: 投诉管理
+          description: 投诉管理
+        - id: claims
+          title: 理赔
+          description: 理赔
+        - id: service-recovery
+          title: 服务补救
+          description: 服务补救
+        - id: service-analytics
+          title: 服务分析
+          description: 服务分析
+    - id: network-planning
+      title: 网络规划与调度
+      description: 网络规划与调度
+      subdomains:
+        - id: network-design
+          title: 网络设计与布局
+          description: 网络设计与布局
+        - id: air-network
+          title: 空网规划
+          description: 空网规划
+        - id: land-network
+          title: 陆网规划
+          description: 陆网规划
+        - id: route-planning
+          title: 路由规划
+          description: 路由规划
+        - id: line-optimization
+          title: 线路优化
+          description: 线路优化
+        - id: facility-planning
+          title: 场地规划
+          description: 场地规划
+        - id: site-planning
+          title: 网点规划
+          description: 网点规划
+        - id: capacity-planning
+          title: 运力与产能规划
+          description: 运力与产能规划
+        - id: dispatch
+          title: 调度运营
+          description: 调度运营
+        - id: network-standards
+          title: 网络标准
+          description: 网络标准
+        - id: planning-analytics
+          title: 规调问数与分析
+          description: 规调问数与分析
+    - id: operations
+      title: 运营与履约
+      description: 运营与履约
+      subdomains:
+        - id: pickup-delivery
+          title: 收派与末端履约
+          description: 收派与末端履约
+        - id: courier-operation
+          title: 小哥运营与管理
+          description: 小哥运营与管理
+        - id: transfer-operation
+          title: 中转作业
+          description: 中转作业
+        - id: air-transport
+          title: 航空运输
+          description: 航空运输
+        - id: land-transport
+          title: 陆运作业
+          description: 陆运作业
+        - id: rail-transport
+          title: 铁运作业
+          description: 铁运作业
+        - id: handover
+          title: 接驳作业
+          description: 接驳作业
+        - id: network-site-operation
+          title: 网点运营
+          description: 网点运营
+        - id: warehouse-operation
+          title: 仓储作业
+          description: 仓储作业
+        - id: large-item-operation
+          title: 大件与零担运营
+          description: 大件与零担运营
+        - id: home-service-operation
+          title: 到家服务履约
+          description: 到家服务履约
+        - id: international-freight-operation
+          title: 国际货运作业
+          description: 国际货运作业
+        - id: circular-operation
+          title: 循环运营
+          description: 循环运营
+    - id: quality-safety
+      title: 质量与安全
+      description: 质量与安全
+      subdomains:
+        - id: express-quality
+          title: 快件质量
+          description: 快件质量
+        - id: fulfillment-quality
+          title: 履约质量
+          description: 履约质量
+        - id: service-quality
+          title: 服务质量
+          description: 服务质量
+        - id: key-account-fulfillment
+          title: 大客户履约质量
+          description: 大客户履约质量
+        - id: quality-standards
+          title: 质量标准
+          description: 质量标准
+        - id: quality-monitoring
+          title: 质量监控与检查
+          description: 质量监控与检查
+        - id: exception-incident
+          title: 异常与事件
+          description: 异常与事件
+        - id: root-cause-improvement
+          title: 根因分析与改善
+          description: 根因分析与改善
+        - id: operational-safety
+          title: 运营安全
+          description: 运营安全
+        - id: safety-management
+          title: 安全管理
+          description: 安全管理
+    - id: business-management
+      title: 经营与管理
+      description: 经营与管理
+      subdomains:
+        - id: strategy-planning
+          title: 战略与经营规划
+          description: 战略与经营规划
+        - id: operating-analysis
+          title: 经营分析
+          description: 经营分析
+        - id: commercial-analysis
+          title: 商业分析
+          description: 商业分析
+        - id: forecasting
+          title: 预测与决策支持
+          description: 预测与决策支持
+        - id: performance-management
+          title: 经营绩效
+          description: 经营绩效
+        - id: project-management
+          title: 项目管理
+          description: 项目管理
+        - id: process-management
+          title: 流程管理
+          description: 流程管理
+        - id: portfolio-program-management
+          title: 项目群与组合管理
+          description: 项目群与组合管理
+        - id: innovation
+          title: 创新管理
+          description: 创新管理
+    - id: enterprise-services
+      title: 企业综合服务
+      description: 企业综合服务
+      subdomains:
+        - id: procurement
+          title: 采购管理
+          description: 采购管理
+        - id: supplier-management
+          title: 供应商管理
+          description: 供应商管理
+        - id: materials
+          title: 物资管理
+          description: 物资管理
+        - id: asset-management
+          title: 资产管理
+          description: 资产管理
+        - id: property
+          title: 物业管理
+          description: 物业管理
+        - id: administrative-services
+          title: 行政与后勤
+          description: 行政与后勤
+        - id: meeting-collaboration
+          title: 会议与协同
+          description: 会议与协同
+        - id: public-affairs
+          title: 公共事务
+          description: 公共事务
+        - id: charity
+          title: 公益
+          description: 公益
+    - id: human-resource
+      title: 人力与组织
+      description: 人力与组织
+      subdomains:
+        - id: workforce-planning
+          title: 人力规划
+          description: 人力规划
+        - id: talent-recruitment
+          title: 人才招聘
+          description: 人才招聘
+        - id: talent-intelligence
+          title: 人才识别与雷达
+          description: 人才识别与雷达
+        - id: talent-development
+          title: 人才发展
+          description: 人才发展
+        - id: organization-development
+          title: 组织发展
+          description: 组织发展
+        - id: learning-development
+          title: 学习发展与课程运营
+          description: 学习发展与课程运营
+        - id: employee-service
+          title: 员工服务
+          description: 员工服务
+        - id: employee-voice
+          title: 员工声音
+          description: 员工声音
+        - id: performance
+          title: 绩效管理
+          description: 绩效管理
+        - id: digital-workforce
+          title: 数字员工
+          description: 数字员工
+        - id: culture-engagement
+          title: 企业文化与员工认同
+          description: 企业文化与员工认同
+        - id: employee-care-union
+          title: 员工关怀与工会
+          description: 员工关怀与工会
+        - id: labor-relations
+          title: 用工与劳动关系
+          description: 用工与劳动关系
+    - id: finance
+      title: 财务、资金与信用
+      description: 财务、资金与信用
+      subdomains:
+        - id: accounting-settlement
+          title: 核算与结算
+          description: 核算与结算
+        - id: receivables-collection
+          title: 应收与收款
+          description: 应收与收款
+        - id: treasury
+          title: 资金管理
+          description: 资金管理
+        - id: budget
+          title: 预算管理
+          description: 预算管理
+        - id: tax
+          title: 税务管理
+          description: 税务管理
+        - id: credit-management
+          title: 信用管理
+          description: 信用管理
+        - id: cost-profit
+          title: 成本与利润
+          description: 成本与利润
+        - id: revenue-management
+          title: 营收管理
+          description: 营收管理
+        - id: financial-analysis
+          title: 财务分析
+          description: 财务分析
+    - id: technology
+      title: 技术、数据与智能化
+      description: 技术、数据与智能化
+      subdomains:
+        - id: ai-agent
+          title: AI与智能体
+          description: AI与智能体
+        - id: application-systems
+          title: 业务应用与系统
+          description: 业务应用与系统
+        - id: software-engineering
+          title: 软件工程与系统集成
+          description: 软件工程与系统集成
+        - id: data-platform
+          title: 数据平台
+          description: 数据平台
+        - id: data-governance
+          title: 数据治理
+          description: 数据治理
+        - id: analytics-bi
+          title: 智能问数与BI
+          description: 智能问数与BI
+        - id: api-integration
+          title: 接口与集成规范
+          description: 接口与集成规范
+        - id: infrastructure-cloud
+          title: 基础设施与云平台
+          description: 基础设施与云平台
+        - id: cybersecurity
+          title: 技术安全与身份权限
+          description: 技术安全与身份权限
+        - id: operations-maintenance
+          title: 运维与可观测性
+          description: 运维与可观测性
+        - id: tools-platform
+          title: 工具与平台
+          description: 工具与平台
+    - id: compliance
+      title: 制度、法务与风险治理
+      description: 制度、法务与风险治理
+      subdomains:
+        - id: corporate-policies
+          title: 公司制度与标准
+          description: 公司制度与标准
+        - id: regulatory-compliance
+          title: 监管合规
+          description: 监管合规
+        - id: legal
+          title: 法律事务
+          description: 法律事务
+        - id: contract
+          title: 合同管理
+          description: 合同管理
+        - id: intellectual-property
+          title: 知识产权
+          description: 知识产权
+        - id: data-privacy
+          title: 数据安全与隐私合规
+          description: 数据安全与隐私合规
+        - id: labor-compliance
+          title: 用工合规
+          description: 用工合规
+        - id: finance-tax-compliance
+          title: 财税合规
+          description: 财税合规
+        - id: procurement-compliance
+          title: 采购合规
+          description: 采购合规
+        - id: operational-safety-compliance
+          title: 安全生产与运营合规
+          description: 安全生产与运营合规
+        - id: audit-integrity
+          title: 审计与廉洁
+          description: 审计与廉洁
+        - id: enterprise-risk
+          title: 企业风险控制
+          description: 企业风险控制
+  # navigation 规定导航页使用什么文件名和页面类型。
+  # Agent 会在需要导航的目录中创建或更新 index.md，并用标准 Markdown Link 指向知识页。
+  navigation:
+    # 导航页统一叫 index.md。
+    filename: index.md
+    # 导航页 frontmatter 中的 type 必须是 index。
+    type: index
+
+  # 这里列出不按普通四层目录规则检查的特殊页面。
+  # **/index.md 表示 knowledge/ 下面任意深度的 index.md 都可以作为导航页存在。
+  # 这个豁免只放宽目录结构，不会取消 type、sources、generated 等基础检查。
+  exempt_paths:
+    - '**/index.md'
+
+# intermediates 是挖掘过程留下的可检查记录，统一保存在最终知识库的 _mining/ 目录。
+# 它们用于断点恢复、排查问题和确认每个知识结论来自哪里，不是第二套知识视图。
+intermediates:
+  # true 表示下面这些过程文件都必须存在。
+  required: true
+  # 所有过程文件所在的目录。
+  root_path: _mining
+  # 本次运行的基本信息，例如目标知识库、来源根目录和运行阶段。
+  run_manifest: run-manifest.json
+  # 记录每篇知识页使用了哪些原始证据，是页面溯源的总账。
+  evidence_ledger: evidence-ledger.json
+  # 记录冲突、证据不足等问题。即使这里有问题，也只产生 warning，不阻止最终写入。
+  investigation_report: investigation-report.json
+  # 记录每份输入材料是否被检查、引用、合并或跳过，避免文件被悄悄遗漏。
+  source_coverage: source-coverage.json
+  # 记录从来源中发现了哪些候选知识，以及最终是生成、合并、暂缓还是放弃。
+  candidate_knowledge: candidate-knowledge.json
+  # 记录实际读取过的资源。这个文件由 Compile 维护，增量运行时继续累积。
+  readlist: readlist.json
+  # 记录各批次页面与证据之间的历史关系，方便增量更新和事后排查。
+  evidence_history: evidence-history.json
+
+# markdown_links 控制知识页之间的标准 Markdown 链接，例如 [运单规则](../reference/waybill.md)。
+# 这里替代了旧的 [[WikiLink]] 方式。
+markdown_links:
+  # 是否启用知识页之间的 Markdown 链接处理。
+  enabled: true
+  # true 表示发现正文中明确提到另一篇唯一知识页时，可以自动补上链接。
+  auto_link: true
+  # true 表示指向本知识库 Markdown 页面的链接必须确实存在，不能链接到不存在的页面。
+  catalog_only: true
+  # false 表示同一段落内同一个目标可以出现多次链接；改成 true 时只链接第一次出现。
+  first_occurrence_per_paragraph: false
+  # 下面这些位置不自动添加链接，避免破坏 Markdown 结构或代码示例。
+  exclude:
+    # 标题行。
+    - headings
+    # 表格。
+    - tables
+    # 行内代码和代码块。
+    - code

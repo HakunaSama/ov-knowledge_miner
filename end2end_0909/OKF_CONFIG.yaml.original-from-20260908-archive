@@ -1,0 +1,747 @@
+version: "1.0"
+
+# OKF contract for the SF Express enterprise knowledge base.
+# Main view: four Page Roles (topic/reference/procedure/synthesis, mapping to
+# TOPIC/REFERENCE/PROCEDURE/SYNTHESIS) x fourteen Level-2 business domains
+# each Level 2 has predefined Level 3 core sub-domains and
+# Level 4+ dynamic clustering. One Knowledge Object = one canonical page.
+# Projection views: four core perspectives reusing the same pages via
+# namespaced frontmatter tags (soft-link projections).
+
+frontmatter:
+  required:
+    - type
+    - title
+    - description
+    - tags
+    - status
+    - sources
+    - generated
+    - knowledge_links
+  allowed_types:
+    - entity
+    - concept
+    - method
+    - comparison
+    - analysis
+    - index
+  page_role_directory:
+    topic: "TOPIC(主题知识:解释对象、概念、产品、机制是什么)"
+    reference: "REFERENCE(精确参考:规则、参数、口径、FAQ、术语)"
+    procedure: "PROCEDURE(操作方法:SOP、流程、排障、审批、实施步骤)"
+    synthesis: "SYNTHESIS(综合分析:对比、分析、决策、复盘、综合研究)"
+  knowledge_type_directory:
+    products: 产品与解决方案
+    marketing: 市场与营销
+    sales: 销售与商业拓展
+    customer-development: 客户经营
+    customer-service: 客户服务
+    network-planning: 网络规划与调度
+    operations: 运营与履约
+    quality-safety: 质量与安全
+    business-management: 经营与管理
+    enterprise-services: 企业综合服务
+    human-resource: 人力与组织
+    finance: 财务、资金与信用
+    technology: 技术、数据与智能化
+    compliance: 制度、法务与风险治理
+  defaults:
+    status: stable
+  sources:
+    required_fields:
+      - resource
+      - title
+      - author
+    require_input: true
+    # evidence-ledger is a platform-owned, KB-level artifact at the fixed path
+    # _mining/evidence-ledger.json. Its own pages[] array carries the
+    # page->intermediate mapping (including the ledger URI as an
+    # intermediate_resources entry), so the ledger URI is NOT duplicated in
+    # per-page sources. sources stays pure original input.
+    require_intermediate: false
+  generated:
+    required_fields:
+      - by
+      - at
+    by_template: "{skill}/{model}"
+
+# Physical main view:
+#   knowledge/<page_role>/<L2-business-domain>/<L3-core-subdomain>/<filename>.md
+# Level 1 = page role (fixed, 4). Level 2 = business domain (fixed, 14).
+# Level 3 = predefined core sub-domain (stable, see business_domains).
+# Level 4+ = dynamic clustering by product/object/scene/rule/process/topic;
+#   fixed nodes are not force-created empty; directories materialize as needed.
+# One Knowledge Object = one canonical page; the directory path is NOT the
+# knowledge identity (the promoted candidate's `id`, not the directory path).
+main_view:
+  single_source_of_truth: true
+  root_path: knowledge
+  level_structure:
+    level_1: page_role          # fixed, 4 (page_roles)
+    level_2: business_domain    # fixed, 14 (role_domains)
+    level_3: core_subdomain     # predefined, stable (business_domains)
+    level_4_plus: dynamic       # by product/object/scene/rule/process/topic
+  page_roles:
+    - topic
+    - reference
+    - procedure
+    - synthesis
+  path_structure:
+    - page_role
+    - business_domain
+    - subdomain
+    - filename
+  # Level 2 fixed business domains (14). Names are identical across all four
+  # page roles (the Level 2/Level 3 directory names are the same under every Level 1).
+  role_domains:
+    topic:
+      - products
+      - marketing
+      - sales
+      - customer-development
+      - customer-service
+      - network-planning
+      - operations
+      - quality-safety
+      - business-management
+      - enterprise-services
+      - human-resource
+      - finance
+      - technology
+      - compliance
+    reference:
+      - products
+      - marketing
+      - sales
+      - customer-development
+      - customer-service
+      - network-planning
+      - operations
+      - quality-safety
+      - business-management
+      - enterprise-services
+      - human-resource
+      - finance
+      - technology
+      - compliance
+    procedure:
+      - products
+      - marketing
+      - sales
+      - customer-development
+      - customer-service
+      - network-planning
+      - operations
+      - quality-safety
+      - business-management
+      - enterprise-services
+      - human-resource
+      - finance
+      - technology
+      - compliance
+    synthesis:
+      - products
+      - marketing
+      - sales
+      - customer-development
+      - customer-service
+      - network-planning
+      - operations
+      - quality-safety
+      - business-management
+      - enterprise-services
+      - human-resource
+      - finance
+      - technology
+      - compliance
+  # Level 3 predefined core sub-domains per Level 2 domain (shared across all
+  # page roles). Level 4+ extends dynamically below each L3. operations does
+  # not include sorting/分拣作业 per governance decision.
+  business_domains:
+    products:
+      - name: product-management
+        description: 产品规划与生命周期
+      - name: product-pricing
+        description: 产品定价与资费
+      - name: express
+        description: 快递产品
+      - name: large-item
+        description: 大件产品
+      - name: less-than-truckload
+        description: 零担产品
+      - name: air-freight
+        description: 航空货运产品
+      - name: home-service
+        description: 到家服务
+      - name: cold-chain
+        description: 冷运医药
+      - name: supply-chain
+        description: 供应链解决方案
+      - name: international-freight
+        description: 国际与货代
+      - name: industry-solutions
+        description: 行业解决方案
+      - name: digital-products
+        description: 数字化产品与服务
+    marketing:
+      - name: market-research
+        description: 市场研究与趋势
+      - name: segmentation-positioning
+        description: 市场细分与定位
+      - name: brand-management
+        description: 品牌管理
+      - name: go-to-market
+        description: 市场进入与推广策略
+      - name: campaign-management
+        description: 营销活动
+      - name: channel-media
+        description: 渠道与媒介
+      - name: content-creative
+        description: 内容与创意
+      - name: lead-generation
+        description: 获客与线索
+      - name: growth-conversion
+        description: 增长与转化
+      - name: marketing-analytics
+        description: 营销分析
+      - name: public-relations-reputation
+        description: 公关、舆情与声誉
+    sales:
+      - name: sales-strategy
+        description: 销售策略与目标
+      - name: account-prospecting
+        description: 客户拓展
+      - name: opportunity-management
+        description: 商机管理
+      - name: solution-selling
+        description: 方案销售
+      - name: pricing-quotation
+        description: 报价与商务定价
+      - name: visit-management
+        description: 客户拜访
+      - name: sales-review
+        description: 销售评审
+      - name: bidding
+        description: 招投标
+      - name: contract-handover
+        description: 签约与交接
+      - name: channel-partner
+        description: 渠道与伙伴
+      - name: sales-force-management
+        description: 销售队伍与画像
+    customer-development:
+      - name: customer-master-data
+        description: 客户主数据与标签
+      - name: customer-insight
+        description: 客户画像与洞察
+      - name: customer-value
+        description: 客户价值、质量与收益
+      - name: customer-risk
+        description: 客户经营风险
+      - name: lifecycle-management
+        description: 客户生命周期
+      - name: customer-success
+        description: 客户运维与成功
+      - name: retention-growth
+        description: 留存、续约与增购
+      - name: key-account-management
+        description: 大客户管理
+      - name: customer-portfolio
+        description: 客群与组合管理
+    customer-service:
+      - name: service-channels
+        description: 服务渠道与受理
+      - name: service-operation
+        description: 客服作业
+      - name: service-management
+        description: 客服管理
+      - name: knowledge-assistance
+        description: 客服知识与辅助
+      - name: voice-of-customer
+        description: 客户声音
+      - name: complaint-management
+        description: 投诉管理
+      - name: claims
+        description: 理赔
+      - name: service-recovery
+        description: 服务补救
+      - name: service-analytics
+        description: 服务分析
+    network-planning:
+      - name: network-design
+        description: 网络设计与布局
+      - name: air-network
+        description: 空网规划
+      - name: land-network
+        description: 陆网规划
+      - name: route-planning
+        description: 路由规划
+      - name: line-optimization
+        description: 线路优化
+      - name: facility-planning
+        description: 场地规划
+      - name: site-planning
+        description: 网点规划
+      - name: capacity-planning
+        description: 运力与产能规划
+      - name: dispatch
+        description: 调度运营
+      - name: network-standards
+        description: 网络标准
+      - name: planning-analytics
+        description: 规调问数与分析
+    operations:
+      - name: pickup-delivery
+        description: 收派与末端履约
+      - name: courier-operation
+        description: 小哥运营与管理
+      - name: transfer-operation
+        description: 中转作业
+      - name: air-transport
+        description: 航空运输
+      - name: land-transport
+        description: 陆运作业
+      - name: rail-transport
+        description: 铁运作业
+      - name: handover
+        description: 接驳作业
+      - name: network-site-operation
+        description: 网点运营
+      - name: warehouse-operation
+        description: 仓储作业
+      - name: large-item-operation
+        description: 大件与零担运营
+      - name: home-service-operation
+        description: 到家服务履约
+      - name: international-freight-operation
+        description: 国际货运作业
+      - name: circular-operation
+        description: 循环运营
+    quality-safety:
+      - name: express-quality
+        description: 快件质量
+      - name: fulfillment-quality
+        description: 履约质量
+      - name: service-quality
+        description: 服务质量
+      - name: key-account-fulfillment
+        description: 大客户履约质量
+      - name: quality-standards
+        description: 质量标准
+      - name: quality-monitoring
+        description: 质量监控与检查
+      - name: exception-incident
+        description: 异常与事件
+      - name: root-cause-improvement
+        description: 根因分析与改善
+      - name: operational-safety
+        description: 运营安全
+      - name: safety-management
+        description: 安全管理
+    business-management:
+      - name: strategy-planning
+        description: 战略与经营规划
+      - name: operating-analysis
+        description: 经营分析
+      - name: commercial-analysis
+        description: 商业分析
+      - name: forecasting
+        description: 预测与决策支持
+      - name: performance-management
+        description: 经营绩效
+      - name: project-management
+        description: 项目管理
+      - name: process-management
+        description: 流程管理
+      - name: portfolio-program-management
+        description: 项目群与组合管理
+      - name: innovation
+        description: 创新管理
+    enterprise-services:
+      - name: procurement
+        description: 采购管理
+      - name: supplier-management
+        description: 供应商管理
+      - name: materials
+        description: 物资管理
+      - name: asset-management
+        description: 资产管理
+      - name: property
+        description: 物业管理
+      - name: administrative-services
+        description: 行政与后勤
+      - name: meeting-collaboration
+        description: 会议与协同
+      - name: public-affairs
+        description: 公共事务
+      - name: charity
+        description: 公益
+    human-resource:
+      - name: workforce-planning
+        description: 人力规划
+      - name: talent-recruitment
+        description: 人才招聘
+      - name: talent-intelligence
+        description: 人才识别与雷达
+      - name: talent-development
+        description: 人才发展
+      - name: organization-development
+        description: 组织发展
+      - name: learning-development
+        description: 学习发展与课程运营
+      - name: employee-service
+        description: 员工服务
+      - name: employee-voice
+        description: 员工声音
+      - name: performance
+        description: 绩效管理
+      - name: digital-workforce
+        description: 数字员工
+      - name: culture-engagement
+        description: 企业文化与员工认同
+      - name: employee-care-union
+        description: 员工关怀与工会
+      - name: labor-relations
+        description: 用工与劳动关系
+    finance:
+      - name: accounting-settlement
+        description: 核算与结算
+      - name: receivables-collection
+        description: 应收与收款
+      - name: treasury
+        description: 资金管理
+      - name: budget
+        description: 预算管理
+      - name: tax
+        description: 税务管理
+      - name: credit-management
+        description: 信用管理
+      - name: cost-profit
+        description: 成本与利润
+      - name: revenue-management
+        description: 营收管理
+      - name: financial-analysis
+        description: 财务分析
+    technology:
+      - name: ai-agent
+        description: AI与智能体
+      - name: application-systems
+        description: 业务应用与系统
+      - name: software-engineering
+        description: 软件工程与系统集成
+      - name: data-platform
+        description: 数据平台
+      - name: data-governance
+        description: 数据治理
+      - name: analytics-bi
+        description: 智能问数与BI
+      - name: api-integration
+        description: 接口与集成规范
+      - name: infrastructure-cloud
+        description: 基础设施与云平台
+      - name: cybersecurity
+        description: 技术安全与身份权限
+      - name: operations-maintenance
+        description: 运维与可观测性
+      - name: tools-platform
+        description: 工具与平台
+    compliance:
+      - name: corporate-policies
+        description: 公司制度与标准
+      - name: regulatory-compliance
+        description: 监管合规
+      - name: legal
+        description: 法律事务
+      - name: contract
+        description: 合同管理
+      - name: intellectual-property
+        description: 知识产权
+      - name: data-privacy
+        description: 数据安全与隐私合规
+      - name: labor-compliance
+        description: 用工合规
+      - name: finance-tax-compliance
+        description: 财税合规
+      - name: procurement-compliance
+        description: 采购合规
+      - name: operational-safety-compliance
+        description: 安全生产与运营合规
+      - name: audit-integrity
+        description: 审计与廉洁
+      - name: enterprise-risk
+        description: 企业风险控制
+  # Navigation indexes: the root index plus one in every materialized directory
+  # (a directory that contains at least one knowledge page). All are exempt from
+  # the path structure and excluded from derived views.
+  navigation:
+    filename: index.md
+    type: index
+  exempt_paths:
+    - "**/index.md"
+  derived_views_include_exempt: false
+
+# Viewable mining artifacts are committed beside the canonical pages. The evidence
+# ledger connects every page to both its input evidence and this intermediate chain.
+intermediates:
+  required: true
+  root_path: _mining
+  run_manifest: run-manifest.json
+  evidence_ledger: evidence-ledger.json
+  investigation_report: investigation-report.json
+  questionnaire: questionnaire.json
+  source_coverage: source-coverage.json
+  candidate_knowledge: candidate-knowledge.json
+  readlist: readlist.json
+  evidence_history: evidence-history.json
+
+# Cross-knowledge-base references are explicit OpenViking URIs. A bidirectional
+# relation must be mirrored in the counterpart checkout when that checkout is writable.
+cross_knowledge:
+  frontmatter_field: knowledge_links
+  context_field: context
+  require_body_link: true
+  allowed_relations:
+    - related
+    - depends-on
+    - derived-from
+    - supersedes
+
+# Projection views (four core perspectives). The main view always follows the
+# physical path tree above; these views reorganize the same pages by namespaced
+# OKF frontmatter tags - the OpenViking equivalent of logical soft-links
+# (ViewPlacement): one page, many projections, zero page copies.
+# A view tag is the page's COMPLETE projection directory in that view:
+#   view/<view-title>/<一级目录>/<二级目录>   e.g. view/业务线/速运BG/M线知识
+# Directory names are copied verbatim from the trees below. customers-projects
+# inserts the concrete customer/project name as a dynamic directory between the
+# 一级目录 and the configured aspect directory; product-agent keeps the English
+# directory names of its design tree; a group without children (syntheses)
+# ends the tag at that group.
+views:
+  - id: business-lines
+    title: "业务线"
+    description: "按顺丰业务线/组织切面投影知识。"
+    tag_prefix: "view/业务线/"
+    selection: one_or_more
+    groups:
+      - title: "速运BG"
+        children:
+          - title: "M线知识"
+            description: "市场线:客户全生命周期经营、销售拓客签约、客户价值与风险管理、全域营销推广转化"
+          - title: "O线知识"
+            description: "运营线:全网物流中转干线、末端小哥履约、网点实体运营、全网网络规划调度及后勤综合保障"
+          - title: "H线知识"
+            description: "人资线:人才招聘、员工培养赋能、员工诉求倾听、绩效核算、数字化人力员工管理"
+          - title: "F线知识"
+            description: "财务线:账款回收、信用风控、财务日常核算、财税处理、营收预测"
+      - title: "BU"
+        children:
+          - title: "生命科学与医药"
+          - title: "产业园运营中心"
+          - title: "国际"
+          - title: "冷运学堂"
+          - title: "政企物流"
+          - title: "顺丰数科"
+          - title: "数智供应链"
+      - title: "职能"
+        children:
+          - title: "经管"
+          - title: "仓储运营中心"
+          - title: "鄂州机场指挥部"
+          - title: "综合"
+          - title: "S线二级学堂"
+          - title: "集团审计"
+          - title: "工会学堂"
+          - title: "多彩关服"
+          - title: "顺丰公益"
+          - title: "用工合规管理"
+          - title: "公共事务部"
+          - title: "市场营销"
+          - title: "廉洁知识"
+          - title: "经营管理"
+      - title: "呼叫理赔中心"
+        children:
+          - title: "国际客服中心"
+          - title: "东莞呼叫中心"
+          - title: "合肥呼叫中心"
+          - title: "如皋呼叫中心"
+          - title: "浙北理赔中心"
+          - title: "广州理赔中心"
+          - title: "东莞理赔中心"
+          - title: "湖南理赔中心"
+          - title: "丰翼学堂"
+          - title: "智丰云学堂"
+          - title: "东莞呼叫中心（代运营）"
+      - title: "业务区"
+        description: "各区域学院,半固定可扩展。"
+        children:
+          - title: "台湾区"
+          - title: "香港区"
+          - title: "粤西区"
+          - title: "京丰学院"
+          - title: "沪尚学院"
+          - title: "广顺学院"
+          - title: "智汇学院"
+          - title: "苏南学院"
+          - title: "浙北学院"
+          - title: "鲁东丰院"
+          - title: "江丰学院"
+          - title: "浙中学院"
+          - title: "海西学院"
+          - title: "津丰学堂"
+          - title: "常丰学院"
+          - title: "浙南学院"
+          - title: "东丰学堂"
+          - title: "冀丰学院"
+          - title: "辽顺学院"
+          - title: "星海学院"
+          - title: "泉承学院"
+          - title: "苏丰学院"
+          - title: "渝丰学堂"
+          - title: "皖丰学府"
+          - title: "橙丰学院"
+          - title: "楚丰学院"
+          - title: "熊猫学院"
+          - title: "陕宁学院"
+          - title: "豫丰知识社区"
+          - title: "湘顺学堂"
+          - title: "晋丰学院"
+          - title: "黑吉学院"
+          - title: "青丰学院"
+          - title: "桂丰商学院"
+          - title: "椰丰学院"
+          - title: "黔丰学堂"
+          - title: "滇丰学堂"
+          - title: "祁连学院"
+          - title: "新顺学堂"
+      - title: "分拨区"
+        description: "各分拨学院,半固定可扩展。"
+        children:
+          - title: "丰华学院"
+          - title: "华东学院"
+          - title: "华丰学院"
+          - title: "鄂枢学院"
+          - title: "砺丰学院"
+
+  - id: function-domains
+    title: "职能领域"
+    description: "按职能领域切面投影知识,三级及以下按知识规模动态扩展。"
+    tag_prefix: "view/职能领域/"
+    selection: one_or_more
+    groups:
+      - title: "产品与市场"
+        children:
+          - title: "产品规划与解决方案"
+          - title: "市场研究与品牌"
+          - title: "营销活动与增长"
+      - title: "销售与客户"
+        children:
+          - title: "商机、报价与招投标"
+          - title: "客户画像与价值"
+          - title: "客户成功与大客户管理"
+      - title: "运营与网络"
+        children:
+          - title: "收派、中转与运输"
+          - title: "网点与仓储运营"
+          - title: "网络、线路与调度规划"
+      - title: "客服与质量"
+        children:
+          - title: "客服作业与客户声音"
+          - title: "投诉与理赔"
+          - title: "履约质量与运营安全"
+      - title: "经营与综合服务"
+        children:
+          - title: "战略、经营分析与预测"
+          - title: "项目、流程与绩效"
+          - title: "采购、物资、物业与行政"
+      - title: "人力与组织"
+        children:
+          - title: "招聘、人才与组织发展"
+          - title: "学习发展与认证"
+          - title: "员工服务、文化与关怀"
+      - title: "财务与信用"
+        children:
+          - title: "核算、结算与资金"
+          - title: "收款、预算与税务"
+          - title: "信用、成本与利润"
+      - title: "技术与数据"
+        children:
+          - title: "技术方案与架构设计"
+          - title: "AI、数据平台与接口集成"
+          - title: "运维、安全与工具平台"
+      - title: "法务与合规"
+        children:
+          - title: "制度、法律与合同"
+          - title: "数据、用工与财税合规"
+          - title: "审计、廉洁与企业风险"
+
+  - id: customers-projects
+    title: "客户与项目"
+    description: "按客户或项目切面投影知识,优先按结构化 customer_id / project_id 建链。"
+    tag_prefix: "view/客户与项目/"
+    selection: one_or_more
+    groups:
+      - title: "客户"
+        description: "一级目录下插入具体客户名(动态,优先结构化 customer_id),tag 以 children 之一结尾。"
+        dynamic_children: "客户名"
+        children:
+          - title: "客户画像"
+          - title: "合同与约束"
+          - title: "产品与方案"
+          - title: "服务与交付"
+          - title: "异常与理赔"
+          - title: "复盘与决策"
+      - title: "项目"
+        description: "一级目录下插入具体项目名(动态,优先结构化 project_id),tag 以 children 之一结尾。"
+        dynamic_children: "项目名"
+        children:
+          - title: "背景与目标"
+          - title: "需求"
+          - title: "方案"
+          - title: "决策"
+          - title: "执行"
+          - title: "问题"
+          - title: "交付"
+          - title: "复盘"
+
+  - id: product-agent
+    title: "产品智能体知识"
+    description: "产品智能体自身知识结构投影,目录为英文(照设计树)。"
+    tag_prefix: "view/产品智能体知识/"
+    selection: exactly_one
+    groups:
+      - title: "entities"
+        description: "实体(产品、服务)。"
+        children:
+          - title: "products"
+            description: "各产品页面。"
+      - title: "concepts"
+        description: "概念。"
+        children:
+          - title: "faq"
+            description: "跨产品 FAQ。"
+          - title: "glossary"
+            description: "术语/黑话。"
+          - title: "strategy"
+            description: "策略变更时间轴。"
+          - title: "chunjie-gaofeng"
+            description: "春节高峰策略。"
+          - title: "training"
+            description: "培训材料。"
+          - title: "operations"
+            description: "底盘管理。"
+      - title: "syntheses"
+        description: "综合研究(查询归档);无二级目录,tag 止于本组。"
+
+# Cross-page links use standard Markdown links `[text](<page-path>.md)`; the renderer
+# builds relations/backlinks only from Markdown links. `[[wikilink]]` is inert — do not use.
+wikilinks:
+  enabled: true
+  syntax: markdown-link
+  auto_link: true
+  catalog_only: true
+  first_occurrence_per_paragraph: true
+  exclude:
+    - headings
+    - tables
+    - code
