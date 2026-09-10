@@ -84,12 +84,12 @@ export function getTaskPipelineSteps(
     {
       name: isZh ? '语义处理' : 'Semantic Processing',
       state: inferState('Semantic', status === 'completed' ? 'completed' : (status as StepState), status, qStatus),
-      count: qStatus?.Semantic?.processed,
+      count: qStatus?.Semantic.processed,
     },
     {
       name: isZh ? '嵌入向量' : 'Vector Embedding',
       state: inferState('Embedding', status === 'completed' ? 'completed' : (status as StepState), status, qStatus),
-      count: qStatus?.Embedding?.processed,
+      count: qStatus?.Embedding.processed,
     },
   ]
 }

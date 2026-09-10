@@ -15,7 +15,6 @@ will fail loudly here.
 from unittest.mock import patch
 
 import httpx
-import pytest
 
 
 def _assert_envelope(resp: httpx.Response, expected_code: int, expected_error_code: str):

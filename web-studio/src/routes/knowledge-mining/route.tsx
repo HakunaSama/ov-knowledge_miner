@@ -8,7 +8,6 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   Clock3Icon,
-  ClipboardListIcon,
   CircleStopIcon,
   FileIcon,
   FileCogIcon,
@@ -18,15 +17,12 @@ import {
   FolderOpenIcon,
   FolderTreeIcon,
   HistoryIcon,
-  Layers3Icon,
   LoaderCircleIcon,
   NetworkIcon,
   PlusIcon,
-  TagsIcon,
   RotateCcwIcon,
   SparklesIcon,
   TriangleAlertIcon,
-  TerminalIcon,
   UploadCloudIcon,
   XIcon,
 } from 'lucide-react'
@@ -58,8 +54,6 @@ import type { VikingFsEntry } from '#/routes/resources/-types/viking-fm'
 
 import {
   cancelCompile,
-  buildTeamMemoryCompileInput,
-  buildHumanAnswerCompileInput,
   checkVikingBot,
   DEFAULT_OKF_CONFIG,
   ensureLlmWikiSkill,
@@ -75,8 +69,8 @@ import {
 } from './-lib/api'
 import type {
   CompileIntermediateArtifact,
+  CompileMainView,
   CompileTask,
-  CompileView,
 } from './-lib/api'
 import {
   jobsFromCompileTasks,
@@ -96,46 +90,32 @@ import {
 } from './-lib/queue'
 import {
   DOCUMENT_EXTENSIONS,
-  MEMORY_EXTENSIONS,
   classifyResourceFolderFiles,
   getFileDisplayName,
   hasSupportedExtension,
 } from './-lib/folder-files'
 import {
-  buildHumanAnswersMarkdown,
-  hasAnswer,
   parseCandidateKnowledge,
-  parseInvestigationReport,
-  parseQuestionnaire,
   parseReadLedger,
   parseSourceCoverage,
 } from './-lib/intermediates'
 import type {
   CandidateKnowledge,
-  Questionnaire,
-  QuestionnaireAnswers,
   ReadLedger,
   SourceCoverage,
 } from './-lib/intermediates'
 import {
-  buildFacetFirstMetaKnowledgeTree,
-  buildMetaKnowledgeUnits,
-  buildMetaKnowledgeViewSections,
-  buildPerspectiveMetaKnowledgeTree,
-} from './-lib/meta-knowledge'
+  buildPageRoleTree,
+  buildKnowledgePageUnits,
+} from './-lib/knowledge-pages'
 import type {
-  FacetFirstMetaKnowledgeTreeNode,
-  MetaKnowledgeUnit,
-  MetaKnowledgeViewSection,
-} from './-lib/meta-knowledge'
+  PageRoleTreeNode,
+  KnowledgePageUnit,
+} from './-lib/knowledge-pages'
 import { parseWikiPageMetadata } from './-lib/views'
 import type { WikiPageMetadata } from './-lib/views'
 import { importedMiningJob, inspectCliResult } from './-lib/result-import'
-import { transitionAfterCompletedCompile } from './-lib/workflow'
-import {
-  findWikiLinkTarget,
-  renderDoubleBracketWikiLinks,
-} from './-lib/wiki-links'
+import { findMarkdownLinkTarget } from './-lib/markdown-links'
 import { KnowledgeCloudGraph } from './-components/knowledge-cloud-graph'
 import { CliResultImportCard } from './-components/cli-result-import-card'
 import { buildKnowledgeGraph } from './-lib/knowledge-graph'
@@ -184,7 +164,6 @@ function progressFor(files: File[]): FileProgress[] {
 
 async function newJobs(
   documentFiles: File[],
-  memoryFiles: File[],
   reason: string,
   windowFileLimit: number,
   windowByteLimit: number,
@@ -194,45 +173,23 @@ async function newJobs(
   const { rootUri, targetUri } = createRunUris()
   const runId = rootUri.split('/').at(-1) || rootUri
   const now = new Date().toISOString()
-  const [inspectedDocuments, inspectedMemory] = await Promise.all([
-    inspectMiningFiles(documentFiles),
-    inspectMiningFiles(memoryFiles),
-  ])
-  const planned = [
-    ...planMiningWindows(inspectedDocuments, {
-      byteLimit: windowByteLimit,
-      fileLimit: windowFileLimit,
-      pageLimit: windowPageLimit,
-      probeLimit: windowProbeLimit,
-    }).map((window) => ({ ...window, kind: 'documents' as const })),
-    ...planMiningWindows(inspectedMemory, {
-      byteLimit: windowByteLimit,
-      fileLimit: windowFileLimit,
-      pageLimit: windowPageLimit,
-      probeLimit: windowProbeLimit,
-    }).map((window) => ({ ...window, kind: 'memory' as const })),
-  ]
+  const inspectedDocuments = await inspectMiningFiles(documentFiles)
+  const planned = planMiningWindows(inspectedDocuments, {
+    byteLimit: windowByteLimit,
+    fileLimit: windowFileLimit,
+    pageLimit: windowPageLimit,
+    probeLimit: windowProbeLimit,
+  })
   return planned.map((window, offset) => {
     const windowIndex = offset + 1
-    const suffix = window.kind === 'memory' ? 'team-memory' : 'document-sources'
-    const sourceUri = `${rootUri}/windows/${String(windowIndex).padStart(4, '0')}/${suffix}`
+    const sourceUri = `${rootUri}/windows/${String(windowIndex).padStart(4, '0')}/document-sources`
     const windowLogUri = `${rootUri}/logs/windows/${String(windowIndex).padStart(4, '0')}.json`
     const job: MiningJob = {
       createdAt: now,
-      documentFiles:
-        window.kind === 'documents'
-          ? progressFor(window.files.map((item) => item.file))
-          : [],
+      documentFiles: progressFor(window.files.map((item) => item.file)),
       documentSourceUri: sourceUri,
       documentTaskId: null,
       error: null,
-      memoryFiles:
-        window.kind === 'memory'
-          ? progressFor(window.files.map((item) => item.file))
-          : [],
-      memorySourceUri: sourceUri,
-      memoryTaskId: null,
-      humanTaskId: null,
       id: `${runId}-w${String(windowIndex).padStart(4, '0')}`,
       phase: 'preparing',
       reason,
@@ -250,7 +207,6 @@ async function newJobs(
       windowPageLimit,
       windowProbeLimit,
       windowIndex,
-      windowKind: window.kind,
       windowLogUri,
       windowSizeBytes: window.sizeBytes,
       windowPdfPages: window.pdfPages,
@@ -302,27 +258,23 @@ function phaseProgress(phase: MiningPhase, compileTask?: CompileTask): number {
   if (phase === 'preparing') return 5
   if (phase === 'uploading') return 28
   if (phase === 'queued') return 34
-  if (phase === 'awaiting_human') return 96
   if (phase === 'partial') return 100
   if (phase === 'completed') return 100
   if (phase === 'failed' || phase === 'cancelled') return 100
   const stage = compileTask?.stage
-  const incremental =
-    phase === 'compiling_memory' || phase === 'compiling_human'
-  if (stage === 'loading_skill') return incremental ? 76 : 38
-  if (stage === 'collecting_context') return incremental ? 80 : 44
-  if (stage === 'agent') return incremental ? 88 : 56
-  if (stage === 'source_coverage') return incremental ? 84 : 48
-  if (stage === 'candidate_knowledge') return incremental ? 89 : 58
-  if (stage === 'page_generation') return incremental ? 93 : 66
-  if (stage === 'rendering') return incremental ? 93 : 64
-  if (stage === 'writing') return incremental ? 96 : 68
-  if (stage === 'refreshing' || stage === 'salvaging')
-    return incremental ? 98 : 71
+  if (stage === 'loading_skill') return 38
+  if (stage === 'collecting_context') return 44
+  if (stage === 'agent') return 56
+  if (stage === 'source_coverage') return 48
+  if (stage === 'candidate_knowledge') return 58
+  if (stage === 'page_generation') return 66
+  if (stage === 'rendering') return 64
+  if (stage === 'writing') return 68
+  if (stage === 'refreshing' || stage === 'salvaging') return 71
   return 38
 }
 
-function FacetFirstKnowledgeTreeBranch({
+function PageRoleKnowledgeTreeBranch({
   depth,
   expandedPaths,
   metadata,
@@ -334,7 +286,7 @@ function FacetFirstKnowledgeTreeBranch({
   depth: number
   expandedPaths: Set<string>
   metadata: Partial<Record<string, WikiPageMetadata>>
-  node: FacetFirstMetaKnowledgeTreeNode
+  node: PageRoleTreeNode
   onSelect: (uri: string) => void
   selectedUri: string | null
   toggleExpanded: (path: string) => void
@@ -358,9 +310,7 @@ function FacetFirstKnowledgeTreeBranch({
   }
 
   const expanded = expandedPaths.has(node.path)
-  const descendantFiles = (
-    candidate: FacetFirstMetaKnowledgeTreeNode,
-  ): number =>
+  const descendantFiles = (candidate: PageRoleTreeNode): number =>
     candidate.entry
       ? 1
       : candidate.children.reduce(
@@ -401,7 +351,7 @@ function FacetFirstKnowledgeTreeBranch({
       {expanded ? (
         <div>
           {node.children.map((child) => (
-            <FacetFirstKnowledgeTreeBranch
+            <PageRoleKnowledgeTreeBranch
               key={child.path}
               depth={depth + 1}
               expandedPaths={expandedPaths}
@@ -418,32 +368,28 @@ function FacetFirstKnowledgeTreeBranch({
   )
 }
 
-function MetaKnowledgeTreeView({
-  facets,
+function KnowledgePageTreeView({
+  pageRoles,
   metadata,
   rootPath,
-  sections,
   units = [],
   onSelect,
   selectedUri,
 }: {
-  facets: string[]
+  pageRoles: string[]
   metadata: Partial<Record<string, WikiPageMetadata>>
   rootPath: string
-  sections?: MetaKnowledgeViewSection[]
-  units?: MetaKnowledgeUnit[]
+  units?: KnowledgePageUnit[]
   onSelect: (uri: string) => void
   selectedUri: string | null
 }) {
-  const facetKey = facets.join('|')
+  const pageRoleKey = pageRoles.join('|')
   const tree = React.useMemo(
     () =>
-      sections
-        ? buildPerspectiveMetaKnowledgeTree(sections, facets)
-        : buildFacetFirstMetaKnowledgeTree(units, facets, {
-            rootPath,
-          }),
-    [facetKey, facets, rootPath, sections, units],
+      buildPageRoleTree(units, pageRoles, {
+        rootPath,
+      }),
+    [pageRoleKey, pageRoles, rootPath, units],
   )
   const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(
     () => new Set(),
@@ -452,7 +398,7 @@ function MetaKnowledgeTreeView({
   React.useEffect(() => {
     setExpandedPaths((current) => {
       const next = new Set(current)
-      const expand = (node: FacetFirstMetaKnowledgeTreeNode, depth: number) => {
+      const expand = (node: PageRoleTreeNode, depth: number) => {
         if (!node.entry && depth < 2) next.add(node.path)
         for (const child of node.children) expand(child, depth + 1)
       }
@@ -474,7 +420,7 @@ function MetaKnowledgeTreeView({
   }, [])
 
   return tree.map((node) => (
-    <FacetFirstKnowledgeTreeBranch
+    <PageRoleKnowledgeTreeBranch
       key={node.path}
       depth={0}
       expandedPaths={expandedPaths}
@@ -530,17 +476,23 @@ function SourceCoveragePanel({
             </div>
             {source.reason ? (
               <p className="mt-2 leading-5 text-muted-foreground">
-                {labels.reason}：{source.reason}
+                {labels.reason}
+                {labels.valueSeparator}
+                {source.reason}
               </p>
             ) : null}
             {source.merged_into ? (
               <p className="mt-1 break-all leading-5 text-muted-foreground">
-                {labels.mergedInto}：{source.merged_into}
+                {labels.mergedInto}
+                {labels.valueSeparator}
+                {source.merged_into}
               </p>
             ) : null}
             {source.page_paths.length > 0 ? (
               <p className="mt-1 leading-5 text-muted-foreground">
-                {labels.outputs}：{source.page_paths.join('、')}
+                {labels.outputs}
+                {labels.valueSeparator}
+                {source.page_paths.join(labels.listSeparator)}
               </p>
             ) : null}
           </div>
@@ -557,7 +509,6 @@ function KnowledgeMiningRoute() {
   const legacyJobStorageKey = `openviking.knowledge-mining.${identityScopeKey}`
   const historyStorageKey = `openviking.knowledge-mining.history.${identityScopeKey}`
   const [documentFiles, setDocumentFiles] = React.useState<File[]>([])
-  const [memoryFiles, setMemoryFiles] = React.useState<File[]>([])
   const [okfConfigFile, setOkfConfigFile] = React.useState<File | null>(null)
   const [reason, setReason] = React.useState(() => t('reason.default'))
   const [windowFileLimit, setWindowFileLimit] = React.useState(
@@ -582,13 +533,9 @@ function KnowledgeMiningRoute() {
       pageLimit: Math.max(1, Math.floor(windowPageLimit)),
       probeLimit: Math.max(1, Math.floor(windowProbeLimit)),
     }
-    return (
-      planMiningWindows(documentFiles, options).length +
-      planMiningWindows(memoryFiles, options).length
-    )
+    return planMiningWindows(documentFiles, options).length
   }, [
     documentFiles,
-    memoryFiles,
     windowByteLimitMiB,
     windowFileLimit,
     windowPageLimit,
@@ -603,13 +550,10 @@ function KnowledgeMiningRoute() {
   )
   const [selectedUri, setSelectedUri] = React.useState<string | null>(null)
   const [selectedViewId, setSelectedViewId] = React.useState('main')
-  const [questionnaireAnswers, setQuestionnaireAnswers] =
-    React.useState<QuestionnaireAnswers>({})
   const previousDefaultReasonRef = React.useRef(t('reason.default'))
   const okfConfigInputRef = React.useRef<HTMLInputElement>(null)
   const resourceFolderInputRef = React.useRef<HTMLInputElement>(null)
   const historyHydratedRef = React.useRef(false)
-  const advancingJobsRef = React.useRef(new Set<string>())
   const queueStartingJobsRef = React.useRef(new Set<string>())
   const uploadingWindowJobsRef = React.useRef(new Set<string>())
   const pendingWindowFilesRef = React.useRef(new Map<string, File[]>())
@@ -715,7 +659,7 @@ function KnowledgeMiningRoute() {
       const rootUri = terminalJob.targetUri.replace(/\/wiki\/?$/, '')
       const publicJob = (candidate: MiningJob) => ({
         error: candidate.error,
-        files: [...candidate.documentFiles, ...candidate.memoryFiles],
+        files: candidate.documentFiles,
         oversized_singleton: candidate.oversizedSingleton || false,
         pdf_pages: candidate.windowPdfPages || 0,
         estimated_probes: candidate.windowEstimatedProbes || 0,
@@ -732,7 +676,6 @@ function KnowledgeMiningRoute() {
         window_page_limit: candidate.windowPageLimit || 0,
         window_probe_limit: candidate.windowProbeLimit || 0,
         window_index: candidate.windowIndex || 1,
-        window_kind: candidate.windowKind || 'documents',
       })
       void Promise.all([
         writeKnowledgeMiningLog(terminalJob.windowLogUri, {
@@ -796,7 +739,6 @@ function KnowledgeMiningRoute() {
     (nextJob: MiningJob) => {
       setSelectedUri(null)
       setSelectedViewId('main')
-      setQuestionnaireAnswers({})
       addJob(nextJob)
     },
     [addJob],
@@ -894,69 +836,18 @@ function KnowledgeMiningRoute() {
     onDrop: addDocumentFiles,
   })
 
-  const addMemoryFiles = React.useCallback(
-    (incoming: File[]) => {
-      const next = [...memoryFiles]
-      for (const file of incoming) {
-        if (!hasSupportedExtension(file, MEMORY_EXTENSIONS)) {
-          toast.error(t('errors.unsupportedMemoryFile', { name: file.name }))
-          continue
-        }
-        if (file.size > MAX_KNOWLEDGE_MINING_FILE_BYTES) {
-          toast.error(
-            t('errors.fileTooLarge', {
-              name: file.name,
-              size: formatFileSize(MAX_KNOWLEDGE_MINING_FILE_BYTES),
-            }),
-          )
-          continue
-        }
-        if (
-          next.some(
-            (current) =>
-              current.name === file.name &&
-              current.size === file.size &&
-              current.lastModified === file.lastModified,
-          )
-        ) {
-          continue
-        }
-        next.push(file)
-      }
-      setMemoryFiles(next)
-    },
-    [memoryFiles, t],
-  )
-
-  const memoryDropzone = useDropzone({
-    accept: {
-      'application/json': ['.json'],
-      'application/yaml': ['.yaml', '.yml'],
-      'text/markdown': ['.md', '.markdown'],
-      'text/plain': ['.txt', '.text'],
-    },
-    disabled: Boolean(
-      job &&
-      !['partial', 'completed', 'failed', 'cancelled'].includes(job.phase),
-    ),
-    multiple: true,
-    onDrop: addMemoryFiles,
-  })
-
   const addResourceFolderFiles = React.useCallback(
     (incoming: File[]) => {
       const classified = classifyResourceFolderFiles(incoming)
       addDocumentFiles(classified.documents)
-      addMemoryFiles(classified.memory)
       toast.success(
         t('upload.folder.summary', {
           documents: classified.documents.length,
-          memory: classified.memory.length,
           skipped: classified.skipped.length,
         }),
       )
     },
-    [addDocumentFiles, addMemoryFiles, t],
+    [addDocumentFiles, t],
   )
 
   const trackedJobs = React.useMemo(
@@ -990,61 +881,9 @@ function KnowledgeMiningRoute() {
   const effectiveCompileResult = compileTask?.result || job?.result || null
   const hasVisibleResults = Boolean(
     job &&
-    [
-      'compiling_memory',
-      'compiling_human',
-      'awaiting_human',
-      'partial',
-      'completed',
-      'failed',
-      'cancelled',
-    ].includes(job.phase) &&
+    ['partial', 'completed', 'failed', 'cancelled'].includes(job.phase) &&
     effectiveCompileResult,
   )
-
-  const humanAnswerMutation = useMutation({
-    mutationFn: async (questionnaire: Questionnaire) => {
-      if (!job) throw new Error(t('errors.missingJob'))
-      if (job.origin !== 'studio') {
-        throw new Error(t('cliImport.readOnly'))
-      }
-      const jobId = job.id
-      const answeredAt = new Date().toISOString()
-      const content = buildHumanAnswersMarkdown(
-        questionnaire,
-        questionnaireAnswers,
-        answeredAt,
-      )
-      const fileName = `human-answers-${answeredAt.replace(/[^0-9]/g, '').slice(0, 14)}.md`
-      const answerSourceUri = await uploadKnowledgeFile(
-        new File([content], fileName, {
-          lastModified: Date.now(),
-          type: 'text/markdown',
-        }),
-        job.memorySourceUri,
-      )
-      const accepted = await startCompile(
-        buildHumanAnswerCompileInput({
-          answerSourceUri,
-          okfConfig: job.okfConfigUri || '',
-          reason: `${job.reason}\n\n${t('questionnaire.incrementalReason')}`,
-          skill: job.skillUri || '',
-          targetUri: job.targetUri,
-        }),
-      )
-      return { accepted, jobId }
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-    onSuccess: ({ accepted, jobId }) => {
-      updateJob(jobId, (current) => ({
-        ...current,
-        error: null,
-        humanTaskId: accepted.task_id,
-        phase: 'compiling_human',
-        taskId: accepted.task_id,
-      }))
-    },
-  })
 
   React.useEffect(() => {
     trackedJobs.forEach((trackedJob, index) => {
@@ -1079,102 +918,19 @@ function KnowledgeMiningRoute() {
         )
         return
       }
-      const transition = transitionAfterCompletedCompile({
-        hasMemoryFiles:
-          !trackedJob.windowFileLimit && trackedJob.memoryFiles.length > 0,
-        memoryTaskStarted: Boolean(trackedJob.memoryTaskId),
-        phase: trackedJob.phase,
-        result: task.result,
-        taskStage: task.stage,
-      })
-      if (transition === 'show_partial_result') {
-        updateJob(trackedJob.id, (current) =>
-          current.phase === 'partial' && current.result === task.result
-            ? current
-            : {
-                ...current,
-                error: null,
-                phase: 'partial',
-                result: task.result || current.result,
-              },
-        )
-        return
-      }
-      if (transition === 'start_memory_compile') {
-        if (advancingJobsRef.current.has(trackedJob.id)) return
-        advancingJobsRef.current.add(trackedJob.id)
-        updateJob(trackedJob.id, (current) => ({
-          ...current,
-          result: task.result || current.result,
-        }))
-        void startCompile(
-          buildTeamMemoryCompileInput({
-            memorySourceUri: trackedJob.memorySourceUri,
-            okfConfig: trackedJob.okfConfigUri || '',
-            reason: `${trackedJob.reason}\n\n${t('memory.incrementalReason')}`,
-            skill: trackedJob.skillUri || '',
-            targetUri: trackedJob.targetUri,
-          }),
-        )
-          .then((accepted) => {
-            updateJob(trackedJob.id, (current) => ({
-              ...current,
-              error: null,
-              memoryTaskId: accepted.task_id,
-              phase: 'compiling_memory',
-              taskId: accepted.task_id,
-            }))
-          })
-          .catch((error: unknown) => {
-            const message = getErrorMessage(error)
-            updateJob(trackedJob.id, (current) => ({
-              ...current,
-              error: message,
-              phase: 'failed',
-            }))
-            toast.error(message)
-          })
-          .finally(() => advancingJobsRef.current.delete(trackedJob.id))
-        return
-      }
-      if (transition === 'await_human_evidence') {
-        if ((trackedJob.windowIndex || 1) < (trackedJob.windowCount || 1)) {
-          updateJob(trackedJob.id, (current) => ({
-            ...current,
-            error: null,
-            phase: 'completed',
-            result: task.result || current.result,
-          }))
-          return
-        }
-        updateJob(trackedJob.id, (current) =>
-          current.phase === 'awaiting_human' && current.result === task.result
-            ? current
-            : {
-                ...current,
-                error: null,
-                phase: 'awaiting_human',
-                result: task.result || current.result,
-              },
-        )
-        if (trackedJob.id === history.selectedJobId) {
-          setSelectedViewId('questionnaire')
-        }
-        return
-      }
-      if (transition !== 'complete_workflow') return
+      const phase = task.stage === 'salvaged' ? 'partial' : 'completed'
       updateJob(trackedJob.id, (current) =>
-        current.phase === 'completed' && current.result === task.result
+        current.phase === phase && current.result === task.result
           ? current
           : {
               ...current,
               error: null,
-              phase: 'completed',
+              phase,
               result: task.result || current.result,
             },
       )
     })
-  }, [compileQueries, history.selectedJobId, t, trackedJobs, updateJob])
+  }, [compileQueries, t, trackedJobs, updateJob])
 
   React.useEffect(() => {
     const strandedUpload = history.jobs.find(
@@ -1192,14 +948,7 @@ function KnowledgeMiningRoute() {
       return
     }
     const active = schedulingJobs.some((candidate) =>
-      [
-        'uploading',
-        'queued',
-        'compiling_documents',
-        'compiling_memory',
-        'compiling_human',
-        'awaiting_human',
-      ].includes(candidate.phase),
+      ['uploading', 'queued', 'compiling_documents'].includes(candidate.phase),
     )
     if (active) return
     const nextWindow = history.jobs
@@ -1228,8 +977,6 @@ function KnowledgeMiningRoute() {
       }))
       return
     }
-    const field =
-      nextWindow.windowKind === 'memory' ? 'memoryFiles' : 'documentFiles'
     uploadingWindowJobsRef.current.add(nextWindow.id)
     updateJob(nextWindow.id, (current) => ({
       ...current,
@@ -1238,17 +985,15 @@ function KnowledgeMiningRoute() {
     }))
     void (async () => {
       for (const [index, file] of files.entries()) {
-        const progress =
-          field === 'memoryFiles'
-            ? nextWindow.memoryFiles[index]
-            : nextWindow.documentFiles[index]
+        const progress = nextWindow.documentFiles[index]
         if (progress.status === 'completed') continue
         updateJob(nextWindow.id, (current) => ({
           ...current,
-          [field]: current[field].map((fileProgress, progressIndex) =>
-            progressIndex === index
-              ? { ...fileProgress, percent: 0, status: 'uploading' }
-              : fileProgress,
+          documentFiles: current.documentFiles.map(
+            (fileProgress, progressIndex) =>
+              progressIndex === index
+                ? { ...fileProgress, percent: 0, status: 'uploading' }
+                : fileProgress,
           ),
         }))
         await uploadKnowledgeFile(
@@ -1257,10 +1002,11 @@ function KnowledgeMiningRoute() {
           (percent) => {
             updateJob(nextWindow.id, (current) => ({
               ...current,
-              [field]: current[field].map((fileProgress, progressIndex) =>
-                progressIndex === index
-                  ? { ...fileProgress, percent, status: 'uploading' }
-                  : fileProgress,
+              documentFiles: current.documentFiles.map(
+                (fileProgress, progressIndex) =>
+                  progressIndex === index
+                    ? { ...fileProgress, percent, status: 'uploading' }
+                    : fileProgress,
               ),
             }))
           },
@@ -1268,10 +1014,11 @@ function KnowledgeMiningRoute() {
         )
         updateJob(nextWindow.id, (current) => ({
           ...current,
-          [field]: current[field].map((fileProgress, progressIndex) =>
-            progressIndex === index
-              ? { ...fileProgress, percent: 100, status: 'completed' }
-              : fileProgress,
+          documentFiles: current.documentFiles.map(
+            (fileProgress, progressIndex) =>
+              progressIndex === index
+                ? { ...fileProgress, percent: 100, status: 'completed' }
+                : fileProgress,
           ),
         }))
       }
@@ -1312,33 +1059,21 @@ function KnowledgeMiningRoute() {
       from: [queuedJob.documentSourceUri],
       okfConfig: queuedJob.okfConfigUri,
       reason:
-        queuedJob.windowKind === 'memory'
-          ? `${queuedJob.reason}\n\n${t('memory.incrementalReason')}`
-          : (queuedJob.windowIndex || 1) > 1
-            ? `${queuedJob.reason}\n\n${t('window.incrementalReason', {
-                count: queuedJob.windowCount || 1,
-                index: queuedJob.windowIndex || 1,
-              })}`
-            : queuedJob.reason,
+        (queuedJob.windowIndex || 1) > 1
+          ? `${queuedJob.reason}\n\n${t('window.incrementalReason', {
+              count: queuedJob.windowCount || 1,
+              index: queuedJob.windowIndex || 1,
+            })}`
+          : queuedJob.reason,
       skill: queuedJob.skillUri,
       to: queuedJob.targetUri,
     })
       .then((accepted) => {
         updateJob(queuedJob.id, (current) => ({
           ...current,
-          documentTaskId:
-            current.windowKind === 'memory'
-              ? current.documentTaskId
-              : accepted.task_id,
+          documentTaskId: accepted.task_id,
           error: null,
-          memoryTaskId:
-            current.windowKind === 'memory'
-              ? accepted.task_id
-              : current.memoryTaskId,
-          phase:
-            current.windowKind === 'memory'
-              ? 'compiling_memory'
-              : 'compiling_documents',
+          phase: 'compiling_documents',
           taskId: accepted.task_id,
         }))
         toast.success(t('queue.started', { name: queuedJob.reason }))
@@ -1368,22 +1103,25 @@ function KnowledgeMiningRoute() {
     () => orderWikiEntries(wikiQuery.data?.nodes || []),
     [wikiQuery.data],
   )
-  const mainViewFacets = React.useMemo(
+  // Compile history can contain results produced by an older server schema.
+  // Treat the main-view arrays as optional at this UI boundary so selecting a
+  // legacy or partially validated result cannot crash the entire route.
+  const compatibleMainView = effectiveCompileResult?.main_view as
+    | Partial<CompileMainView>
+    | null
+    | undefined
+  const mainViewPageRoles = React.useMemo(
     () =>
-      effectiveCompileResult?.main_view?.facet_categories ||
-      effectiveCompileResult?.main_view?.leaf_categories ||
-      [],
-    [
-      effectiveCompileResult?.main_view?.facet_categories,
-      effectiveCompileResult?.main_view?.leaf_categories,
-    ],
+      compatibleMainView?.page_roles?.map((role) => role.id) || [],
+    [compatibleMainView?.page_roles],
   )
-  const mainViewRoot = effectiveCompileResult?.main_view?.root_path || ''
+  const mainViewRoot = compatibleMainView?.root_path || ''
+  const mainViewPathStructure = compatibleMainView?.path_structure || []
   const hasConfiguredMainView = Boolean(
-    effectiveCompileResult?.main_view &&
-    mainViewFacets.length > 0 &&
+    compatibleMainView &&
+    mainViewPageRoles.length > 0 &&
     mainViewRoot &&
-    effectiveCompileResult.main_view.path_structure?.length,
+    mainViewPathStructure.length,
   )
   const metadataQuery = useQuery({
     enabled: hasVisibleResults && wikiEntries.length > 0,
@@ -1391,13 +1129,7 @@ function KnowledgeMiningRoute() {
       const pages = await Promise.all(
         wikiEntries.map(async (entry) => {
           const page = await fetchFileContent(entry.uri, { raw: true })
-          return [
-            entry.uri,
-            parseWikiPageMetadata(
-              page.content,
-              effectiveCompileResult?.main_view?.meta_knowledge?.id_field,
-            ),
-          ] as const
+          return [entry.uri, parseWikiPageMetadata(page.content)] as const
         }),
       )
       return Object.fromEntries(pages) as Record<string, WikiPageMetadata>
@@ -1406,13 +1138,12 @@ function KnowledgeMiningRoute() {
       'knowledge-mining-page-metadata',
       identityScopeKey,
       job?.targetUri,
-      effectiveCompileResult?.main_view?.meta_knowledge?.id_field,
       wikiEntries.map((entry) => entry.uri).join('|'),
     ],
   })
-  const metaKnowledgeUnits = React.useMemo(
+  const knowledgePageUnits = React.useMemo(
     () =>
-      buildMetaKnowledgeUnits(
+      buildKnowledgePageUnits(
         job?.targetUri || '',
         wikiEntries.map((entry) => ({ name: entry.name, uri: entry.uri })),
         effectiveCompileResult?.main_view,
@@ -1427,44 +1158,26 @@ function KnowledgeMiningRoute() {
   )
   const knowledgeEntries = React.useMemo(
     () =>
-      metaKnowledgeUnits.flatMap((unit) =>
-        mainViewFacets.flatMap((facet) => {
-          const entry = unit.entries[facet]
+      knowledgePageUnits.flatMap((unit) =>
+        mainViewPageRoles.flatMap((role) => {
+          const entry = unit.entries[role]
           return entry ? [entry] : []
         }),
       ),
-    [mainViewFacets, metaKnowledgeUnits],
-  )
-  const incompleteMetaKnowledgeCount = React.useMemo(
-    () =>
-      metaKnowledgeUnits.filter(
-        (unit) =>
-          mainViewFacets.filter((facet) => unit.entries[facet]).length !==
-          mainViewFacets.length,
-      ).length,
-    [mainViewFacets, metaKnowledgeUnits],
+    [mainViewPageRoles, knowledgePageUnits],
   )
   const knowledgeGraph = React.useMemo(
     () =>
       buildKnowledgeGraph(
-        metaKnowledgeUnits,
+        knowledgePageUnits,
         metadataQuery.data || {},
-        mainViewFacets,
+        mainViewPageRoles,
       ),
-    [mainViewFacets, metadataQuery.data, metaKnowledgeUnits],
+    [mainViewPageRoles, metadataQuery.data, knowledgePageUnits],
   )
-  const compileViews = React.useMemo<CompileView[]>(() => {
-    return effectiveCompileResult?.views || []
-  }, [effectiveCompileResult?.views])
   const intermediateArtifacts = React.useMemo<CompileIntermediateArtifact[]>(
     () => effectiveCompileResult?.intermediate_artifacts || [],
     [effectiveCompileResult?.intermediate_artifacts],
-  )
-  const questionnaireArtifact = intermediateArtifacts.find(
-    (artifact) => artifact.kind === 'questionnaire',
-  )
-  const investigationArtifact = intermediateArtifacts.find(
-    (artifact) => artifact.kind === 'investigation_report',
   )
   const sourceCoverageArtifact = intermediateArtifacts.find(
     (artifact) => artifact.kind === 'source_coverage',
@@ -1523,77 +1236,14 @@ function KnowledgeMiningRoute() {
       compileTask?.task_id,
     ],
   })
-  const questionnaireQuery = useQuery<Questionnaire>({
-    enabled: hasVisibleResults && Boolean(questionnaireArtifact),
-    queryFn: async () => {
-      const file = await fetchFileContent(questionnaireArtifact?.uri || '', {
-        raw: true,
-      })
-      return parseQuestionnaire(file.content)
-    },
-    queryKey: [
-      'knowledge-mining-questionnaire',
-      identityScopeKey,
-      questionnaireArtifact?.uri,
-      compileTask?.task_id,
-    ],
-  })
-  const investigationQuery = useQuery({
-    enabled: hasVisibleResults && Boolean(investigationArtifact),
-    queryFn: async () => {
-      const file = await fetchFileContent(investigationArtifact?.uri || '', {
-        raw: true,
-      })
-      return parseInvestigationReport(file.content)
-    },
-    queryKey: [
-      'knowledge-mining-investigation',
-      identityScopeKey,
-      investigationArtifact?.uri,
-      compileTask?.task_id,
-    ],
-  })
-  const questionnaireComplete = Boolean(
-    questionnaireQuery.data &&
-    questionnaireQuery.data.questions.every((question) =>
-      hasAnswer(question, questionnaireAnswers[question.id]),
-    ),
-  )
-  const selectedView = compileViews.find((view) => view.id === selectedViewId)
   const systemViewGuideKey =
     selectedViewId === 'intermediates'
       ? 'intermediates'
       : selectedViewId === 'coverage'
         ? 'coverage'
-        : selectedViewId === 'questionnaire'
-          ? 'questionnaire'
-          : selectedViewId === 'graph'
-            ? 'graph'
-            : 'main'
-  const selectedViewPaths = React.useMemo(
-    () =>
-      selectedView?.groups
-        .map((group) =>
-          group.path?.length
-            ? group.path.map((segment) => segment.title).join(' / ')
-            : group.title,
-        )
-        .join(' · ') || '',
-    [selectedView],
-  )
-  const viewSections = React.useMemo(
-    () =>
-      selectedView
-        ? buildMetaKnowledgeViewSections(
-            metaKnowledgeUnits,
-            metadataQuery.data || {},
-            selectedView,
-            mainViewFacets,
-          )
-        : [],
-    [mainViewFacets, metadataQuery.data, metaKnowledgeUnits, selectedView],
-  )
-
+        : selectedViewId === 'graph'
+          ? 'graph'
+          : 'main'
   React.useEffect(() => {
     if (knowledgeEntries.length === 0) return
     setSelectedUri((current) =>
@@ -1602,25 +1252,6 @@ function KnowledgeMiningRoute() {
         : knowledgeEntries[0].uri,
     )
   }, [knowledgeEntries])
-
-  React.useEffect(() => {
-    if (
-      selectedViewId === 'main' ||
-      selectedViewId === 'graph' ||
-      selectedViewId === 'intermediates' ||
-      selectedViewId === 'coverage' ||
-      selectedViewId === 'questionnaire' ||
-      metadataQuery.isLoading
-    )
-      return
-    const entries = viewSections.flatMap((section) => section.entries)
-    if (entries.length === 0) return
-    setSelectedUri((current) =>
-      current && entries.some((entry) => entry.uri === current)
-        ? current
-        : entries[0].uri,
-    )
-  }, [metadataQuery.isLoading, selectedViewId, viewSections])
 
   React.useEffect(() => {
     if (
@@ -1634,10 +1265,7 @@ function KnowledgeMiningRoute() {
           : intermediateArtifacts[0].uri,
       )
     }
-    if (selectedViewId === 'questionnaire' && questionnaireArtifact) {
-      setSelectedUri(questionnaireArtifact.uri)
-    }
-  }, [intermediateArtifacts, questionnaireArtifact, selectedViewId])
+  }, [intermediateArtifacts, selectedViewId])
 
   const contentQuery = useQuery({
     enabled: Boolean(selectedUri),
@@ -1658,7 +1286,6 @@ function KnowledgeMiningRoute() {
       const windowByteLimit = Math.max(1, windowByteLimitMiB) * 1024 * 1024
       const plannedJobs = await newJobs(
         documentFiles,
-        memoryFiles,
         effectiveReason,
         Math.max(1, Math.floor(windowFileLimit)),
         windowByteLimit,
@@ -1668,7 +1295,6 @@ function KnowledgeMiningRoute() {
       if (plannedJobs.length === 0) throw new Error(t('errors.missingJob'))
       setSelectedUri(null)
       setSelectedViewId('main')
-      setQuestionnaireAnswers({})
       try {
         await checkVikingBot()
       } catch (error) {
@@ -1730,22 +1356,11 @@ function KnowledgeMiningRoute() {
         return
       }
       updateJob(jobId, (current) => {
-        const resumesHuman = current.taskId === current.humanTaskId
-        const resumesMemory = current.taskId === current.memoryTaskId
         return {
           ...current,
-          documentTaskId:
-            !resumesHuman && !resumesMemory
-              ? accepted.task_id
-              : current.documentTaskId,
+          documentTaskId: accepted.task_id,
           error: null,
-          humanTaskId: resumesHuman ? accepted.task_id : current.humanTaskId,
-          memoryTaskId: resumesMemory ? accepted.task_id : current.memoryTaskId,
-          phase: resumesHuman
-            ? 'compiling_human'
-            : resumesMemory
-              ? 'compiling_memory'
-              : 'compiling_documents',
+          phase: 'compiling_documents',
           taskId: accepted.task_id,
         }
       })
@@ -1755,33 +1370,23 @@ function KnowledgeMiningRoute() {
 
   const isActive = Boolean(
     job &&
-    [
-      'preparing',
-      'uploading',
-      'queued',
-      'compiling_documents',
-      'compiling_memory',
-      'compiling_human',
-    ].includes(job.phase),
+    ['preparing', 'uploading', 'queued', 'compiling_documents'].includes(
+      job.phase,
+    ),
   )
   const queuePosition = job ? miningQueuePosition(schedulingJobs, job.id) : null
   const resumeBlocked = Boolean(
     job && hasOtherPendingMiningJob(schedulingJobs, job.id),
   )
   const progress = phaseProgress(job?.phase || 'idle', compileTask)
-  const currentStage =
-    job?.phase === 'awaiting_human'
-      ? 'awaiting_human'
-      : compileTask?.stage || job?.phase || 'idle'
+  const currentStage = compileTask?.stage || job?.phase || 'idle'
 
   function reset(): void {
     setHistory((current) => ({ ...current, selectedJobId: null }))
     setDocumentFiles([])
-    setMemoryFiles([])
     setOkfConfigFile(null)
     setSelectedUri(null)
     setSelectedViewId('main')
-    setQuestionnaireAnswers({})
     setReason(t('reason.default'))
   }
 
@@ -1789,7 +1394,6 @@ function KnowledgeMiningRoute() {
     setHistory((current) => ({ ...current, selectedJobId: jobId }))
     setSelectedUri(null)
     setSelectedViewId('main')
-    setQuestionnaireAnswers({})
   }
 
   return (
@@ -1867,8 +1471,7 @@ function KnowledgeMiningRoute() {
                     historyTask,
                   )
                   const sourceCount =
-                    historyJob.documentFiles.length +
-                      historyJob.memoryFiles.length ||
+                    historyJob.documentFiles.length ||
                     historyJob.result?.source_coverage?.uploaded ||
                     null
                   const selected = history.selectedJobId === historyJob.id
@@ -1897,8 +1500,6 @@ function KnowledgeMiningRoute() {
                             'preparing',
                             'uploading',
                             'compiling_documents',
-                            'compiling_memory',
-                            'compiling_human',
                           ].includes(historyJob.phase) ? (
                             <LoaderCircleIcon className="animate-spin" />
                           ) : historyJob.phase === 'queued' ? (
@@ -1988,11 +1589,10 @@ function KnowledgeMiningRoute() {
                         <p className="mt-1 text-xs leading-5 text-muted-foreground">
                           {t('upload.folder.hint')}
                         </p>
-                        {documentFiles.length > 0 || memoryFiles.length > 0 ? (
+                        {documentFiles.length > 0 ? (
                           <p className="mt-1.5 text-xs font-medium text-primary">
                             {t('upload.folder.selected', {
                               documents: documentFiles.length,
-                              memory: memoryFiles.length,
                             })}
                           </p>
                         ) : null}
@@ -2103,105 +1703,6 @@ function KnowledgeMiningRoute() {
                     })}
                   </div>
                 ) : null}
-
-                <div className="space-y-3 rounded-xl border bg-muted/15 p-4">
-                  <div className="flex items-start gap-3">
-                    <Layers3Icon className="mt-0.5 size-4 shrink-0 text-primary" />
-                    <div>
-                      <p className="text-sm font-medium">{t('memory.title')}</p>
-                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        {t('memory.description')}
-                      </p>
-                    </div>
-                  </div>
-                  <div
-                    {...memoryDropzone.getRootProps()}
-                    className={cn(
-                      'rounded-lg border border-dashed px-4 py-5 text-center transition-colors',
-                      isActive
-                        ? 'cursor-not-allowed opacity-60'
-                        : 'cursor-pointer hover:border-primary/60 hover:bg-primary/[0.03]',
-                      memoryDropzone.isDragActive &&
-                        'border-primary bg-primary/5',
-                    )}
-                  >
-                    <input {...memoryDropzone.getInputProps()} />
-                    <p className="text-sm font-medium">
-                      {t('memory.dropzone')}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {t('memory.formats')}
-                    </p>
-                  </div>
-                  {memoryFiles.length > 0 ? (
-                    <div className="divide-y overflow-hidden rounded-lg border bg-background">
-                      {memoryFiles.map((file, index) => {
-                        const fileProgress = job?.memoryFiles[index]
-                        return (
-                          <div
-                            key={`memory-${getFileDisplayName(file)}-${file.lastModified}`}
-                            className="p-3"
-                          >
-                            <div className="flex items-center gap-3">
-                              <TagsIcon className="size-4 shrink-0 text-muted-foreground" />
-                              <div className="min-w-0 flex-1">
-                                <p className="truncate text-sm font-medium">
-                                  {getFileDisplayName(file)}
-                                </p>
-                                <p className="text-xs text-muted-foreground">
-                                  {formatFileSize(file.size)}
-                                </p>
-                              </div>
-                              {fileProgress?.status === 'completed' ? (
-                                <CheckCircle2Icon className="size-4 text-emerald-600" />
-                              ) : fileProgress?.status === 'uploading' ? (
-                                <LoaderCircleIcon className="size-4 animate-spin text-primary" />
-                              ) : !isActive ? (
-                                <Button
-                                  size="icon-sm"
-                                  variant="ghost"
-                                  aria-label={t('actions.removeFile', {
-                                    name: file.name,
-                                  })}
-                                  onClick={(event) => {
-                                    event.stopPropagation()
-                                    setMemoryFiles((current) =>
-                                      current.filter(
-                                        (_, currentIndex) =>
-                                          currentIndex !== index,
-                                      ),
-                                    )
-                                  }}
-                                >
-                                  <XIcon />
-                                </Button>
-                              ) : null}
-                            </div>
-                            {fileProgress?.status === 'uploading' ? (
-                              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
-                                <div
-                                  className="h-full rounded-full bg-primary transition-[width]"
-                                  style={{
-                                    width: `${Math.max(4, fileProgress.percent)}%`,
-                                  }}
-                                />
-                              </div>
-                            ) : null}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  ) : null}
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <span className="rounded-full bg-primary/10 px-2 py-1 text-primary">
-                      {t('memory.pipeline.documents')}
-                    </span>
-                    <span>→</span>
-                    <span className="rounded-full bg-primary/10 px-2 py-1 text-primary">
-                      {t('memory.pipeline.incremental')}
-                    </span>
-                  </div>
-                </div>
 
                 <div className="rounded-lg border p-3">
                   <div className="flex items-center gap-3">
@@ -2366,7 +1867,6 @@ function KnowledgeMiningRoute() {
                     documentFiles.length === 0 ||
                     startMutation.isPending ||
                     isActive ||
-                    job?.phase === 'awaiting_human' ||
                     job?.phase === 'completed'
                   }
                   onClick={() => startMutation.mutate()}
@@ -2462,21 +1962,6 @@ function KnowledgeMiningRoute() {
                       </dd>
                     </div>
                     <div className="grid grid-cols-[5rem_1fr] gap-2">
-                      <dt>{t('status.memoryTaskId')}</dt>
-                      <dd className="truncate font-mono text-foreground">
-                        {job.memoryTaskId ||
-                          (job.memoryFiles.length > 0
-                            ? t('status.pending')
-                            : t('status.skipped'))}
-                      </dd>
-                    </div>
-                    <div className="grid grid-cols-[5rem_1fr] gap-2">
-                      <dt>{t('status.humanTaskId')}</dt>
-                      <dd className="truncate font-mono text-foreground">
-                        {job.humanTaskId || t('status.skipped')}
-                      </dd>
-                    </div>
-                    <div className="grid grid-cols-[5rem_1fr] gap-2">
                       <dt>{t('status.okfConfig')}</dt>
                       <dd className="break-all font-mono text-foreground">
                         {job.okfConfigUri || '—'}
@@ -2514,12 +1999,7 @@ function KnowledgeMiningRoute() {
                     </Alert>
                   ) : null}
 
-                  {job.taskId &&
-                  [
-                    'compiling_documents',
-                    'compiling_memory',
-                    'compiling_human',
-                  ].includes(job.phase) ? (
+                  {job.taskId && job.phase === 'compiling_documents' ? (
                     <Button
                       variant="outline"
                       disabled={cancelMutation.isPending}
@@ -2586,13 +2066,11 @@ function KnowledgeMiningRoute() {
               </CardTitle>
               <CardDescription>
                 {hasVisibleResults
-                  ? job?.phase === 'awaiting_human'
-                    ? t('results.awaitingHuman')
-                    : job?.phase === 'partial'
-                      ? t('results.partial')
-                      : t('results.completed', {
-                          count: wikiEntries.length,
-                        })
+                  ? job?.phase === 'partial'
+                    ? t('results.partial')
+                    : t('results.completed', {
+                        count: wikiEntries.length,
+                      })
                   : t('results.description')}
               </CardDescription>
             </CardHeader>
@@ -2637,15 +2115,6 @@ function KnowledgeMiningRoute() {
                 </Alert>
               ) : (
                 <div className="space-y-3">
-                  {job?.phase === 'awaiting_human' ? (
-                    <Alert>
-                      <ClipboardListIcon />
-                      <AlertTitle>{t('questionnaire.needsInput')}</AlertTitle>
-                      <AlertDescription>
-                        {t('results.awaitingHuman')}
-                      </AlertDescription>
-                    </Alert>
-                  ) : null}
                   {job?.phase === 'partial' ? (
                     <Alert>
                       <TriangleAlertIcon />
@@ -2702,22 +2171,6 @@ function KnowledgeMiningRoute() {
                         {knowledgeGraph.nodes.length}
                       </Badge>
                     </Button>
-                    {compileViews.map((view) => (
-                      <Button
-                        key={view.id}
-                        size="sm"
-                        variant={
-                          selectedViewId === view.id ? 'default' : 'outline'
-                        }
-                        onClick={() => setSelectedViewId(view.id)}
-                      >
-                        <TagsIcon />
-                        {view.title}
-                        <Badge variant="secondary">
-                          {knowledgeEntries.length}
-                        </Badge>
-                      </Button>
-                    ))}
                     {intermediateArtifacts.length > 0 ? (
                       <Button
                         size="sm"
@@ -2732,34 +2185,13 @@ function KnowledgeMiningRoute() {
                         {t('intermediates.title')}
                       </Button>
                     ) : null}
-                    {questionnaireArtifact ? (
-                      <Button
-                        size="sm"
-                        variant={
-                          selectedViewId === 'questionnaire'
-                            ? 'default'
-                            : 'outline'
-                        }
-                        onClick={() => setSelectedViewId('questionnaire')}
-                      >
-                        <ClipboardListIcon />
-                        {t('questionnaire.title')}
-                        {(effectiveCompileResult?.question_count || 0) > 0 ? (
-                          <Badge variant="secondary">
-                            {effectiveCompileResult?.question_count}
-                          </Badge>
-                        ) : null}
-                      </Button>
-                    ) : null}
                   </div>
                   <div className="rounded-xl border bg-muted/15 p-4">
                     <p className="text-sm font-semibold">
-                      {selectedView?.title ||
-                        t(`views.guides.${systemViewGuideKey}.title`)}
+                      {t(`views.guides.${systemViewGuideKey}.title`)}
                     </p>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                      {selectedView?.description ||
-                        t(`views.guides.${systemViewGuideKey}.purpose`)}
+                      {t(`views.guides.${systemViewGuideKey}.purpose`)}
                     </p>
                     <div className="mt-3 grid gap-3 text-xs sm:grid-cols-2">
                       <div>
@@ -2767,10 +2199,7 @@ function KnowledgeMiningRoute() {
                           {t('views.guides.contentLabel')}
                         </p>
                         <p className="mt-1 leading-5 text-muted-foreground">
-                          {selectedView
-                            ? selectedViewPaths ||
-                              t('views.guides.configured.empty')
-                            : t(`views.guides.${systemViewGuideKey}.content`)}
+                          {t(`views.guides.${systemViewGuideKey}.content`)}
                         </p>
                       </div>
                       <div>
@@ -2778,9 +2207,7 @@ function KnowledgeMiningRoute() {
                           {t('views.guides.useLabel')}
                         </p>
                         <p className="mt-1 leading-5 text-muted-foreground">
-                          {selectedView
-                            ? t('views.guides.configured.use')
-                            : t(`views.guides.${systemViewGuideKey}.use`)}
+                          {t(`views.guides.${systemViewGuideKey}.use`)}
                         </p>
                       </div>
                     </div>
@@ -2789,35 +2216,16 @@ function KnowledgeMiningRoute() {
                       <div className="mt-3 space-y-2">
                         <p className="rounded-md bg-primary/8 px-3 py-2 text-xs font-medium text-primary">
                           {t('views.mainStructure', {
-                            categories: mainViewFacets.join(' / '),
+                            categories: mainViewPageRoles.join(' / '),
                             structure:
-                              effectiveCompileResult.main_view.path_structure?.join(
-                                ' / ',
-                              ) || t('views.legacyStructure'),
+                              mainViewPathStructure.join(' / ') ||
+                              t('views.legacyStructure'),
                           })}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          {t('views.metaSummary', {
+                          {t('views.pageSummary', {
                             files: knowledgeEntries.length,
-                            units: metaKnowledgeUnits.length,
-                          })}
-                        </p>
-                        {incompleteMetaKnowledgeCount > 0 ? (
-                          <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                            {t('views.incompleteMetaSummary', {
-                              categories: mainViewFacets.join(' / '),
-                              count: incompleteMetaKnowledgeCount,
-                            })}
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : selectedView ? (
-                      <div className="mt-3 space-y-2 text-xs leading-5 text-muted-foreground">
-                        <p>{selectedView.description}</p>
-                        <p>
-                          {t('views.metaSummary', {
-                            files: knowledgeEntries.length,
-                            units: metaKnowledgeUnits.length,
+                            units: knowledgePageUnits.length,
                           })}
                         </p>
                       </div>
@@ -2891,10 +2299,12 @@ function KnowledgeMiningRoute() {
                           inspected: t('coverage.inspected'),
                           merged: t('coverage.merged'),
                           mergedInto: t('coverage.mergedInto'),
+                          listSeparator: t('coverage.listSeparator'),
                           outputs: t('coverage.outputs'),
                           reason: t('coverage.reason'),
                           skipped: t('coverage.skipped'),
                           uploaded: t('coverage.uploaded'),
+                          valueSeparator: t('coverage.valueSeparator'),
                         }}
                       />
                     ) : (
@@ -2912,11 +2322,11 @@ function KnowledgeMiningRoute() {
                         <div className="space-y-1 p-2">
                           {selectedViewId === 'main' ? (
                             hasConfiguredMainView ? (
-                              <MetaKnowledgeTreeView
-                                facets={mainViewFacets}
+                              <KnowledgePageTreeView
+                                pageRoles={mainViewPageRoles}
                                 metadata={metadataQuery.data || {}}
                                 rootPath={mainViewRoot}
-                                units={metaKnowledgeUnits}
+                                units={knowledgePageUnits}
                                 onSelect={setSelectedUri}
                                 selectedUri={selectedUri}
                               />
@@ -2948,66 +2358,6 @@ function KnowledgeMiningRoute() {
                                 </span>
                               </button>
                             ))
-                          ) : selectedViewId === 'questionnaire' ? (
-                            <div className="space-y-3 p-3">
-                              <Badge
-                                variant={
-                                  investigationQuery.data?.status ===
-                                  'needs_human_input'
-                                    ? 'destructive'
-                                    : 'secondary'
-                                }
-                              >
-                                {investigationQuery.data?.status ===
-                                'needs_human_input'
-                                  ? t('questionnaire.needsInput')
-                                  : t('questionnaire.clear')}
-                              </Badge>
-                              {investigationQuery.data?.conflicts.map(
-                                (issue) => (
-                                  <div
-                                    key={issue.id}
-                                    className="rounded-lg border p-3"
-                                  >
-                                    <p className="text-xs font-semibold">
-                                      {t('questionnaire.conflict')} · {issue.id}
-                                    </p>
-                                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                                      {issue.summary}
-                                    </p>
-                                  </div>
-                                ),
-                              )}
-                              {investigationQuery.data?.evidence_gaps.map(
-                                (issue) => (
-                                  <div
-                                    key={issue.id}
-                                    className="rounded-lg border p-3"
-                                  >
-                                    <p className="text-xs font-semibold">
-                                      {t('questionnaire.evidenceGap')} ·{' '}
-                                      {issue.id}
-                                    </p>
-                                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                                      {issue.summary}
-                                    </p>
-                                  </div>
-                                ),
-                              )}
-                            </div>
-                          ) : metadataQuery.isLoading ? (
-                            <div className="flex justify-center p-6">
-                              <LoaderCircleIcon className="size-5 animate-spin text-primary" />
-                            </div>
-                          ) : hasConfiguredMainView ? (
-                            <MetaKnowledgeTreeView
-                              facets={mainViewFacets}
-                              metadata={metadataQuery.data || {}}
-                              rootPath={mainViewRoot}
-                              sections={viewSections}
-                              onSelect={setSelectedUri}
-                              selectedUri={selectedUri}
-                            />
                           ) : (
                             <p className="p-3 text-xs leading-5 text-muted-foreground">
                               {t('views.missingConfig')}
@@ -3016,195 +2366,7 @@ function KnowledgeMiningRoute() {
                         </div>
                       </ScrollArea>
                       <ScrollArea className="max-h-[680px] bg-background">
-                        {selectedViewId === 'questionnaire' ? (
-                          questionnaireQuery.isLoading ? (
-                            <div className="flex min-h-[480px] items-center justify-center">
-                              <LoaderCircleIcon className="size-8 animate-spin text-primary" />
-                            </div>
-                          ) : questionnaireQuery.isError ? (
-                            <div className="p-5">
-                              <Alert variant="destructive">
-                                <TriangleAlertIcon />
-                                <AlertTitle>
-                                  {t('questionnaire.loadError')}
-                                </AlertTitle>
-                                <AlertDescription>
-                                  {getErrorMessage(questionnaireQuery.error)}
-                                </AlertDescription>
-                              </Alert>
-                            </div>
-                          ) : questionnaireQuery.data?.status === 'open' &&
-                            questionnaireQuery.data.questions.length ? (
-                            <div className="space-y-5 p-5 md:p-7">
-                              <div>
-                                <h3 className="font-semibold">
-                                  {t('questionnaire.formTitle')}
-                                </h3>
-                                <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                                  {t('questionnaire.formDescription')}
-                                </p>
-                              </div>
-                              {job?.origin !== 'studio' ? (
-                                <Alert>
-                                  <TerminalIcon />
-                                  <AlertTitle>
-                                    {t('cliImport.readOnlyTitle')}
-                                  </AlertTitle>
-                                  <AlertDescription>
-                                    {t('cliImport.readOnly')}
-                                  </AlertDescription>
-                                </Alert>
-                              ) : null}
-                              {questionnaireQuery.data.questions.map(
-                                (question, index) => {
-                                  const answer =
-                                    questionnaireAnswers[question.id]
-                                  return (
-                                    <div
-                                      key={question.id}
-                                      className="space-y-3 rounded-xl border p-4"
-                                    >
-                                      <div>
-                                        <p className="text-sm font-semibold">
-                                          {index + 1}. {question.prompt}
-                                        </p>
-                                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                                          {question.reason}
-                                        </p>
-                                      </div>
-                                      {question.kind === 'free_text' ? (
-                                        <Textarea
-                                          disabled={
-                                            isActive || job?.origin !== 'studio'
-                                          }
-                                          value={
-                                            typeof answer === 'string'
-                                              ? answer
-                                              : ''
-                                          }
-                                          placeholder={t(
-                                            'questionnaire.answerPlaceholder',
-                                          )}
-                                          onChange={(event) =>
-                                            setQuestionnaireAnswers(
-                                              (current) => ({
-                                                ...current,
-                                                [question.id]:
-                                                  event.target.value,
-                                              }),
-                                            )
-                                          }
-                                        />
-                                      ) : (
-                                        <div className="flex flex-wrap gap-2">
-                                          {question.options.map((option) => {
-                                            const selected =
-                                              question.kind ===
-                                              'multiple_choice'
-                                                ? Array.isArray(answer) &&
-                                                  answer.includes(option)
-                                                : answer === option
-                                            return (
-                                              <Button
-                                                key={option}
-                                                type="button"
-                                                size="sm"
-                                                variant={
-                                                  selected
-                                                    ? 'default'
-                                                    : 'outline'
-                                                }
-                                                disabled={
-                                                  isActive ||
-                                                  job?.origin !== 'studio'
-                                                }
-                                                onClick={() =>
-                                                  setQuestionnaireAnswers(
-                                                    (current) => {
-                                                      if (
-                                                        question.kind !==
-                                                        'multiple_choice'
-                                                      ) {
-                                                        return {
-                                                          ...current,
-                                                          [question.id]: option,
-                                                        }
-                                                      }
-                                                      const answer =
-                                                        current[question.id]
-                                                      const values: string[] =
-                                                        Array.isArray(answer)
-                                                          ? answer
-                                                          : []
-                                                      return {
-                                                        ...current,
-                                                        [question.id]:
-                                                          values.includes(
-                                                            option,
-                                                          )
-                                                            ? values.filter(
-                                                                (value) =>
-                                                                  value !==
-                                                                  option,
-                                                              )
-                                                            : [
-                                                                ...values,
-                                                                option,
-                                                              ],
-                                                      }
-                                                    },
-                                                  )
-                                                }
-                                              >
-                                                {option}
-                                              </Button>
-                                            )
-                                          })}
-                                        </div>
-                                      )}
-                                    </div>
-                                  )
-                                },
-                              )}
-                              <Button
-                                disabled={
-                                  !questionnaireComplete ||
-                                  humanAnswerMutation.isPending ||
-                                  isActive ||
-                                  job?.origin !== 'studio'
-                                }
-                                onClick={() => {
-                                  if (questionnaireQuery.data) {
-                                    humanAnswerMutation.mutate(
-                                      questionnaireQuery.data,
-                                    )
-                                  }
-                                }}
-                              >
-                                {humanAnswerMutation.isPending ? (
-                                  <LoaderCircleIcon className="animate-spin" />
-                                ) : (
-                                  <SparklesIcon />
-                                )}
-                                {t('questionnaire.submit')}
-                              </Button>
-                            </div>
-                          ) : (
-                            <div className="flex min-h-[480px] flex-col items-center justify-center p-6 text-center">
-                              <CheckCircle2Icon className="mb-3 size-9 text-emerald-600" />
-                              <p className="font-medium">
-                                {questionnaireQuery.data?.status === 'answered'
-                                  ? t('questionnaire.answered')
-                                  : t('questionnaire.noQuestions')}
-                              </p>
-                              <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-                                {questionnaireQuery.data?.status === 'answered'
-                                  ? t('questionnaire.answeredDescription')
-                                  : t('questionnaire.noQuestionsDescription')}
-                              </p>
-                            </div>
-                          )
-                        ) : contentQuery.isLoading ? (
+                        {contentQuery.isLoading ? (
                           <div className="flex min-h-[480px] items-center justify-center">
                             <LoaderCircleIcon className="size-8 animate-spin text-primary" />
                           </div>
@@ -3226,9 +2388,8 @@ function KnowledgeMiningRoute() {
                         ) : contentQuery.data ? (
                           <div>
                             {selectedMetadata &&
-                              (selectedMetadata.sources.length > 0 ||
-                                selectedMetadata.knowledgeLinks.length > 0) && (
-                                <div className="grid gap-4 border-b bg-muted/20 p-5 text-sm md:grid-cols-2 md:p-7">
+                              selectedMetadata.sources.length > 0 && (
+                                <div className="border-b bg-muted/20 p-5 text-sm md:p-7">
                                   <div>
                                     <p className="mb-2 font-medium">
                                       {t('provenance.sources')}
@@ -3252,62 +2413,10 @@ function KnowledgeMiningRoute() {
                                             <span className="block font-medium">
                                               {source.title || source.resource}
                                             </span>
-                                            <span className="mt-1 block font-mono text-xs text-muted-foreground">
-                                              {source.kind} · {source.stage}
-                                            </span>
                                           </button>
                                         ),
                                       )}
                                     </div>
-                                  </div>
-                                  <div>
-                                    <p className="mb-2 font-medium">
-                                      {t('provenance.knowledgeLinks')}
-                                    </p>
-                                    <p className="mb-2 text-xs leading-5 text-muted-foreground">
-                                      {t('provenance.knowledgeLinksHint')}
-                                    </p>
-                                    {selectedMetadata.knowledgeLinks.length >
-                                    0 ? (
-                                      <div className="space-y-2">
-                                        {selectedMetadata.knowledgeLinks.map(
-                                          (link, index) => (
-                                            <button
-                                              className="block w-full rounded-md border bg-background p-2 text-left hover:border-primary"
-                                              key={`${link.resource}-${index}`}
-                                              onClick={() =>
-                                                navigate({
-                                                  to: '/playground',
-                                                  search: {
-                                                    file: link.resource,
-                                                  },
-                                                })
-                                              }
-                                              type="button"
-                                            >
-                                              <span className="block font-medium">
-                                                {link.title || link.resource}
-                                              </span>
-                                              <span className="mt-1 block text-xs text-muted-foreground">
-                                                {link.relation} ·{' '}
-                                                {link.direction}
-                                              </span>
-                                              {link.context ? (
-                                                <span className="mt-1 block text-xs text-muted-foreground">
-                                                  {t('provenance.linkContext', {
-                                                    context: link.context,
-                                                  })}
-                                                </span>
-                                              ) : null}
-                                            </button>
-                                          ),
-                                        )}
-                                      </div>
-                                    ) : (
-                                      <p className="text-muted-foreground">
-                                        {t('provenance.noKnowledgeLinks')}
-                                      </p>
-                                    )}
                                   </div>
                                 </div>
                               )}
@@ -3316,7 +2425,7 @@ function KnowledgeMiningRoute() {
                                 remarkPlugins={[remarkGfm]}
                                 components={{
                                   a: ({ href, node: _node, ...props }) => {
-                                    const target = findWikiLinkTarget(
+                                    const target = findMarkdownLinkTarget(
                                       href,
                                       selectedUri,
                                       wikiEntries.map((entry) => entry.uri),
@@ -3348,13 +2457,7 @@ function KnowledgeMiningRoute() {
                                   },
                                 }}
                               >
-                                {renderDoubleBracketWikiLinks(
-                                  stripFrontmatter(contentQuery.data.content),
-                                  wikiEntries.map((entry) => ({
-                                    name: entry.name,
-                                    uri: entry.uri,
-                                  })),
-                                )}
+                                {stripFrontmatter(contentQuery.data.content)}
                               </ReactMarkdown>
                             </article>
                           </div>

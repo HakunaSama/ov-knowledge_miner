@@ -2404,13 +2404,13 @@ def test_compile_prompt_describes_editable_target_checkout():
     assert "Inspect the editable target checkout" in user
 
 
-def test_compile_prompt_explains_derived_okf_views():
+def test_compile_prompt_explains_standard_markdown_links_and_single_main_view():
     request = SanitizedCompileRequest.model_validate(
         {
             "from": ["viking://resources/source"],
             "to": "viking://resources/output",
             "skill": "viking://agent/skills/compiler",
-            "reason": "Build a tagged Wiki",
+            "reason": "Build a Wiki",
         }
     )
 
@@ -2420,12 +2420,12 @@ def test_compile_prompt_explains_derived_okf_views():
         skill_content="Produce the required files.",
         catalog=[],
         capabilities=CompileCapabilities(exec_enabled=True),
-        okf_config_content="version: '1.0'\nviews: []\n",
+        okf_config_content="version: '2.0'\n",
     )
 
-    assert "keep the physical file tree as the main view" in system
-    assert "configured namespaced tag selections for every view" in system
-    assert "do not duplicate pages" in system
+    assert "`[text](relative/path.md)`" in system
+    assert "never use `[[WikiLink]]`" in system
+    assert "derived view" in system
 
 
 def test_compile_prompt_states_exact_configured_main_view_structure():
@@ -2455,7 +2455,8 @@ def test_compile_prompt_states_exact_configured_main_view_structure():
     assert "`page_role/business_domain/subdomain/subject_path/filename`" in system
     assert "topic, reference, procedure, synthesis" in system
     assert "Do not add, omit, reorder, or invent a fixed taxonomy level" in system
-    assert "any undeclared `view/...` tag is invalid" in system
+    assert "main_view.navigation.filename" in system
+    assert "questionnaire" not in system
     assert "immediate-parent leaf category" not in system
 
 
@@ -5419,11 +5420,6 @@ async def test_timeout_salvage_copies_workspace_and_repairs_links(tmp_path: Path
         workspace_baseline={"sandboxes/cmp-srt-settings.json"},
         okf_config=SimpleNamespace(
             version="1.0",
-            views=(
-                SimpleNamespace(
-                    public_dict=lambda: {"id": "domain", "title": "Domain", "groups": []}
-                ),
-            ),
             main_view=None,
             intermediates=None,
         ),
@@ -5466,7 +5462,6 @@ async def test_timeout_salvage_copies_workspace_and_repairs_links(tmp_path: Path
     assert "`[Code](missing.md)`" in topic
     assert result.warnings and "partial output" in result.warnings[0]
     assert result.validation_passed is False
-    assert [view["id"] for view in result.views] == ["domain"]
     assert any("Skipped" in warning for warning in result.warnings)
 
 

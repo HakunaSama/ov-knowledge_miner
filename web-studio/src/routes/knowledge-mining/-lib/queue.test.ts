@@ -15,11 +15,7 @@ function job(id: string, phase: MiningPhase, createdAt: string): MiningJob {
     documentSourceUri: `viking://resources/knowledge-mining/${id}/document-sources`,
     documentTaskId: null,
     error: null,
-    humanTaskId: null,
     id,
-    memoryFiles: [],
-    memorySourceUri: `viking://resources/knowledge-mining/${id}/team-memory`,
-    memoryTaskId: null,
     okfConfigUri: `${id}/OKF_CONFIG.yaml`,
     origin: 'studio',
     phase,
@@ -46,9 +42,6 @@ describe('knowledge mining queue', () => {
     'preparing',
     'uploading',
     'compiling_documents',
-    'compiling_memory',
-    'compiling_human',
-    'awaiting_human',
   ] satisfies MiningPhase[])('blocks the queue during %s', (phase) => {
     expect(isMiningWorkflowBlocking(phase)).toBe(true)
     expect(

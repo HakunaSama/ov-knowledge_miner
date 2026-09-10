@@ -144,7 +144,8 @@ Start an asynchronous, Skill-driven Compile task. VikingBot loads the selected S
 | `from` | string[] | Yes | - | One or more source directories |
 | `to` | string | Yes | - | Target Resource or Memory directory, or a supported Skill namespace |
 | `skill` | string | Yes | - | Skill directory or its `SKILL.md` URI |
-| `okf_config` | string | No | - | External OKF YAML file URI; Resource Wiki submission validates frontmatter, path/type rules, and WikiLinks against it |
+| `okf_config` | string | No | - | External OKF YAML file URI; Resource Wiki submission validates frontmatter, single-main-view path/type rules, and standard Markdown links against it |
+| `allow_invalid_okf_output` | boolean | No | `false` | Record final OKF conformance failures as warnings and still commit the checkout. Knowledge-mining clients set this to `true`; ordinary Compile remains strict by default. |
 | `reason` | string | No | Skill-driven default | Additional instructions for this Compile run |
 | `runtime_timeout_seconds` | number | No | None | Optional positive runtime limit. With no value, the task has no server-side hard deadline. If an administrator configures a server maximum, this value must not exceed it |
 
@@ -181,7 +182,7 @@ ov compile \
 
 `--okf-config` points to a readable YAML file in OpenViking. VikingBot materializes it as `compile_config/OKF_CONFIG.yaml` and treats it as control data rather than knowledge; the external contract takes precedence over conflicting Skill format rules. Omitting it preserves existing Compile behavior.
 
-`--wait` polls the status endpoint until the task reaches a terminal state. `--timeout` limits only the local wait and does not cancel the server task. There is no server-side hard runtime deadline by default; a task is deadline-bound only when `--runtime-timeout` is supplied or an administrator configures a server maximum. Requests above an administrator maximum are rejected with `429 RESOURCE_EXHAUSTED`. Compile now allows up to 240 tool iterations to stop truly non-progressing loops rather than limiting wall-clock runtime. Knowledge-mining runs write private recovery checkpoints when the `source_coverage` and `candidate_knowledge` gates pass, and also attempt to preserve the current checkpoint on cancellation, an explicit deadline, or iteration exhaustion. Unvalidated partial output is never published to the canonical target as part of this checkpoint process.
+`--wait` polls the status endpoint until the task reaches a terminal state. `--timeout` limits only the local wait and does not cancel the server task. There is no server-side hard runtime deadline by default; a task is deadline-bound only when `--runtime-timeout` is supplied or an administrator configures a server maximum. Requests above an administrator maximum are rejected with `429 RESOURCE_EXHAUSTED`. Compile now allows up to 240 tool iterations to stop truly non-progressing loops rather than limiting wall-clock runtime. Knowledge-mining runs write private recovery checkpoints when the `source_coverage` and `candidate_knowledge` gates pass, and also attempt to preserve the current checkpoint on cancellation, an explicit deadline, or iteration exhaustion. Private checkpoints are never published to the canonical target. At final submission, knowledge-mining sets `allow_invalid_okf_output=true`, so a phase-three OKF conformance failure is committed with `validation_passed=false` and warnings; ordinary Compile remains strict.
 
 The `direct` backend runs Compile `exec` commands with the Bot host's permissions. `bot.sandbox.backends.direct.allow_compile_exec` defaults to `true`: the Compile toolchain is open source, so `exec` runs directly in the user's shell by default, and ordinary Wiki and artifact generation run through file tools as before. A Skill that declares `requires.bins` or `requires.env` still probes the commands; set the option to `false` to omit `exec` from Compile (then such Skills fail with `SKILL_CAPABILITY_UNAVAILABLE` before any command probe runs). Isolated backends with filesystem and network policies are recommended for CLI-dependent Skills. Admission overflow returns `429 RESOURCE_EXHAUSTED`.
 
@@ -202,7 +203,7 @@ The HTTP endpoint returns `202 Accepted`:
 
 ### compile_history()
 
-List Compile tasks visible to the current principal in reverse creation order. Each item contains its public task state and sanitized original request so clients can group document, Memory, and human-evidence stages sharing the same `to` target into one mining-history entry. The default limit is 200, configurable up to 1000; terminal tasks are retained for 90 days by default.
+List Compile tasks visible to the current principal in reverse creation order. Each item contains its public task state and sanitized original request so clients can reconcile retries for a serial document window and associate windows that share the same `to` target. The default limit is 200, configurable up to 1000; terminal tasks are retained for 90 days by default.
 
 ```http
 GET /bot/v1/compile?limit=200
@@ -253,11 +254,23 @@ ov task status cmp_01abc
       "validation_passed": true,
       "warnings": [],
       "main_view": {
-        "single_source_of_truth": true,
         "root_path": "knowledge",
-        "facet_categories": ["what", "why", "how"],
-        "path_structure": ["facet", "meta_id", "filename"],
-        "exempt_paths": ["index.md"]
+        "path_structure": ["page_role", "business_domain", "subdomain", "subject_path", "filename"],
+        "page_roles": [
+          {"id": "topic", "title": "TOPIC", "description": "Explanatory knowledge"}
+        ],
+        "business_domains": [
+          {
+            "id": "technology-data",
+            "title": "Technology and data",
+            "description": "Technical knowledge",
+            "subdomains": [
+              {"id": "engineering", "title": "Engineering", "description": "Engineering knowledge"}
+            ]
+          }
+        ],
+        "navigation": {"filename": "index.md", "type": "index"},
+        "exempt_paths": ["**/index.md"]
       },
       "intermediate_artifacts": [
         {
@@ -267,7 +280,6 @@ ov task status cmp_01abc
         }
       ],
       "investigation_status": "clear",
-      "question_count": 0,
       "source_coverage": {
         "uploaded": 30,
         "inspected": 30,
@@ -275,33 +287,17 @@ ov task status cmp_01abc
         "merged": 4,
         "skipped": 2,
         "artifact_uri": "viking://resources/research-wiki/_mining/source-coverage.json"
-      },
-      "views": [
-        {
-          "id": "domain",
-          "title": "Knowledge Domain",
-          "description": "Organize pages by knowledge domain",
-          "selection": "one_or_more",
-          "groups": [
-            {
-              "id": "products-and-systems",
-              "title": "Products and systems",
-              "description": "Products, services, and technical systems",
-              "tag": "view/domain/products-and-systems"
-            }
-          ]
-        }
-      ]
+      }
     }
   }
 }
 ```
 
-`main_view` describes the physical single-source-of-truth constraint and is `null` when unconfigured. `views` comes from the external OKF config and is empty when no derived views are configured. Clients group page frontmatter by each exact group `tag`; the physical structure remains the tree under `to`.
+`main_view` describes the physical directory constraint and is `null` when unconfigured. Every knowledge page exists only in this main-view file tree. Navigation pages are described by `navigation`, and `exempt_paths` accepts safe `*`/`**` path patterns.
 
-`intermediate_artifacts` lists the validated run manifest, evidence ledger, investigation report, questionnaire, source coverage, candidate knowledge, persisted read ledger, and evidence-history URIs. `source_coverage` summarizes upload-level inspected/cited/merged/skipped dispositions after the readlist and evidence gates pass. `investigation_status=needs_human_input` means unresolved conflicts or evidence gaps exist; `question_count` reports the questionnaire size. A follow-up Compile with human answers should point `from` at the exact answer resource while retaining the same `to`, preserving verifiable incremental provenance.
+`intermediate_artifacts` lists the validated run manifest, evidence ledger, investigation report, source coverage, candidate knowledge, persisted read ledger, and evidence-history URIs. `source_coverage` summarizes upload-level inspected/cited/merged/skipped dispositions after the readlist and evidence gates pass. `investigation_status=issues_found` means unresolved conflicts or evidence gaps were retained for debugging; it does not open a human-question workflow.
 
-`stage=salvaged` means Compile preserved a partial workspace snapshot; it is not a successful strict validation. Its `result.validation_passed` is `false`. The result still exposes known `main_view`, `views`, and readable `intermediate_artifacts`, but clients must present it as partial and must not automatically use it as a successful baseline for a Memory or human-answer incremental Compile. Only `stage=completed` with `validation_passed=true` is a final result eligible for automatic continuation.
+`stage=salvaged` means an interrupted or failed strict Compile preserved a partial workspace snapshot. Its `result.validation_passed` is `false`; clients must present it as partial. A knowledge-mining run that reaches final submission but has OKF conformance warnings instead finishes with `stage=completed`, keeps `validation_passed=false`, and exposes the committed result.
 
 ### compile_cancel()
 
@@ -326,7 +322,7 @@ curl -X POST http://localhost:1933/bot/v1/compile/cmp_01abc/cancel \
 
 ### compile_resume()
 
-Create a new Compile task from a `failed`, `cancelled`, or unvalidated `salvaged` task. The new task reuses the original task's persisted sanitized request and source URIs, so files do not need to be uploaded again. If a private checkpoint with the same source signature exists, execution continues after its latest completed phase; otherwise it restarts at source reading. The original task remains unchanged and the new task records it in `resumed_from_task_id`.
+Create a new Compile task from a `failed`, `cancelled`, or `salvaged` task. The new task reuses the original task's persisted sanitized request and source URIs, so files do not need to be uploaded again. If a private checkpoint with the same source signature exists, execution continues after its latest completed phase; otherwise it restarts at source reading. The original task remains unchanged and the new task records it in `resumed_from_task_id`.
 
 ```http
 POST /bot/v1/compile/{task_id}/resume

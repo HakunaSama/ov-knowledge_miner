@@ -195,7 +195,6 @@ def run_list(args: argparse.Namespace) -> None:
 
 def run_verification(task_dir: Path, work_dir: Path, storage_workspace: Path) -> dict:
     """Run task verification tests. Returns verification result."""
-    task_name = task_dir.name
     tests_dir = task_dir / "tests"
 
     result = {

@@ -1,29 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  buildHumanAnswersMarkdown,
-  hasAnswer,
   parseCandidateKnowledge,
-  parseInvestigationReport,
-  parseQuestionnaire,
   parseReadLedger,
   parseSourceCoverage,
 } from './intermediates'
-
-const questionnaireJson = JSON.stringify({
-  version: '1.0',
-  status: 'open',
-  questions: [
-    {
-      id: 'q-owner',
-      prompt: 'Who owns Aurora?',
-      reason: 'The sources disagree.',
-      kind: 'single_choice',
-      options: ['Platform', 'Alice'],
-      related_issue_ids: ['conflict-owner'],
-    },
-  ],
-})
 
 describe('source coverage', () => {
   it('parses upload-level source dispositions and summary counts', () => {
@@ -114,46 +95,5 @@ describe('knowledge mining intermediate artifacts', () => {
 
     expect(candidates.summary.promoted).toBe(1)
     expect(readLedger.summary.completed_required_reads).toBe(1)
-  })
-
-  it('parses reports and questionnaires', () => {
-    const questionnaire = parseQuestionnaire(questionnaireJson)
-    const report = parseInvestigationReport(
-      JSON.stringify({
-        version: '1.0',
-        status: 'needs_human_input',
-        conflicts: [
-          {
-            id: 'conflict-owner',
-            summary: 'Two owners are named.',
-            impact: 'Ownership is unclear.',
-            source_resources: [
-              'viking://resources/a.md',
-              'viking://resources/b.md',
-            ],
-          },
-        ],
-        evidence_gaps: [],
-      }),
-    )
-
-    expect(questionnaire.questions[0].kind).toBe('single_choice')
-    expect(report.conflicts[0].id).toBe('conflict-owner')
-    expect(hasAnswer(questionnaire.questions[0], 'Alice')).toBe(true)
-  })
-
-  it('builds a traceable human-answer document', () => {
-    const questionnaire = parseQuestionnaire(questionnaireJson)
-    const content = buildHumanAnswersMarkdown(
-      questionnaire,
-      { 'q-owner': 'Alice' },
-      '2026-08-25T12:00:00Z',
-    )
-
-    expect(content).toContain('Answer: Alice')
-    expect(content).toContain('Related issues: conflict-owner')
-    expect(() =>
-      buildHumanAnswersMarkdown(questionnaire, {}, '2026-08-25T12:00:00Z'),
-    ).toThrow('Missing answers')
   })
 })

@@ -1,8 +1,6 @@
 import os
 import json
 import time
-import random
-import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 from pathlib import Path

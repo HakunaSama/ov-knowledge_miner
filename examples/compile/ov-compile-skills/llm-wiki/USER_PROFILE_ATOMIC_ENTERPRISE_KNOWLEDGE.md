@@ -104,13 +104,12 @@ For a synthesis page, include relevant information such as:
 
 Use tables only for genuinely structured comparisons or facts. Use diagrams only when they materially improve understanding and are supported by the evidence.
 
-## Navigation and derived views
+## Navigation
 
-Follow the directory structure, page roles, and view definitions in the effective OKF.
+Follow the directory structure and page roles of the effective OKF main view.
 
-- Project a knowledge page into a derived view only when it is genuinely relevant to that view.
-- A page may appear in zero, one, or several derived views when the OKF allows it.
-- Do not invent additional views, groups, or classifications.
+- Use the physical main view as the only knowledge organization.
+- Do not duplicate pages to represent alternate classifications.
 - When the OKF defines a navigation page, keep it compact: explain the scope, organize useful clusters, and link to active pages without duplicating their full content.
 
 ## Relationships and links
@@ -187,4 +186,3 @@ Deprioritize generated files, vendored dependencies, caches, lock files, and tes
 ## Domain-specific preferences
 
 Add organization-specific terminology, inclusion rules, exclusions, audience expectations, and writing preferences below this section. Keep them focused on business outcomes and knowledge quality; do not add execution stages, tool calls, checkpoints, or validation mechanics here.
-

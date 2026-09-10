@@ -319,7 +319,6 @@ class TelegramChannel(BaseChannel):
                 ext = self._get_extension(media_type, getattr(media_file, "mime_type", None))
 
                 # Save to workspace/media/
-                from pathlib import Path
                 from vikingbot.utils.helpers import get_media_path
 
                 if self.workspace_path:

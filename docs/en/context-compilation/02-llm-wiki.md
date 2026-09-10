@@ -10,7 +10,7 @@ The current Skill uses a configurable OKF contract. Its default knowledge types 
 | `concept` | A reusable idea, mechanism, pattern, protocol, or mental model |
 | `synthesis` | A cross-source overview, preference, event digest, insight, or navigation page with a clear scope or question |
 
-`entity` and `concept` are the defaults; use `synthesis` only when a page genuinely combines evidence or provides navigation. `OKF_CONFIG.yaml` also defines the single-source Main view, explicit meta-knowledge directories, What/Why/How leaves, required frontmatter, dual provenance, cross-knowledge relations, eight intermediate artifacts (including candidate knowledge, the persisted read ledger, and evidence history), and literal `[[page name]]` WikiLinks. `generated.by` supports `{skill}`/`{model}` templates, while the submitter writes the actual UTC `generated.at`. The result is a knowledge base, not a source-by-source pile of summaries.
+`entity` and `concept` are the defaults; use `synthesis` only when a page genuinely combines evidence or provides navigation. `OKF_CONFIG.yaml` defines the single Main view, the physical `page_role / business_domain / subdomain / subject_path / filename` hierarchy, required frontmatter, provenance, mining artifacts, navigation pages, and standard Markdown links. Each promoted candidate maps to one canonical page rather than a required set of facet pages. `generated.by` supports `{skill}`/`{model}` templates, while the submitter writes the actual UTC `generated.at`. The result is a knowledge base, not a source-by-source pile of summaries.
 
 Skill source: [examples/compile/ov-compile-skills/llm-wiki](https://github.com/volcengine/OpenViking/tree/main/examples/compile/ov-compile-skills/llm-wiki) · Visualization script: [examples/compile/graph-show/llm-wiki](https://github.com/volcengine/OpenViking/tree/main/examples/compile/graph-show/llm-wiki)
 
@@ -86,26 +86,23 @@ ov tree viking://resources/research-wiki
 ov read viking://resources/research-wiki/index.md
 ```
 
-Typical layout (page type maps to directory):
+Typical layout (the actual directories are determined by the OKF main view):
 
 ```text
 research-wiki/
-├── index.md                              # navigation synthesis
-├── knowledge/<topic>/<meta_id>/what/<page>.md  # entity: what it is
-├── knowledge/<topic>/<meta_id>/why/<page>.md   # synthesis: why it matters/is true
-├── knowledge/<topic>/<meta_id>/how/<page>.md   # concept: how to act or verify
+├── index.md
+├── knowledge/<page_role>/<business_domain>/<subdomain>/<optional_subject_path>/<page>.md
 └── _mining/
     ├── run-manifest.json                 # run manifest
     ├── evidence-ledger.json              # per-page evidence ledger
     ├── investigation-report.json         # conflicts and evidence gaps
-    ├── questionnaire.json                # human-input questionnaire
     ├── source-coverage.json              # upload-level source coverage
     ├── candidate-knowledge.json          # candidate disposition decisions
     ├── readlist.json                     # platform-generated per-document read ledger
     └── evidence-history.json             # cross-stage evidence snapshots
 ```
 
-Every page's `sources` includes at least one input and `_mining/evidence-ledger.json`. `candidate-knowledge.json` records how source candidates became final meta-knowledge. `source-coverage.json` records whether every upload-level source was cited, merged, or skipped with a reason and must agree with the platform-generated `readlist.json` and the evidence ledger. Incremental runs merge prior evidence and append an `evidence-history.json` snapshot. Cross-knowledge relations live in `knowledge_links`. If the investigation report finds unresolved issues, use the Studio questionnaire or supply human answers as a new source and incrementally Compile the same target.
+Every page's `sources` includes supplied source resources only; intermediate provenance stays in `_mining/evidence-ledger.json`. `candidate-knowledge.json` records how source candidates became canonical knowledge pages. `source-coverage.json` records whether every upload-level source was cited, merged, or skipped with a reason and must agree with the platform-generated `readlist.json` and the evidence ledger. Incremental runs merge prior evidence and append an `evidence-history.json` snapshot.
 
 Compile builds the complete source tree with level-by-level non-recursive listings instead of relying on a depth- and node-truncated recursive catalog. A task that exceeds an explicit source-node, file-count, or byte limit fails rather than silently losing tail documents. Documents with at most eight parsed content fragments require every fragment to be read; longer PDFs and similar documents use 12, 16, or 24 evenly distributed required probes as their fragment count grows, always including the head, exact middle, and tail. The observed read trace is persisted per run in `_mining/readlist.json`, so coverage can be audited document by document later. Candidate decisions must be authored source by source before final pages; Compile does not fabricate missing rejected candidates, rejects generic or duplicated skip reasons for current uploads, and does not accept an all-skipped/index-only multi-document first pass.
 
@@ -120,7 +117,7 @@ python examples/compile/graph-show/llm-wiki/wiki_graph.py \
   --title "Research Knowledge Base"
 ```
 
-Open `research-wiki-graph.html` in a browser. Nodes are colored by `entity`, `concept`, or `synthesis`; edges recognize both ordinary Markdown links and literal `[[page name]]` WikiLinks. Clicking a node shows its body.
+Open `research-wiki-graph.html` in a browser. Nodes are colored by `entity`, `concept`, or `synthesis`; edges come from standard Markdown links. Clicking a node shows its body.
 
 Connection settings resolve the same way as `ov`: command-line arguments → `OPENVIKING_*` environment variables → `~/.openviking/ovcli.conf`. Pass them explicitly for a remote service:
 

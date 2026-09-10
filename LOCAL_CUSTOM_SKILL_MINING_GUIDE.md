@@ -132,7 +132,7 @@ local-skills/my-llm-wiki/OKF_CONFIG.yaml
 它们的职责不同：
 
 - `SKILL.md` 决定 VikingBot 应该怎样阅读、分析、筛选、归纳和写作；
-- `OKF_CONFIG.yaml` 决定目录层级、facet、meta_id、页面类型、frontmatter、派生视图和证据产物的硬约束。
+- `OKF_CONFIG.yaml` 决定单一主视图的目录层级、页面角色、frontmatter 与证据产物硬约束。
 
 ## 第四步：安装前先校验
 
@@ -224,25 +224,13 @@ viking://agent/skills/my-llm-wiki/SKILL.md
 
 ## 第七步：推荐方式——直接挖掘本地文档
 
-项目新增的 `ov knowledge-mining` 会自动完成本地文件收集、上传、OKF 配置写入、文档 Compile，以及可选的团队 Memory 增量 Compile。
+项目新增的 `ov knowledge-mining` 会自动完成本地文件收集、上传、OKF 配置写入和文档 Compile。
 
 只挖掘文档：
 
 ```bash
 ./target/debug/ov knowledge-mining \
   --documents /绝对路径/documents \
-  --skill viking://agent/skills/my-llm-wiki \
-  --okf-config ./local-skills/my-llm-wiki/OKF_CONFIG.yaml \
-  --reason "按照 my-llm-wiki 的规则挖掘完整知识库，使用中文输出" \
-  --wait
-```
-
-同时加入团队 Memory：
-
-```bash
-./target/debug/ov knowledge-mining \
-  --documents /绝对路径/documents \
-  --memory /绝对路径/team-memory \
   --skill viking://agent/skills/my-llm-wiki \
   --okf-config ./local-skills/my-llm-wiki/OKF_CONFIG.yaml \
   --reason "按照 my-llm-wiki 的规则挖掘完整知识库，使用中文输出" \

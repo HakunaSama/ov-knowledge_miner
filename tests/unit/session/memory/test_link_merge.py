@@ -1,8 +1,6 @@
 # Copyright (c) 2026 Beijing Volcano Engine Technology Co., Ltd.
 # SPDX-License-Identifier: AGPL-3.0
 
-import pytest
-
 from openviking.session.memory.merge_op.link_merge import (
     _dedup_key,
     merge_links,

@@ -22,7 +22,7 @@ class TestEnhancedFeatures(BaseOpenClawCLITest):
         self.logger.info(f"当前测试自动生成的 Session ID: {self.current_session_id}")
 
         message = "我叫测试用户，今年25岁"
-        response = self.send_and_log(message)
+        self.send_and_log(message)
 
         self.wait_for_sync()
 
@@ -39,7 +39,7 @@ class TestEnhancedFeatures(BaseOpenClawCLITest):
         self.logger.info(f"自定义 Session ID: {custom_session}")
 
         message = "我喜欢吃苹果"
-        response = self.send_and_log(message, session_id=custom_session)
+        self.send_and_log(message, session_id=custom_session)
 
         self.wait_for_sync()
 
@@ -72,7 +72,7 @@ class TestEnhancedFeatures(BaseOpenClawCLITest):
         """
         message = "我在北京工作"
 
-        response = self.send_with_retry(
+        self.send_with_retry(
             message,
             max_retries=3,
         )

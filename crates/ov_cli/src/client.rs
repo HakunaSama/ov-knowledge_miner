@@ -57,7 +57,8 @@ fn wait_aware_processing_timeout(
     if !wait {
         return dynamic_timeout;
     }
-    let Some(seconds) = server_timeout_secs.filter(|value| *value > 0.0 && value.is_finite()) else {
+    let Some(seconds) = server_timeout_secs.filter(|value| *value > 0.0 && value.is_finite())
+    else {
         return dynamic_timeout;
     };
     dynamic_timeout.max(std::time::Duration::from_secs_f64(seconds + 30.0))
@@ -156,15 +157,11 @@ pub struct CompileResult {
     #[serde(default)]
     pub warnings: Vec<String>,
     #[serde(default)]
-    pub views: Vec<Value>,
-    #[serde(default)]
     pub main_view: Option<Value>,
     #[serde(default)]
     pub intermediate_artifacts: Vec<Value>,
     #[serde(default)]
     pub investigation_status: Option<String>,
-    #[serde(default)]
-    pub question_count: usize,
     #[serde(default)]
     pub validation_passed: Option<bool>,
 }
@@ -2399,7 +2396,7 @@ mod tests {
     }
 
     #[test]
-    fn compile_result_preserves_okf_views_intermediates_and_investigation() {
+    fn compile_result_preserves_okf_intermediates_and_investigation() {
         let result: CompileResult = serde_json::from_value(json!({
             "from": ["viking://resources/source"],
             "to": "viking://resources/wiki",
@@ -2411,22 +2408,15 @@ mod tests {
             "page_count": 2,
             "link_count": 1,
             "warnings": [],
-            "views": [{"id": "domain"}],
             "main_view": {"root_path": "knowledge"},
-            "intermediate_artifacts": [{"kind": "questionnaire"}],
-            "investigation_status": "needs_human_input",
-            "question_count": 3
+            "intermediate_artifacts": [{"kind": "investigation_report"}],
+            "investigation_status": "issues_found"
         }))
         .expect("Compile result should deserialize");
 
-        assert_eq!(result.views.len(), 1);
         assert_eq!(result.main_view.as_ref().unwrap()["root_path"], "knowledge");
         assert_eq!(result.intermediate_artifacts.len(), 1);
-        assert_eq!(
-            result.investigation_status.as_deref(),
-            Some("needs_human_input")
-        );
-        assert_eq!(result.question_count, 3);
+        assert_eq!(result.investigation_status.as_deref(), Some("issues_found"));
     }
 
     #[tokio::test]

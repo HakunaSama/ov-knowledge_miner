@@ -1,87 +1,57 @@
 import { describe, expect, it } from 'vitest'
 
 import { buildKnowledgeGraph } from './knowledge-graph'
-import type { MetaKnowledgeUnit } from './meta-knowledge'
+import type { KnowledgePageUnit } from './knowledge-pages'
 
 const root = 'viking://resources/wiki'
-const unit: MetaKnowledgeUnit = {
-  entries: {
-    execution: {
-      name: 'configure.md',
-      uri: `${root}/configured-root/execution/rag/configure.md`,
-    },
-    definition: {
-      name: 'retrieval.md',
-      uri: `${root}/configured-root/definition/rag/retrieval.md`,
-    },
-    rationale: {
-      name: 'benefits.md',
-      uri: `${root}/configured-root/rationale/rag/benefits.md`,
-    },
+const retrievalUri = `${root}/knowledge/topic/technology-data/engineering/retrieval.md`
+const configureUri = `${root}/knowledge/procedure/technology-data/engineering/configure.md`
+const units: KnowledgePageUnit[] = [
+  {
+    entries: { topic: { name: 'retrieval.md', uri: retrievalUri } },
+    entryPaths: {},
+    id: retrievalUri,
+    name: 'Retrieval',
+    path: 'knowledge/technology-data/engineering',
   },
-  entryPaths: {},
-  id: 'knowledge/rag/retrieval',
-  name: 'retrieval',
-  path: 'knowledge/rag/retrieval',
-}
+  {
+    entries: { procedure: { name: 'configure.md', uri: configureUri } },
+    entryPaths: {},
+    id: configureUri,
+    name: 'Configure',
+    path: 'knowledge/technology-data/engineering',
+  },
+]
 
-const metadata = (title: string, wikiLinks: string[] = []) => ({
+const metadata = (title: string, markdownLinks: string[] = []) => ({
   description: '',
-  knowledgeLinks: [],
-  metaId: 'retrieval',
+  markdownLinks,
   sources: [],
   tags: [],
   title,
   type: 'concept',
-  wikiLinks,
 })
 
 describe('knowledge graph', () => {
-  it('creates one hub, three facet nodes, and WikiLink edges', () => {
+  it('creates one node per atomic page and preserves Markdown-link edges', () => {
     const graph = buildKnowledgeGraph(
-      [unit],
+      units,
       {
-        [unit.entries.definition!.uri]: metadata('Retrieval', ['configure']),
-        [unit.entries.rationale!.uri]: metadata('Benefits'),
-        [unit.entries.execution!.uri]: metadata('Configure'),
+        [retrievalUri]: metadata('Retrieval', [
+          '../../../procedure/technology-data/engineering/configure.md',
+        ]),
+        [configureUri]: metadata('Configure'),
       },
-      ['definition', 'rationale', 'execution'],
+      ['topic', 'procedure'],
     )
 
-    expect(graph.nodes.filter((node) => node.kind === 'meta')).toHaveLength(1)
-    expect(graph.nodes.filter((node) => node.kind === 'page')).toHaveLength(3)
+    expect(graph.nodes).toHaveLength(2)
+    expect(graph.nodes.map((node) => node.pageRole).sort()).toEqual([
+      'procedure',
+      'topic',
+    ])
     expect(
-      graph.edges.filter((edge) => edge.relation === 'wikilink'),
+      graph.edges.filter((edge) => edge.relation === 'markdown-link'),
     ).toHaveLength(1)
-    expect(graph.edges).toHaveLength(4)
-  })
-
-  it('preserves relation labels and evidence for the official inspector', () => {
-    const graph = buildKnowledgeGraph(
-      [unit],
-      {
-        [unit.entries.definition!.uri]: {
-          ...metadata('Retrieval'),
-          knowledgeLinks: [
-            {
-              context: 'Retrieval is constrained by the launch policy.',
-              direction: 'outgoing',
-              relation: 'depends-on',
-              resource: 'viking://resources/policy/launch.md',
-              title: 'Launch policy',
-            },
-          ],
-        },
-        [unit.entries.rationale!.uri]: metadata('Benefits'),
-        [unit.entries.execution!.uri]: metadata('Configure'),
-      },
-      ['definition', 'rationale', 'execution'],
-    )
-    const edge = graph.edges.find((item) => item.relation === 'depends-on')
-
-    expect(edge?.label).toBe('depends-on')
-    expect(edge?.evidence).toContain(
-      'Retrieval is constrained by the launch policy.',
-    )
   })
 })

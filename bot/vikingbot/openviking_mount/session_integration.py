@@ -7,8 +7,6 @@ OpenViking FUSE 会话集成
 
 from __future__ import annotations
 
-import sys
-import asyncio
 import shutil
 from pathlib import Path
 from typing import Dict, Optional, Any

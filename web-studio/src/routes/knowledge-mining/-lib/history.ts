@@ -6,9 +6,6 @@ export type MiningPhase =
   | 'uploading'
   | 'queued'
   | 'compiling_documents'
-  | 'compiling_memory'
-  | 'compiling_human'
-  | 'awaiting_human'
   | 'partial'
   | 'completed'
   | 'failed'
@@ -26,11 +23,7 @@ export type MiningJob = {
   documentSourceUri: string
   documentTaskId: string | null
   error: string | null
-  humanTaskId: string | null
   id: string
-  memoryFiles: FileProgress[]
-  memorySourceUri: string
-  memoryTaskId: string | null
   okfConfigUri: string | null
   origin: 'cli' | 'imported' | 'studio'
   phase: MiningPhase
@@ -47,7 +40,6 @@ export type MiningJob = {
   windowPageLimit?: number
   windowProbeLimit?: number
   windowIndex?: number
-  windowKind?: 'documents' | 'memory'
   windowLogUri?: string
   windowSizeBytes?: number
   oversizedSingleton?: boolean
@@ -58,7 +50,7 @@ export type MiningJob = {
 export type MiningHistory = {
   jobs: MiningJob[]
   selectedJobId: string | null
-  version: 1
+  version: 2
 }
 
 const KNOWLEDGE_MINING_ROOT = 'viking://resources/knowledge-mining/'
@@ -84,9 +76,6 @@ function phaseValue(value: unknown): MiningPhase | null {
     'uploading',
     'queued',
     'compiling_documents',
-    'compiling_memory',
-    'compiling_human',
-    'awaiting_human',
     'partial',
     'completed',
     'failed',
@@ -145,9 +134,8 @@ function fileProgress(value: unknown): FileProgress[] {
 export function normalizeMiningJob(value: unknown): MiningJob | null {
   if (!isRecord(value)) return null
   const targetUri = stringValue(value.targetUri)
-  const legacySourceUri = stringValue(value.sourceUri)
   const documentSourceUri =
-    stringValue(value.documentSourceUri) || legacySourceUri
+    stringValue(value.documentSourceUri) || stringValue(value.sourceUri)
   const phase = phaseValue(value.phase)
   if (!targetUri || !documentSourceUri || !phase) return null
   const now = new Date().toISOString()
@@ -160,13 +148,7 @@ export function normalizeMiningJob(value: unknown): MiningJob | null {
     documentTaskId:
       nullableString(value.documentTaskId) || nullableString(value.taskId),
     error: nullableString(value.error),
-    humanTaskId: nullableString(value.humanTaskId),
     id: nullableString(value.id) || jobIdForTarget(targetUri),
-    memoryFiles: fileProgress(value.memoryFiles),
-    memorySourceUri:
-      stringValue(value.memorySourceUri) ||
-      `${documentSourceUri.replace(/\/document-sources\/?$/, '')}/team-memory`,
-    memoryTaskId: nullableString(value.memoryTaskId),
     okfConfigUri: nullableString(value.okfConfigUri),
     origin:
       value.origin === 'cli' || value.origin === 'imported'
@@ -190,7 +172,6 @@ export function normalizeMiningJob(value: unknown): MiningJob | null {
     windowProbeLimit:
       typeof value.windowProbeLimit === 'number' ? value.windowProbeLimit : 0,
     windowIndex: typeof value.windowIndex === 'number' ? value.windowIndex : 1,
-    windowKind: value.windowKind === 'memory' ? 'memory' : 'documents',
     windowLogUri: stringValue(value.windowLogUri),
     windowSizeBytes:
       typeof value.windowSizeBytes === 'number' ? value.windowSizeBytes : 0,
@@ -205,7 +186,7 @@ export function normalizeMiningJob(value: unknown): MiningJob | null {
 }
 
 function emptyHistory(): MiningHistory {
-  return { jobs: [], selectedJobId: null, version: 1 }
+  return { jobs: [], selectedJobId: null, version: 2 }
 }
 
 export function parseMiningHistory(
@@ -225,18 +206,18 @@ export function parseMiningHistory(
           requested && jobs.some((job) => job.id === requested)
             ? requested
             : jobs[0]?.id || null,
-        version: 1,
+        version: 2,
       }
     }
   } catch {
-    // Fall through to legacy migration.
+    // Fall through to the former single-job storage format.
   }
   try {
     const legacy = legacyValue
       ? normalizeMiningJob(JSON.parse(legacyValue) as unknown)
       : null
     return legacy
-      ? { jobs: [legacy], selectedJobId: legacy.id, version: 1 }
+      ? { jobs: [legacy], selectedJobId: legacy.id, version: 2 }
       : emptyHistory()
   } catch {
     return emptyHistory()
@@ -247,25 +228,9 @@ function phaseForTask(task: CompileTaskHistoryItem): MiningPhase {
   if (task.status === 'failed') return 'failed'
   if (task.status === 'cancelled') return 'cancelled'
   if (task.status === 'completed') {
-    if (task.stage === 'salvaged' || task.result?.validation_passed === false)
-      return 'partial'
-    if (task.result?.investigation_status === 'needs_human_input')
-      return 'awaiting_human'
-    return 'completed'
+    return task.stage === 'salvaged' ? 'partial' : 'completed'
   }
-  const source = task.request.from.join(' ').toLowerCase()
-  if (source.includes('human-answers-')) return 'compiling_human'
-  if (source.includes('/team-memory')) return 'compiling_memory'
   return 'compiling_documents'
-}
-
-function taskKind(
-  task: CompileTaskHistoryItem,
-): 'documents' | 'memory' | 'human' {
-  const source = task.request.from.join(' ').toLowerCase()
-  if (source.includes('human-answers-')) return 'human'
-  if (source.includes('/team-memory')) return 'memory'
-  return 'documents'
 }
 
 export function jobsFromCompileTasks(
@@ -279,13 +244,10 @@ export function jobsFromCompileTasks(
         .replace(/\/SKILL\.md\/?$/i, '')
         .split('/')
         .filter(Boolean)
-        .at(-1) === 'llm-wiki' ||
-      Boolean(task.result?.main_view?.meta_knowledge)
+        .at(-1) === 'llm-wiki' || Boolean(task.result?.main_view)
     if (!isStudioTask && !isLlmWikiTask) continue
     const source = task.request.from[0] || ''
-    const windowMatch = source.match(
-      /\/windows\/(\d{4,})\/(?:document-sources|team-memory)/,
-    )
+    const windowMatch = source.match(/\/windows\/(\d{4,})\/document-sources/)
     const groupingKey = windowMatch
       ? `${task.request.to}#window-${windowMatch[1]}`
       : task.request.to
@@ -293,23 +255,15 @@ export function jobsFromCompileTasks(
     current.push(task)
     grouped.set(groupingKey, current)
   }
-  return [...grouped.entries()].map(([groupingKey, group]) => {
+  return [...grouped.values()].map((group) => {
     group.sort((left, right) => left.created_at.localeCompare(right.created_at))
     const latest = group.at(-1)!
     const first = group[0]
     const targetUri = latest.request.to
     const isStudioTask = targetUri.startsWith(KNOWLEDGE_MINING_ROOT)
     const root = isStudioTask ? targetUri.replace(/\/wiki\/?$/, '') : targetUri
-    const documents = group.filter((task) => taskKind(task) === 'documents')
-    const memory = group.filter((task) => taskKind(task) === 'memory')
-    const human = group.filter((task) => taskKind(task) === 'human')
-    const documentTask = documents.at(-1)
-    const memoryTask = memory.at(-1)
-    const humanTask = human.at(-1)
     const sourceUri = first.request.from[0] || ''
-    const windowMatch = sourceUri.match(
-      /\/windows\/(\d{4,})\/(document-sources|team-memory)/,
-    )
+    const windowMatch = sourceUri.match(/\/windows\/(\d{4,})\/document-sources/)
     const windowIndex = windowMatch ? Number(windowMatch[1]) : 1
     const runId = jobIdForTarget(targetUri)
     const latestResult = [...group]
@@ -318,25 +272,18 @@ export function jobsFromCompileTasks(
     return {
       createdAt: first.created_at,
       documentFiles: [],
-      documentSourceUri:
-        documents[0]?.request.from[0] ||
-        memory[0]?.request.from[0] ||
-        `${root}/document-sources`,
-      documentTaskId: documentTask?.task_id || null,
+      documentSourceUri: sourceUri || `${root}/document-sources`,
+      documentTaskId: latest.task_id,
       error: latest.error
         ? `${latest.error.code}: ${latest.error.message}`
         : null,
-      humanTaskId: humanTask?.task_id || null,
       id: windowMatch
         ? `${runId}-w${windowMatch[1]}`
         : jobIdForTarget(targetUri),
-      memoryFiles: [],
-      memorySourceUri: memory.at(-1)?.request.from[0] || `${root}/team-memory`,
-      memoryTaskId: memoryTask?.task_id || null,
       okfConfigUri: latest.request.okf_config || null,
       origin: isStudioTask ? 'studio' : 'cli',
       phase: phaseForTask(latest),
-      reason: documents[0]?.request.reason || latest.request.reason,
+      reason: first.request.reason,
       result: latest.result || latestResult || null,
       skillUri: latest.request.skill,
       targetUri,
@@ -349,7 +296,6 @@ export function jobsFromCompileTasks(
       windowPageLimit: 0,
       windowProbeLimit: 0,
       windowIndex,
-      windowKind: windowMatch?.[2] === 'team-memory' ? 'memory' : 'documents',
       windowLogUri: windowMatch
         ? `${root}/logs/windows/${windowMatch[1]}.json`
         : '',
@@ -375,7 +321,6 @@ export function mergeMiningJobs(
             ...local,
             ...server,
             documentFiles: local.documentFiles,
-            memoryFiles: local.memoryFiles,
             reason: local.reason || server.reason,
             result: server.result || local.result,
             runId: local.runId || server.runId,
@@ -385,7 +330,6 @@ export function mergeMiningJobs(
             windowPageLimit: local.windowPageLimit || server.windowPageLimit,
             windowProbeLimit: local.windowProbeLimit || server.windowProbeLimit,
             windowIndex: local.windowIndex || server.windowIndex,
-            windowKind: local.windowKind || server.windowKind,
             windowLogUri: local.windowLogUri || server.windowLogUri,
             windowSizeBytes: local.windowSizeBytes || server.windowSizeBytes,
             oversizedSingleton:

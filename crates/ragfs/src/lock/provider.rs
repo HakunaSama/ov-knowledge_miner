@@ -295,7 +295,7 @@ impl PathLockProvider for FilesystemPathLockProvider {
                     }
                     match LockTokenCodec::decode(&raw) {
                         Ok(token) => return Ok(Some(token)),
-                        Err(error) if crypto::is_encrypted(&data) => {
+                        Err(_) if crypto::is_encrypted(&data) => {
                             if self
                                 .fs
                                 .compare_and_remove(lock_path, &data)

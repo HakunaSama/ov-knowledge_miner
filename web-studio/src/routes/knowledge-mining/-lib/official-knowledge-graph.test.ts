@@ -9,34 +9,32 @@ import {
 const graph: KnowledgeGraphData = {
   edges: [
     {
-      evidence: ['meta-1 的 definition 切面'],
-      id: 'meta|definition|contains_definition',
-      label: '包含 Definition',
-      relation: 'contains_definition',
-      source: 'meta:1',
-      target: 'page:1',
+      evidence: ['The procedure references the topic page.'],
+      id: 'topic|procedure|markdown-link',
+      label: 'Markdown link',
+      relation: 'markdown-link',
+      source: 'page:1',
+      target: 'page:2',
     },
   ],
   nodes: [
     {
-      description: 'A <safe> meta knowledge unit',
-      facet: '',
-      id: 'meta:1',
-      kind: 'meta',
-      label: 'Retrieval',
-      metaId: 'meta-1',
-      sources: [],
-      uri: null,
-    },
-    {
-      description: 'A configured definition facet',
-      facet: 'definition',
+      description: 'An explanatory <safe> page',
       id: 'page:1',
       kind: 'page',
-      label: 'Retrieval definition',
-      metaId: 'meta-1',
+      label: 'Retrieval',
+      pageRole: 'topic',
       sources: ['viking://resources/source.pdf'],
-      uri: 'viking://resources/wiki/definition.md',
+      uri: 'viking://resources/wiki/topic.md',
+    },
+    {
+      description: 'An executable procedure',
+      id: 'page:2',
+      kind: 'page',
+      label: 'Configure retrieval',
+      pageRole: 'procedure',
+      sources: ['viking://resources/source.pdf'],
+      uri: 'viking://resources/wiki/procedure.md',
     },
   ],
 }
@@ -50,7 +48,7 @@ describe('official knowledge graph renderer', () => {
     expect(template).toContain('OPENVIKING // KG EXPLORER')
   })
 
-  it('injects Studio graph data without changing the official visualization', () => {
+  it('injects atomic page graph data without legacy projection nodes', () => {
     const document = renderOfficialKnowledgeGraphHtml({
       graph,
       sourceName: 'viking://resources/wiki',
@@ -59,10 +57,9 @@ describe('official knowledge graph renderer', () => {
 
     expect(document).toContain('OPENVIKING // KG EXPLORER')
     expect(document).toContain('d3.forceSimulation(DATA.nodes)')
-    expect(document).toContain('包含 Definition')
-    expect(document).toContain('definition')
-    expect(document).not.toContain('What · 是什么')
-    expect(document).toContain('A \\u003csafe\\u003e meta knowledge unit')
+    expect(document).toContain('Markdown link')
+    expect(document).toContain('topic')
+    expect(document).toContain('An explanatory \\u003csafe\\u003e page')
     expect(document).not.toMatch(/__(?:DATA_JSON|NODE_COUNT|TYPE_FILTERS)__/)
   })
 })

@@ -160,7 +160,7 @@ SKILL.md 控制 Agent 怎样阅读、分析和写作。OKF_CONFIG.yaml 控制最
 
 - 页面类型和必需 frontmatter；
 - source 类型与溯源要求；
-- 目录层级、meta ID、标签和视图；
+- 单一主视图的目录层级、页面角色和导航规则；
 - 中间产物要求。
 
 即使 Skill 文件夹已经包含 OKF_CONFIG.yaml，运行时仍必须显式传入本地配置：
@@ -205,7 +205,7 @@ ov -o json knowledge-mining \
   --runtime-timeout 1800
 ~~~
 
-只挖掘 documents 时，不要传 --memory。只有用户明确要求团队记忆挖掘时才能增加该参数。
+所有知识源都通过 `--documents` 传入；命令不再区分 documents 与团队记忆来源。
 
 ## 八、窗口切分规则
 
@@ -327,7 +327,7 @@ Agent 在结束时至少报告：
 
 - 安装后的 Skill URI；
 - 使用的本地 OKF Config 路径；
-- documents 和 memory 文件数量；
+- documents 文件数量；
 - 窗口数量及每个窗口文件数；
 - 目标知识库 URI；
 - 本地 state 文件与远端 run 日志 URI；
@@ -349,7 +349,7 @@ Agent 在结束时至少报告：
 | 溯源 URI | 指向本次批次下上传后的资源 | 保留原 OpenViking 子文档及其内部资源 URI |
 | checkpoint | 记录每个本地文件的上传状态 | 记录展开后的子项清单并标记为远端已就绪，不执行上传 |
 
-OpenViking 输入只支持文件夹，不支持用远端单文件 URI 代替文件夹。`--memory`、`--okf-config` 仍只接受本地路径，`--skill` 仍必须是安装后可访问的 Skill URI。该能力只改变 `ov knowledge-mining` 的 CLI 编排，不改变 `ov compile` 的参数或服务端行为。
+OpenViking 输入只支持文件夹，不支持用远端单文件 URI 代替文件夹。`--okf-config` 仍只接受本地路径，`--skill` 仍必须是安装后可访问的 Skill URI。该能力只改变 `ov knowledge-mining` 的 CLI 编排，不改变 `ov compile` 的参数或服务端行为。
 
 直接挖掘已有 OpenViking 文件夹：
 
@@ -407,7 +407,7 @@ ov -o json knowledge-mining \
 6. 从 JSON 安装结果读取真实 Skill URI，并用 skills show 核对。
 7. 确定唯一且固定的目标知识库 URI。
 8. 使用 --window-files 10、明确的 --state-file 和 --wait 启动。
-9. 只做文档挖掘时绝不传 --memory。
+9. 所有知识源都通过 --documents 传入。
 10. 持续观察 state 文件和 task 状态，不因暂时无终端输出而重复启动。
 11. 中断后只使用 --resume-state 恢复，不重建 batch。
 12. 完成后确认所有窗口为 completed，并逐一报告校验 warning。

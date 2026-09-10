@@ -15,7 +15,7 @@ export const LLM_WIKI_SKILL_NAME = 'llm-wiki'
 export const DEFAULT_OKF_CONFIG = defaultOkfConfig
 export const DEFAULT_USER_PROFILE = defaultUserProfile
 const LLM_WIKI_SKILL_VERSION_MARKER =
-  'OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 4.7'
+  'OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 5.0'
 const LLM_WIKI_USER_PROFILE_NAME = 'USER_PROFILE.md'
 const LLM_WIKI_OKF_CONFIG_NAME = 'OKF_CONFIG.yaml'
 
@@ -40,11 +40,9 @@ export type CompileResult = {
   unchanged: string[]
   updated: string[]
   warnings: string[]
-  views?: CompileView[]
   main_view?: CompileMainView | null
   intermediate_artifacts?: CompileIntermediateArtifact[]
-  investigation_status?: 'clear' | 'needs_human_input' | null
-  question_count?: number
+  investigation_status?: 'clear' | 'issues_found' | null
   source_coverage?: {
     artifact_uri: string
     cited: number
@@ -56,22 +54,30 @@ export type CompileResult = {
 }
 
 export type CompileMainView = {
-  directory_routes?: Record<string, string[]>
-  derived_views_include_exempt?: boolean
+  business_domains: Array<{
+    description: string
+    id: string
+    subdomains: Array<{
+      description: string
+      id: string
+      title: string
+    }>
+    title: string
+  }>
   exempt_paths: string[]
-  facet_categories?: string[]
-  /** Legacy Compile results created before OKF 1.1. */
-  leaf_categories?: string[]
-  meta_knowledge?: {
-    group_by: 'frontmatter_field'
-    id_field: string
-    require_complete: boolean
-    require_id_directory?: boolean
-    shared_view_tags: boolean
-  } | null
-  path_structure?: Array<'facet' | 'route' | 'meta_id' | 'filename'>
+  page_roles: Array<{
+    description: string
+    id: string
+    title: string
+  }>
+  path_structure: Array<
+    'page_role' | 'business_domain' | 'subdomain' | 'subject_path' | 'filename'
+  >
   root_path: string
-  single_source_of_truth: boolean
+  navigation?: {
+    filename: string
+    type: string
+  } | null
 }
 
 export type CompileIntermediateArtifact = {
@@ -79,33 +85,12 @@ export type CompileIntermediateArtifact = {
     | 'run_manifest'
     | 'evidence_ledger'
     | 'investigation_report'
-    | 'questionnaire'
     | 'source_coverage'
     | 'candidate_knowledge'
     | 'readlist'
     | 'evidence_history'
   path: string
   uri: string
-}
-
-export type CompileViewGroup = {
-  description: string
-  id: string
-  path?: Array<{
-    description: string
-    id: string
-    title: string
-  }>
-  tag: string
-  title: string
-}
-
-export type CompileView = {
-  description: string
-  groups: CompileViewGroup[]
-  id: string
-  selection: 'one_or_more' | 'exactly_one'
-  title: string
 }
 
 export type CompileTask = {
@@ -457,35 +442,14 @@ export type StartCompileInput = {
   to: string
 }
 
-export function buildTeamMemoryCompileInput(input: {
-  memorySourceUri: string
-  okfConfig: string
-  reason: string
-  skill: string
-  targetUri: string
-}): StartCompileInput {
+export function buildStartCompileBody(input: StartCompileInput) {
   return {
-    from: [input.memorySourceUri],
-    okfConfig: input.okfConfig,
+    allow_invalid_okf_output: true,
+    from: input.from,
+    okf_config: input.okfConfig,
     reason: input.reason,
     skill: input.skill,
-    to: input.targetUri,
-  }
-}
-
-export function buildHumanAnswerCompileInput(input: {
-  answerSourceUri: string
-  okfConfig: string
-  reason: string
-  skill: string
-  targetUri: string
-}): StartCompileInput {
-  return {
-    from: [input.answerSourceUri],
-    okfConfig: input.okfConfig,
-    reason: input.reason,
-    skill: input.skill,
-    to: input.targetUri,
+    to: input.to,
   }
 }
 
@@ -494,13 +458,7 @@ export async function startCompile(
 ): Promise<CompileAccepted> {
   return getOvResult<CompileAccepted>(
     ovClient.client.post({
-      body: {
-        from: input.from,
-        okf_config: input.okfConfig,
-        reason: input.reason,
-        skill: input.skill,
-        to: input.to,
-      },
+      body: buildStartCompileBody(input),
       url: '/bot/v1/compile',
     }),
   )

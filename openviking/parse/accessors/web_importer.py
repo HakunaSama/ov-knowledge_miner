@@ -161,7 +161,7 @@ class WebImporter:
         root_resolved = root.resolve()
         try:
             dest.relative_to(root_resolved)
-        except ValueError as exc:
+        except ValueError:
             digest = hashlib.sha1(relpath.encode("utf-8")).hexdigest()[:8]
             dest = root_resolved / f"page-{digest}.html"
         return dest

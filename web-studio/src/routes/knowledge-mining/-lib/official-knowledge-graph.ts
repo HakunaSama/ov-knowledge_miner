@@ -8,11 +8,7 @@ type OfficialNodeStyle = {
   symbol: 'circle' | 'diamond' | 'hexagon' | 'square' | 'star' | 'triangle'
 }
 
-const BASE_NODE_STYLES: Record<string, OfficialNodeStyle> = {
-  external: { color: '#ffbd59', label: '外部知识', symbol: 'star' },
-  meta: { color: '#39f7ff', label: '元知识', symbol: 'hexagon' },
-}
-const FACET_COLORS = [
+const PAGE_ROLE_COLORS = [
   '#6df7b1',
   '#ff6b7f',
   '#a88bff',
@@ -22,7 +18,7 @@ const FACET_COLORS = [
   '#5ce1d3',
   '#d97cff',
 ]
-const FACET_SYMBOLS: OfficialNodeStyle['symbol'][] = [
+const PAGE_ROLE_SYMBOLS: OfficialNodeStyle['symbol'][] = [
   'circle',
   'diamond',
   'triangle',
@@ -64,26 +60,21 @@ export function extractOfficialKnowledgeGraphTemplate(source: string): string {
 }
 
 function nodeType(node: KnowledgeGraphNode): string {
-  if (node.kind !== 'page') return node.kind
-  return `facet:${node.facet || 'unclassified'}`
+  return `page-role:${node.pageRole || 'unclassified'}`
 }
 
 function nodeStyles(
   graph: KnowledgeGraphData,
 ): Record<string, OfficialNodeStyle> {
-  const styles = { ...BASE_NODE_STYLES }
-  const facets = [
-    ...new Set(
-      graph.nodes
-        .filter((node) => node.kind === 'page')
-        .map((node) => node.facet || 'unclassified'),
-    ),
+  const styles: Record<string, OfficialNodeStyle> = {}
+  const pageRoles = [
+    ...new Set(graph.nodes.map((node) => node.pageRole || 'unclassified')),
   ]
-  facets.forEach((facet, index) => {
-    styles[`facet:${facet}`] = {
-      color: FACET_COLORS[index % FACET_COLORS.length],
-      label: facet,
-      symbol: FACET_SYMBOLS[index % FACET_SYMBOLS.length],
+  pageRoles.forEach((pageRole, index) => {
+    styles[`page-role:${pageRole}`] = {
+      color: PAGE_ROLE_COLORS[index % PAGE_ROLE_COLORS.length],
+      label: pageRole,
+      symbol: PAGE_ROLE_SYMBOLS[index % PAGE_ROLE_SYMBOLS.length],
     }
   })
   return styles
@@ -124,7 +115,7 @@ function officialGraphData(
           description: node.description,
           entity_type: entityType,
           id: node.id,
-          path: node.uri || node.metaId,
+          path: node.uri,
           sources: node.sources,
           symbol: style.symbol,
           title: node.label,

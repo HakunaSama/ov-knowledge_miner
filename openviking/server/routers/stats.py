@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Path, Query
 from openviking.server.auth import get_request_context
 from openviking.server.dependencies import get_service
 from openviking.server.identity import RequestContext
-from openviking.server.models import ErrorInfo, Response
+from openviking.server.models import Response
 from openviking.server.responses import error_response
 from openviking.storage.stats_aggregator import MEMORY_CATEGORIES, StatsAggregator
 from openviking_cli.utils import get_logger

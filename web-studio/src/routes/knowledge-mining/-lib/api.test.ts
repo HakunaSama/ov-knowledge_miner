@@ -2,8 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   DEFAULT_USER_PROFILE,
-  buildHumanAnswerCompileInput,
-  buildTeamMemoryCompileInput,
+  buildStartCompileBody,
   findLlmWikiSkill,
   isCompileTerminal,
 } from './api'
@@ -53,39 +52,15 @@ describe('knowledge mining API helpers', () => {
     expect(isCompileTerminal('running')).toBe(false)
   })
 
-  it('builds the incremental Compile with team Memory as from and the first Wiki as to', () => {
+  it('makes final OKF validation non-blocking for Studio mining', () => {
     expect(
-      buildTeamMemoryCompileInput({
-        memorySourceUri: 'viking://resources/run/team-memory',
-        okfConfig: 'viking://resources/run/document-sources/OKF_CONFIG.yaml',
-        reason: 'Merge the new team Memory.',
-        skill: 'viking://user/alice/skills/llm-wiki',
-        targetUri: 'viking://resources/run/wiki',
+      buildStartCompileBody({
+        from: ['viking://resources/source'],
+        okfConfig: 'viking://resources/run/OKF_CONFIG.yaml',
+        reason: 'Mine the documents',
+        skill: 'viking://agent/skills/llm-wiki',
+        to: 'viking://resources/run/wiki',
       }),
-    ).toEqual({
-      from: ['viking://resources/run/team-memory'],
-      okfConfig: 'viking://resources/run/document-sources/OKF_CONFIG.yaml',
-      reason: 'Merge the new team Memory.',
-      skill: 'viking://user/alice/skills/llm-wiki',
-      to: 'viking://resources/run/wiki',
-    })
-  })
-
-  it('builds a human-answer Compile against the same Wiki target', () => {
-    expect(
-      buildHumanAnswerCompileInput({
-        answerSourceUri: 'viking://resources/run/team-memory/human-answers.md',
-        okfConfig: 'viking://resources/run/document-sources/OKF_CONFIG.yaml',
-        reason: 'Resolve the investigation questions.',
-        skill: 'viking://user/alice/skills/llm-wiki',
-        targetUri: 'viking://resources/run/wiki',
-      }),
-    ).toEqual({
-      from: ['viking://resources/run/team-memory/human-answers.md'],
-      okfConfig: 'viking://resources/run/document-sources/OKF_CONFIG.yaml',
-      reason: 'Resolve the investigation questions.',
-      skill: 'viking://user/alice/skills/llm-wiki',
-      to: 'viking://resources/run/wiki',
-    })
+    ).toMatchObject({ allow_invalid_okf_output: true })
   })
 })

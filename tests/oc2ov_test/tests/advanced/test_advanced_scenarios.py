@@ -4,7 +4,6 @@
 """
 
 from tests.base_cli_test import BaseOpenClawCLITest
-from utils.test_utils import TestData
 
 
 class TestComplexScenarioMultiUsers(BaseOpenClawCLITest):

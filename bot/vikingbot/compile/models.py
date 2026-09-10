@@ -224,11 +224,9 @@ class CompileResult(BaseModel):
     link_count: int = 0
     validation_passed: bool = True
     warnings: list[str] = Field(default_factory=list)
-    views: list[dict[str, Any]] = Field(default_factory=list)
     main_view: dict[str, Any] | None = None
     intermediate_artifacts: list[dict[str, Any]] = Field(default_factory=list)
-    investigation_status: Literal["clear", "needs_human_input"] | None = None
-    question_count: int = 0
+    investigation_status: Literal["clear", "issues_found"] | None = None
     source_coverage: dict[str, Any] | None = None
 
 

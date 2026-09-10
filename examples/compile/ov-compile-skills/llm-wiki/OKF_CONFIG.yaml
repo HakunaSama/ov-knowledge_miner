@@ -5,30 +5,17 @@ frontmatter:
     - type
     - title
     - description
-    - status
     - sources
     - generated
-    - knowledge_links
   allowed_types:
     - entity
     - concept
     - synthesis
-  defaults:
-    status: stable
+    - index
   sources:
     required_fields:
       - resource
       - title
-      - author
-      - kind
-      - stage
-    allowed_kinds:
-      - original
-      - team-memory
-      - human-answer
-      - intermediate
-    require_input: true
-    require_intermediate: true
   generated:
     required_fields:
       - by
@@ -39,7 +26,6 @@ frontmatter:
 # independent page. The first three levels are configured taxonomy nodes; subject_path
 # represents zero or more optional directories chosen from the page's actual subject.
 main_view:
-  single_source_of_truth: true
   root_path: knowledge
   path_structure:
     - page_role
@@ -173,9 +159,11 @@ main_view:
           title: "声誉管理"
         - id: social-responsibility
           title: "社会责任"
+  navigation:
+    filename: index.md
+    type: index
   exempt_paths:
-    - index.md
-  derived_views_include_exempt: false
+    - "**/index.md"
 
 # Viewable mining artifacts are committed beside the canonical pages. The evidence
 # ledger connects every page to both its input evidence and this intermediate chain.
@@ -185,7 +173,6 @@ intermediates:
   run_manifest: run-manifest.json
   evidence_ledger: evidence-ledger.json
   investigation_report: investigation-report.json
-  questionnaire: questionnaire.json
   source_coverage: source-coverage.json
   candidate_knowledge: candidate-knowledge.json
   # These two artifacts are generated and merged by Compile itself so an Agent
@@ -193,24 +180,11 @@ intermediates:
   readlist: readlist.json
   evidence_history: evidence-history.json
 
-# Cross-knowledge-base references are explicit OpenViking URIs. A bidirectional
-# relation must be mirrored in the counterpart checkout when that checkout is writable.
-cross_knowledge:
-  frontmatter_field: knowledge_links
-  context_field: context
-  require_body_link: true
-  allowed_relations:
-    - related
-    - depends-on
-    - derived-from
-    - supersedes
-
-wikilinks:
+markdown_links:
   enabled: true
-  syntax: double-bracket
   auto_link: true
   catalog_only: true
-  first_occurrence_per_paragraph: true
+  first_occurrence_per_paragraph: false
   exclude:
     - headings
     - tables

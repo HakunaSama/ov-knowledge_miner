@@ -72,12 +72,11 @@ const workspace = {
   knowledgeMining: {
     eyebrow: 'VikingBot · LLM Wiki',
     title: '知识挖掘',
-    description:
-      '按照本次 OKF 配置定义的目录层级、知识切面和派生视图挖掘知识，再用团队 Memory 和人工问卷答案增量更新同一知识库。',
+    description: '按照本次 OKF 配置定义的单一物理主视图层级挖掘文档知识。',
     history: {
       current: '当前查看',
       description:
-        '切换后会加载该次任务的完整进度、知识目录、来源覆盖、中间产物、人工问卷和知识点阵；运行中的任务也会持续更新。',
+        '切换后会加载该次任务的完整进度、知识目录、来源覆盖、中间产物和知识点阵；运行中的任务也会持续更新。',
       newJob: '新建挖掘',
       sources: '{{count}} 份来源',
       sourcesUnknown: '来源清单见详情',
@@ -117,9 +116,6 @@ const workspace = {
         uri: 'CLI 结果已校验并加入挖掘历史。',
         ovpack: 'OVPack 已导入，CLI 挖掘结果可以开始浏览。',
       },
-      readOnlyTitle: '导入结果以审阅模式展示',
-      readOnly:
-        '当前页面会完整展示问卷，但不会直接对导入结果发起人工增量 Compile。需要继续处理时，请在原 CLI 环境中对同一 to URI 执行增量挖掘。',
     },
     upload: {
       title: '上传知识来源',
@@ -130,10 +126,10 @@ const workspace = {
       folder: {
         title: '一次导入整个资源文件夹',
         choose: '选择资源文件夹',
-        hint: '递归读取所有子目录，并按 documents 与 team-memory 目录自动分类；其他清单文件会跳过。',
-        selected: '已选择 {{documents}} 份文档、{{memory}} 份团队 Memory',
+        hint: '递归读取子目录中的支持文档，其他文件会跳过。',
+        selected: '已选择 {{documents}} 份文档',
         summary:
-          '文件夹读取完成：{{documents}} 份文档、{{memory}} 份团队 Memory，跳过 {{skipped}} 个无关文件。',
+          '文件夹读取完成：{{documents}} 份文档，跳过 {{skipped}} 个无关文件。',
       },
     },
     okfConfig: {
@@ -141,20 +137,7 @@ const workspace = {
       defaultName: '内置 OKF_CONFIG.yaml（默认）',
       choose: '选择配置',
       useDefault: '恢复默认 OKF 配置',
-      hint: '可选上传 YAML 配置，严格指定主视图路径层级、facet 位置、派生视图分组、证据链、中间产物、跨知识库引用和 WikiLink 规则；配置外目录与视图会被拒绝。',
-    },
-    memory: {
-      title: '团队 Memory（可选增量来源）',
-      description:
-        'Memory 不会与文档一起参与首轮挖掘。文档 Compile 完成后，系统会自动执行第二次 Compile：from 指向团队 Memory，to 仍指向首轮知识库。',
-      dropzone: '拖放团队 Memory 文件，或点击选择',
-      formats: '支持 MD / TXT / JSON / YAML；不上传则只执行文档挖掘。',
-      incrementalReason:
-        '这是团队 Memory 增量更新阶段。请完整检查现有目标知识库，以团队 Memory 为新增证据更新、补充或纠正已有页面；“现在”“从 X 改为 Y”等表述代表新事实取代旧事实，必须修订所有受影响的当前事实，不能只追加来源或另建洞察而保留过期表述。保留仍然准确的文档知识、出处、WikiLink 和所有配置视图标签，避免重复页面。',
-      pipeline: {
-        documents: '1 · 文档生成主知识库',
-        incremental: '2 · 团队 Memory 增量更新',
-      },
+      hint: '可选上传 YAML 配置，严格指定单一主视图路径层级、页面角色、证据链、中间产物和标准 Markdown 链接；配置外目录会被拒绝。',
     },
     window: {
       fileLimit: '每窗最多文件数',
@@ -166,7 +149,6 @@ const workspace = {
       incrementalReason:
         '这是串行窗口 {{index}}/{{count}} 的增量更新。完整保留现有目标知识库，只用本窗口新增证据补充、纠正和去重。',
       badge: '窗口 {{index}}/{{count}}',
-      singleton: '大文件独占窗',
       singletonSuffix: ' · 大文件独占窗',
     },
     reason: {
@@ -191,13 +173,8 @@ const workspace = {
     status: {
       title: '任务进度',
       vikingBot: '知识整理由 OpenViking 内置 VikingBot 的独立 AgentLoop 执行。',
-      taskId: '任务 ID',
       documentTaskId: '文档任务',
-      memoryTaskId: 'Memory 任务',
-      humanTaskId: '人工补充',
       queuePosition: '队列位置',
-      pending: '等待文档任务完成',
-      skipped: '未配置',
       skill: 'Skill',
       okfConfig: 'OKF 配置',
       output: '产物目录',
@@ -211,10 +188,7 @@ const workspace = {
       uploading: '解析文档',
       queued: '等待挖掘',
       compiling_documents: '文档知识挖掘',
-      compiling_memory: 'Memory 增量更新',
-      compiling_human: '人工知识增量更新',
-      awaiting_human: '等待人工知识补证',
-      partial: '部分结果 · 未通过校验',
+      partial: '抢救保存的部分结果',
       completed: '已完成',
       failed: '失败',
       cancelled: '已取消',
@@ -226,9 +200,6 @@ const workspace = {
       queued: '来源已隔离保存，等待前序完整流程结束',
       compiling: '等待 VikingBot',
       compiling_documents: '等待文档 Compile',
-      compiling_memory: '等待团队 Memory 增量 Compile',
-      compiling_human: '等待人工问卷答案增量 Compile',
-      awaiting_human: '发现冲突或证据缺口，等待人工补证后继续',
       loading_skill: '加载 llm-wiki Skill',
       collecting_context: '收集来源与目标上下文',
       agent: 'VikingBot 正在阅读、归纳和写作',
@@ -248,37 +219,30 @@ const workspace = {
       description:
         '任务完成后，可在这里浏览 llm-wiki 生成的导航页、实体页、概念页与综合页。',
       completed: '已生成或更新 {{count}} 个 Wiki 页面。',
-      awaitingHuman:
-        '已生成可审阅的阶段性知识，并暂停在人工补证门禁；提交答案后才会完成最终知识库。',
       partialTitle: '这是抢救保存的部分结果',
-      partialBadge: 'SALVAGED · 未通过校验',
+      partialBadge: 'SALVAGED',
       partial:
-        '任务没有通过完整 OKF 校验，系统已停止后续 Memory 或人工增量阶段。可浏览已保存页面、中间账本和派生视图，但不能将它视为最终知识库。',
+        '任务未正常完成，但可用页面和审计产物已保存；使用结果前请检查任务告警。',
       waitingTitle: 'VikingBot 正在工作',
       waitingDescription:
         '长程挖掘默认没有一小时硬截止。可以关闭或刷新页面；阶段检查点会持久化，并可在失败或取消后继续恢复。',
       queuedTitle: '当前排在第 {{position}} 位',
       queuedDescription:
-        '文档和团队 Memory 已保存到本任务的独立目录。前序任务的文档、Memory 与人工补证流程结束后，VikingBot 会自动开始本任务。',
+        '文档已保存到本任务的独立目录。前一个挖掘任务结束后，VikingBot 会自动开始本任务。',
       emptyTitle: '还没有挖掘结果',
       emptyDescription:
         '选择文档、填写挖掘目标并开始任务，结果会作为持久化 OpenViking Resource 保存。',
     },
     views: {
-      label: '知识组织视图',
+      label: '知识组织',
       main: '主视图',
-      mainDescription:
-        '主视图严格对应 OpenViking 目标目录中的真实文件结构；其他视图只按 OKF tags 重组同一批页面，不复制知识。',
       mainStructure:
-        '配置路径层级：{{structure}}；facet 只能是 {{categories}}，不允许增加配置外目录。',
+        '配置路径层级：{{structure}}；页面角色只能是 {{categories}}，不允许增加配置外目录。',
       legacyStructure: '旧结果未记录 path_structure',
       missingConfig:
-        '该结果没有携带 OKF 主视图结构元数据。界面不会猜测目录、切面或视图；请导入包含 Compile 结果元数据的任务。',
-      metaSummary:
-        '当前共 {{units}} 个元知识、{{files}} 个知识文件；主视图与配置声明的派生视图引用同一批真实文件。',
-      incompleteMetaSummary:
-        '有 {{count}} 个元知识没有覆盖配置要求的全部切面（{{categories}}）。界面不会伪造缺失页。',
-      emptyGroup: '该分组暂时没有页面。',
+        '该结果没有携带 OKF 主视图结构元数据。界面不会猜测目录或页面角色；请导入包含 Compile 结果元数据的任务。',
+      pageSummary:
+        '主视图中当前共 {{units}} 个规范知识页、{{files}} 个物理知识文件。',
       guides: {
         contentLabel: '这里包含什么',
         useLabel: '什么时候使用',
@@ -287,20 +251,16 @@ const workspace = {
           purpose:
             '这是唯一事实源，直接对应 OpenViking 中真正保存的文件夹和文件，不是按标签生成的副本。',
           content:
-            '根目录、知识切面、目录路由、meta_id 位置和文件名层级均来自本次 OKF 配置，界面不会补充任何预设目录。',
+            '根目录、页面角色、业务域、子域、可选主题路径和文件名层级均来自本次 OKF 配置，界面不会补充任何预设目录。',
           use: '需要理解知识边界、浏览完整目录，或确认某条知识实际保存在哪里时使用。',
         },
-        configured: {
-          empty: '配置中尚未声明可展示的分组路径。',
-          use: '按照当前 OKF 配置声明的分组层级浏览同一批知识文件。',
-        },
         graph: {
-          title: '知识点阵云图：元知识与关系的空间视图',
+          title: '知识点阵云图：原子知识页与关系的空间视图',
           purpose:
-            '直接复用 OpenViking knowledge-graph 示例的 KG Explorer HTML，把配置声明的知识切面、WikiLink 和跨知识引用适配成官方图谱数据。',
+            '直接复用 OpenViking knowledge-graph 示例的 KG Explorer HTML，把原子知识页和标准 Markdown 关系适配成官方图谱数据。',
           content:
-            '保留官方的 D3 力导向布局、类型筛选、关系图例、检索、邻居聚焦、证据链和实体检查器；颜色与形状区分元知识及各知识切面。',
-          use: '需要发现知识簇、孤立页面、跨元知识联系和知识库整体结构时使用。',
+            '保留官方的 D3 力导向布局、类型筛选、关系图例、检索、邻居聚焦、证据链和实体检查器；颜色与形状按页面角色区分原子知识页。',
+          use: '需要发现知识簇、孤立页面、跨页面联系和知识库整体结构时使用。',
         },
         coverage: {
           title: '来源覆盖：每份上传材料的处理去向',
@@ -308,55 +268,37 @@ const workspace = {
             '逐项核对上传、实际检查、直接引用、合并和跳过数量；这是 Compile 提交前的硬门禁。',
           content:
             '每个上传级文档的处理状态、引用页面、合并目标或具体跳过原因。',
-          use: '需要确认是否漏读文件、解释产出数量，或审计某份材料为何没有形成独立元知识时使用。',
+          use: '需要确认是否漏读文件、解释产出数量，或审计某份材料为何没有形成独立知识页时使用。',
         },
         intermediates: {
           title: '中间产物：知识挖掘的审计证据',
           purpose:
             '这些不是正式知识页，而是 VikingBot 如何读取、判断、发现冲突并生成知识的可检查记录。',
           content:
-            '运行清单、逐页证据账本、冲突与证据缺口报告，以及结构化调查问卷。',
-          use: '需要追溯结论来源、检查遗漏、审计生成过程或定位为什么提出某个问题时使用。',
-        },
-        questionnaire: {
-          title: '人工调查：最终完成前的知识补证门禁',
-          purpose:
-            '当来源存在冲突或缺少关键证据时，流程会在这里暂停；VikingBot 不会自行猜测后直接宣布完成。',
-          content:
-            '只包含会实质影响知识可靠性的待确认问题，以及每个问题对应的冲突、缺口和影响。',
-          use: '由了解事实的团队成员补充可验证答案；提交后 VikingBot 才继续修订并完成知识库。',
+            '运行清单、逐页证据账本、调查报告、来源覆盖、候选知识和阅读账本。',
+          use: '需要追溯结论来源、检查遗漏、审计生成过程、冲突或证据缺口时使用。',
         },
       },
     },
     graph: {
       title: '知识点阵',
-      legend: '知识图例',
-      interactionHint:
-        '官方 KG Explorer：拖动画布、滚轮缩放、检索实体并单击查看关系与证据链。',
-      nodeCount: '{{count}} 个节点',
-      edgeCount: '{{count}} 条关系',
-      reset: '重置视图',
-      openPage: '打开知识正文',
       emptyTitle: '暂无可绘制的知识节点',
       emptyDescription:
-        '完成知识挖掘并生成元知识页面后，这里会显示知识点阵关系图。',
+        '完成知识挖掘并生成规范知识页后，这里会显示知识点阵关系图。',
     },
     intermediates: {
       title: '中间产物',
-      description:
-        '查看候选知识、逐文档阅读覆盖、跨阶段证据历史、冲突与证据缺失，以及人工补充问卷。',
       kinds: {
         run_manifest: '运行清单',
         evidence_ledger: '证据账本',
         investigation_report: '调查报告',
-        questionnaire: '调查问卷',
         source_coverage: '来源覆盖',
         candidate_knowledge: '候选知识',
         readlist: '逐文档阅读账本',
         evidence_history: '跨阶段证据历史',
       },
       candidates: '候选知识总数',
-      promoted: '已晋升为元知识',
+      promoted: '已晋升为知识页',
       readCoverage: '必读片段覆盖',
       documentCoverage: '逐文档完成',
     },
@@ -368,6 +310,8 @@ const workspace = {
       merged: '已合并',
       skipped: '已跳过',
       reason: '原因',
+      valueSeparator: '：',
+      listSeparator: '、',
       mergedInto: '合并到',
       outputs: '产出',
       loadError: '无法加载来源覆盖记录',
@@ -376,46 +320,18 @@ const workspace = {
         '这次结果生成于来源覆盖门禁启用之前；重新执行知识挖掘后会逐项记录每份上传材料。',
     },
     provenance: {
-      sources: '来源与中间证据',
-      knowledgeLinks: '正文位置关联的跨知识关系（多对多）',
-      knowledgeLinksHint:
-        '同一知识页可在不同段落关联多个知识目标，同一目标也可被多个页面引用；正文中的链接表示实际引用位置。',
-      linkContext: '引用位置：{{context}}',
-      noKnowledgeLinks: '该页面正文没有声明跨知识库关系。',
-    },
-    questionnaire: {
-      title: '人工调查',
-      description:
-        'VikingBot 不会擅自裁决未解决的冲突或补造缺失证据；请回答问卷，再将答案作为新的人工证据增量写回同一知识库。',
-      incrementalReason:
-        '这是人工知识补充增量阶段。问卷答案是新的 human-answer 证据；请解决对应冲突或证据缺口，更新受影响页面、证据账本、调查报告和问卷状态，to 必须保持同一知识库。',
-      needsInput: '需要人工知识补充',
-      clear: '未发现待补充问题',
-      conflict: '证据冲突',
-      evidenceGap: '证据缺失',
-      loadError: '无法加载调查问卷',
-      formTitle: '知识补充问卷',
-      formDescription:
-        '当前知识库仍处于“待补证”状态。答案会保存为人工证据并触发增量 Compile；只有冲突和缺口处理完成后，本次挖掘才标记为完成。',
-      answerPlaceholder: '填写可验证的答案、时间范围和依据……',
-      submit: '提交答案并增量更新',
-      answered: '人工问题已处理',
-      answeredDescription:
-        '问卷历史已保留；答案作为 human-answer 来源写入，当前调查报告已更新。',
-      noQuestions: '当前不需要人工补充',
-      noQuestionsDescription: '调查报告为 clear，问卷中没有未解决问题。',
+      sources: '来源',
     },
     errors: {
       title: '任务失败',
       botUnavailable:
         '无法连接 VikingBot。请确认 OpenViking 服务已使用 --with-bot 启动，并检查模型配置。',
       unsupportedFile: '{{name}} 不是支持的文档格式。',
-      unsupportedMemoryFile: '{{name}} 不是支持的团队 Memory 格式。',
       fileTooLarge: '{{name}} 超过单文件上限 {{size}}。',
       compileFailed: 'VikingBot Compile 执行失败。',
       resultLoad: '无法读取结果目录',
       pageLoad: '无法读取 Wiki 页面',
-      missingJob: '当前知识挖掘任务不存在，无法提交人工答案。',
+      missingJob: '当前知识挖掘任务不存在。',
       incompleteQueueJob:
         '排队任务缺少 Skill 或 OKF 配置，无法安全启动。请新建任务并重新上传。',
       queueBusy:

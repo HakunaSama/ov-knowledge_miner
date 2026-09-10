@@ -63,7 +63,6 @@ class FinalizedCheckout:
     link_count: int = 0
     intermediate_artifacts: list[dict[str, Any]] = field(default_factory=list)
     investigation_status: str | None = None
-    question_count: int = 0
     source_coverage: dict[str, Any] | None = None
 
 
@@ -253,10 +252,6 @@ def _frontmatter_with_defaults(
     """Apply configured defaults and return a stable complete OKF document."""
     frontmatter, body = _split_frontmatter(content)
     changed = False
-    for key, value in config.frontmatter_defaults.items():
-        if key not in frontmatter:
-            frontmatter[key] = value
-            changed = True
     if "generated" in config.required_frontmatter:
         generated = frontmatter.get("generated")
         generated = dict(generated) if isinstance(generated, Mapping) else {}
@@ -279,7 +274,17 @@ def _validate_main_view_path(
 ) -> None:
     """Validate one atomic page against the configured business taxonomy."""
     main_view = config.main_view
-    if main_view is None or path in main_view.exempt_paths:
+    if main_view is None:
+        return
+    if main_view.is_exempt(path):
+        navigation = main_view.navigation
+        if navigation is not None and path.rsplit("/", 1)[-1] == navigation.filename:
+            page_type = frontmatter.get("type")
+            if page_type != navigation.type:
+                raise ValueError(
+                    f'OKF navigation page "{path}" frontmatter type must be '
+                    f'"{navigation.type}"'
+                )
         return
     root_segments = main_view.root_path.split("/")
     segments = path.split("/")
@@ -403,50 +408,12 @@ def _validate_configured_frontmatter(
         raise ValueError(
             f'OKF Markdown file "{path}" frontmatter field "tags" must contain strings'
         )
-    normalized_tags = {tag.strip() for tag in tags}
-    configured_view_tags = {group.tag for view in config.views for group in view.groups}
-    undeclared_view_tags = sorted(
-        tag
-        for tag in normalized_tags
-        if tag.startswith("view/") and tag not in configured_view_tags
-    )
-    if undeclared_view_tags:
-        raise ValueError(
-            f'OKF Markdown file "{path}" uses view tags not declared by the effective '
-            "OKF config: " + ", ".join(undeclared_view_tags)
-        )
-    validate_derived_views = not (
-        config.main_view is not None
-        and path in config.main_view.exempt_paths
-        and not config.main_view.derived_views_include_exempt
-    )
-    for view in config.views if validate_derived_views else ():
-        known = {group.tag for group in view.groups}
-        unknown = sorted(
-            tag for tag in normalized_tags if tag.startswith(view.tag_prefix) and tag not in known
-        )
-        if unknown:
-            raise ValueError(
-                f'OKF Markdown file "{path}" uses unknown tags for view "{view.id}": '
-                + ", ".join(unknown)
-            )
-        selected = sorted(normalized_tags & known)
-        if not selected:
-            raise ValueError(
-                f'OKF Markdown file "{path}" must select at least one tag for view "{view.id}"'
-            )
-        if view.selection == "exactly_one" and len(selected) != 1:
-            raise ValueError(
-                f'OKF Markdown file "{path}" must select exactly one tag for view "{view.id}"'
-            )
-
     if "sources" in config.required_frontmatter:
         sources = frontmatter.get("sources")
         if not isinstance(sources, list) or not sources:
             raise ValueError(
                 f'OKF Markdown file "{path}" frontmatter field "sources" must be a non-empty list'
             )
-        source_kinds: set[str] = set()
         for index, source in enumerate(sources):
             if not isinstance(source, Mapping):
                 raise ValueError(
@@ -463,114 +430,16 @@ def _validate_configured_frontmatter(
                         f'OKF Markdown file "{path}" sources[{index}].{name} must be a string'
                     )
             resource = source.get("resource")
-            kind = str(source.get("kind") or "").strip()
-            if config.source_allowed_kinds:
-                if kind not in config.source_allowed_kinds:
-                    raise ValueError(
-                        f'OKF Markdown file "{path}" sources[{index}].kind must be one of: '
-                        + ", ".join(config.source_allowed_kinds)
-                    )
-                source_kinds.add(kind)
             normalized_resource = resource.strip().rstrip("/") if isinstance(resource, str) else ""
-            is_intermediate = kind == "intermediate"
-            allowed_intermediate_paths = (
-                {
-                    safe_join_viking_uri(target_uri, artifact_path).rstrip("/")
-                    for artifact_path in config.intermediates.paths
-                }
-                if config.intermediates is not None
-                else set()
-            )
-            resource_allowed = (
-                normalized_resource in allowed_intermediate_paths
-                if is_intermediate
-                else _citation_target_allowed(normalized_resource, source_roots)
-            )
             if "resource" in config.source_fields and (
                 not normalized_resource
-                or not resource_allowed
+                or not _citation_target_allowed(normalized_resource, source_roots)
                 or normalized_resource in control_uris
             ):
-                expected = (
-                    "a configured intermediate artifact" if is_intermediate else "a supplied source"
-                )
                 raise ValueError(
                     f'OKF Markdown file "{path}" sources[{index}].resource must reference '
-                    + expected
+                    "a supplied source"
                 )
-        if config.source_require_input and not (source_kinds - {"intermediate"}):
-            raise ValueError(
-                f'OKF Markdown file "{path}" must include at least one non-intermediate input source'
-            )
-        if config.source_require_intermediate and "intermediate" not in source_kinds:
-            raise ValueError(
-                f'OKF Markdown file "{path}" must include an intermediate artifact source'
-            )
-
-    if config.cross_knowledge is not None:
-        field_name = config.cross_knowledge.frontmatter_field
-        links = frontmatter.get(field_name, [])
-        if not isinstance(links, list):
-            raise ValueError(
-                f'OKF Markdown file "{path}" frontmatter field "{field_name}" must be a list'
-            )
-        page_uri = safe_join_viking_uri(target_uri, path).rstrip("/")
-        for index, link in enumerate(links):
-            if not isinstance(link, Mapping):
-                raise ValueError(
-                    f'OKF Markdown file "{path}" {field_name}[{index}] must be a YAML object'
-                )
-            resource = link.get("resource")
-            title = link.get("title")
-            relation = link.get("relation")
-            direction = link.get("direction")
-            context = link.get(config.cross_knowledge.context_field)
-            if (
-                not isinstance(resource, str)
-                or not resource.strip().startswith("viking://")
-                or resource.strip().rstrip("/") == page_uri
-            ):
-                raise ValueError(
-                    f'OKF Markdown file "{path}" {field_name}[{index}].resource must be a '
-                    "non-self OpenViking knowledge URI"
-                )
-            if not isinstance(title, str) or not title.strip():
-                raise ValueError(
-                    f'OKF Markdown file "{path}" {field_name}[{index}].title must be non-empty'
-                )
-            if relation not in config.cross_knowledge.allowed_relations:
-                raise ValueError(
-                    f'OKF Markdown file "{path}" {field_name}[{index}].relation must be one of: '
-                    + ", ".join(config.cross_knowledge.allowed_relations)
-                )
-            if direction not in {"outgoing", "incoming", "bidirectional"}:
-                raise ValueError(
-                    f'OKF Markdown file "{path}" {field_name}[{index}].direction must be '
-                    "outgoing, incoming, or bidirectional"
-                )
-            if not isinstance(context, str) or not context.strip():
-                raise ValueError(
-                    f'OKF Markdown file "{path}" {field_name}[{index}].'
-                    f"{config.cross_knowledge.context_field} must identify the body passage "
-                    "where this relation is used"
-                )
-            if context.strip() not in body:
-                raise ValueError(
-                    f'OKF Markdown file "{path}" {field_name}[{index}].'
-                    f"{config.cross_knowledge.context_field} must occur verbatim in the page body"
-                )
-            if config.cross_knowledge.require_body_link:
-                normalized_resource = LinkRenderer.normalize_markdown_target(resource.strip())
-                body_targets = {
-                    LinkRenderer.normalize_markdown_target(markdown_link.target)
-                    for markdown_link in LinkRenderer.iter_markdown_links(body)
-                    if markdown_link.start == 0 or body[markdown_link.start - 1] != "!"
-                }
-                if normalized_resource not in body_targets:
-                    raise ValueError(
-                        f'OKF Markdown file "{path}" {field_name}[{index}].resource must '
-                        "also appear as a readable Markdown link at its contextual body passage"
-                    )
 
     if "generated" in config.required_frontmatter:
         generated = frontmatter.get("generated")
@@ -587,17 +456,16 @@ def _validate_configured_frontmatter(
                 )
 
 
-def _configured_wikilink_protected_spans(body: str, config: OKFConfig) -> list[tuple[int, int]]:
+def _configured_markdown_link_protected_spans(
+    body: str, config: OKFConfig
+) -> list[tuple[int, int]]:
     spans = LinkRenderer.protected_markdown_spans(body)
-    spans.extend(
-        (match.start(), match.end()) for match in _DOUBLE_BRACKET_WIKILINK_RE.finditer(body)
-    )
-    if "headings" in config.wikilinks.exclude:
+    if "headings" in config.markdown_links.exclude:
         spans.extend(
             (match.start(), match.end())
             for match in re.finditer(r"(?m)^[ \t]{0,3}#{1,6}[ \t]+.*(?:\r?\n|\Z)", body)
         )
-    if "tables" in config.wikilinks.exclude:
+    if "tables" in config.markdown_links.exclude:
         spans.extend(
             (match.start(), match.end())
             for match in re.finditer(r"(?m)^[^\r\n]*\|[^\r\n]*(?:\r?\n|\Z)", body)
@@ -607,90 +475,13 @@ def _configured_wikilink_protected_spans(body: str, config: OKFConfig) -> list[t
 
 def _paragraph_spans(body: str) -> list[tuple[int, int]]:
     spans: list[tuple[int, int]] = []
-    for match in re.finditer(r"(?ms)(?:\A|\r?\n[ \t]*\r?\n+)(.*?)(?=\r?\n[ \t]*\r?\n+|\Z)", body):
+    for match in re.finditer(
+        r"(?ms)(?:\A|\r?\n[ \t]*\r?\n+)(.*?)(?=\r?\n[ \t]*\r?\n+|\Z)", body
+    ):
         start, end = match.start(1), match.end(1)
         if body[start:end].strip():
             spans.append((start, end))
     return spans
-
-
-def _finalize_double_bracket_wikilinks(
-    body: str,
-    *,
-    path: str,
-    source_uri: str,
-    targets: Mapping[str, str],
-    config: OKFConfig,
-) -> tuple[str, int]:
-    """Validate and proactively insert literal ``[[filename stem]]`` links."""
-    if not config.wikilinks.enabled:
-        return body, 0
-    by_case = {name.casefold(): (name, uri) for name, uri in targets.items()}
-    protected = _configured_wikilink_protected_spans(body, config)
-    for match in _DOUBLE_BRACKET_WIKILINK_RE.finditer(body):
-        target_name = match.group(1).strip()
-        resolved = by_case.get(target_name.casefold())
-        if config.wikilinks.catalog_only and resolved is None:
-            raise ValueError(
-                f'OKF Markdown file "{path}" WikiLink [[{target_name}]] does not match an '
-                "unambiguous existing page filename"
-            )
-        if resolved is not None:
-            canonical, target_uri = resolved
-            if target_name != canonical:
-                raise ValueError(
-                    f'OKF Markdown file "{path}" WikiLink [[{target_name}]] must match the '
-                    f"actual filename stem [[{canonical}]] exactly"
-                )
-            if target_uri == source_uri:
-                raise ValueError(f'OKF Markdown file "{path}" must not contain a self WikiLink')
-        excluded = [span for span in protected if span != (match.start(), match.end())]
-        if any(
-            not (match.end() <= span_start or match.start() >= span_end)
-            for span_start, span_end in excluded
-        ):
-            raise ValueError(
-                f'OKF Markdown file "{path}" contains a WikiLink in an excluded context'
-            )
-
-    if not config.wikilinks.auto_link:
-        return body, 0
-    replacements: list[tuple[int, int, str]] = []
-    ordered_targets = sorted(targets.items(), key=lambda item: len(item[0]), reverse=True)
-    paragraphs = (
-        _paragraph_spans(body)
-        if config.wikilinks.first_occurrence_per_paragraph
-        else [(0, len(body))]
-    )
-    for paragraph_start, paragraph_end in paragraphs:
-        paragraph = body[paragraph_start:paragraph_end]
-        local_protected = [
-            (max(0, start - paragraph_start), min(paragraph_end, end) - paragraph_start)
-            for start, end in protected
-            if start < paragraph_end and end > paragraph_start
-        ]
-        for name, target_uri in ordered_targets:
-            if target_uri == source_uri or f"[[{name}]]" in paragraph:
-                continue
-            match_span = LinkRenderer._find_match_span(  # noqa: SLF001
-                paragraph,
-                name,
-                protected_spans=local_protected,
-            )
-            if match_span is None:
-                continue
-            start, end = (paragraph_start + match_span[0], paragraph_start + match_span[1])
-            if any(
-                not (end <= old_start or start >= old_end) for old_start, old_end, _ in replacements
-            ):
-                continue
-            replacements.append((start, end, f"[[{name}]]"))
-            local_protected.append(match_span)
-
-    rendered = list(body)
-    for start, end, replacement in sorted(replacements, reverse=True):
-        rendered[start:end] = list(replacement)
-    return "".join(rendered), len(replacements)
 
 
 def _has_link_to(body: str, source_uri: str, target_uri: str) -> bool:
@@ -704,6 +495,123 @@ def _has_link_to(body: str, source_uri: str, target_uri: str) -> bool:
         for link in LinkRenderer.iter_markdown_links(body)
         if LinkRenderer.normalize_markdown_target(link.target) in expected
     )
+
+
+def _validate_catalog_markdown_links(
+    body: str,
+    *,
+    path: str,
+    source_uri: str,
+    catalog_uris: set[str],
+    config: OKFConfig,
+) -> None:
+    catalog: dict[str, str] = {}
+    for target_uri in catalog_uris:
+        relative = LinkRenderer.relative_path(source_uri, target_uri)
+        catalog[LinkRenderer.normalize_markdown_target(target_uri)] = target_uri
+        if relative is not None:
+            catalog[LinkRenderer.normalize_markdown_target(relative)] = target_uri
+
+    markdown_links = list(LinkRenderer.iter_markdown_links(body))
+    link_spans = {(link.start, link.end) for link in markdown_links}
+    protected = [
+        span
+        for span in _configured_markdown_link_protected_spans(body, config)
+        if span not in link_spans
+    ]
+    for link in markdown_links:
+        if link.start > 0 and body[link.start - 1] == "!":
+            continue
+        if any(
+            not (link.end <= start or link.start >= end) for start, end in protected
+        ):
+            continue
+        raw_target = link.target.strip()
+        if raw_target.startswith("#"):
+            continue
+        normalized = LinkRenderer.normalize_markdown_target(raw_target)
+        resolved = catalog.get(normalized)
+        if resolved == source_uri:
+            raise ValueError(f'OKF Markdown file "{path}" must not link to itself')
+        if resolved is not None:
+            continue
+        # Catalog-only applies to local Markdown page links. Web links, source
+        # citations, anchors, and non-Markdown assets are outside the page catalog.
+        if "://" not in normalized and normalized.casefold().endswith(".md"):
+            raise ValueError(
+                f'OKF Markdown file "{path}" link target "{raw_target}" does not match '
+                "an existing knowledge page"
+            )
+
+
+def _finalize_markdown_links(
+    body: str,
+    *,
+    path: str,
+    source_uri: str,
+    targets: Mapping[str, str],
+    catalog_uris: set[str],
+    config: OKFConfig,
+) -> tuple[str, int]:
+    """Validate and insert standard Markdown links between knowledge pages."""
+    if _DOUBLE_BRACKET_WIKILINK_RE.search(body):
+        raise ValueError(
+            f'OKF Markdown file "{path}" contains removed [[WikiLink]] syntax; '
+            "use [text](path.md) instead"
+        )
+    if not config.markdown_links.enabled:
+        return body, 0
+    if config.markdown_links.catalog_only:
+        _validate_catalog_markdown_links(
+            body,
+            path=path,
+            source_uri=source_uri,
+            catalog_uris=catalog_uris,
+            config=config,
+        )
+    if not config.markdown_links.auto_link:
+        return body, 0
+
+    protected = _configured_markdown_link_protected_spans(body, config)
+    replacements: list[tuple[int, int, str]] = []
+    ordered_targets = sorted(targets.items(), key=lambda item: len(item[0]), reverse=True)
+    paragraphs = (
+        _paragraph_spans(body)
+        if config.markdown_links.first_occurrence_per_paragraph
+        else [(0, len(body))]
+    )
+    for paragraph_start, paragraph_end in paragraphs:
+        paragraph = body[paragraph_start:paragraph_end]
+        local_protected = [
+            (max(0, start - paragraph_start), min(paragraph_end, end) - paragraph_start)
+            for start, end in protected
+            if start < paragraph_end and end > paragraph_start
+        ]
+        for name, target_uri in ordered_targets:
+            if target_uri == source_uri or _has_link_to(paragraph, source_uri, target_uri):
+                continue
+            match_span = LinkRenderer._find_match_span(  # noqa: SLF001
+                paragraph,
+                name,
+                protected_spans=local_protected,
+            )
+            if match_span is None:
+                continue
+            start, end = paragraph_start + match_span[0], paragraph_start + match_span[1]
+            if any(
+                not (end <= old_start or start >= old_end)
+                for old_start, old_end, _replacement in replacements
+            ):
+                continue
+            relative = LinkRenderer.relative_path(source_uri, target_uri) or target_uri
+            encoded = relative.replace(" ", "%20").replace("(", "%28").replace(")", "%29")
+            replacements.append((start, end, f"[{body[start:end]}]({encoded})"))
+            local_protected.append(match_span)
+
+    rendered = list(body)
+    for start, end, replacement in sorted(replacements, reverse=True):
+        rendered[start:end] = list(replacement)
+    return "".join(rendered), len(replacements)
 
 
 def _strip_legacy_related_pages(body: str) -> str:
@@ -795,22 +703,21 @@ def _validate_intermediate_artifacts(
     config: OKFConfig,
     source_units: list[dict[str, Any]],
     read_paths: set[str],
-) -> tuple[list[dict[str, Any]], str | None, int, dict[str, Any] | None]:
+) -> tuple[list[dict[str, Any]], str | None, dict[str, Any] | None]:
     intermediate = config.intermediates
     if intermediate is None:
-        return [], None, 0, None
+        return [], None, None
     expected = {
         "run_manifest": f"{intermediate.root_path}/{intermediate.run_manifest}",
         "evidence_ledger": f"{intermediate.root_path}/{intermediate.evidence_ledger}",
         "investigation_report": f"{intermediate.root_path}/{intermediate.investigation_report}",
-        "questionnaire": f"{intermediate.root_path}/{intermediate.questionnaire}",
         "source_coverage": f"{intermediate.root_path}/{intermediate.source_coverage}",
         "candidate_knowledge": (f"{intermediate.root_path}/{intermediate.candidate_knowledge}"),
         "readlist": f"{intermediate.root_path}/{intermediate.readlist}",
         "evidence_history": f"{intermediate.root_path}/{intermediate.evidence_history}",
     }
     if not intermediate.required and not any(path in files for path in expected.values()):
-        return [], None, 0, None
+        return [], None, None
 
     manifest = _load_json_artifact(files, expected["run_manifest"])
     if manifest.get("target") != target_uri.rstrip("/"):
@@ -819,10 +726,8 @@ def _validate_intermediate_artifacts(
             f"{target_uri.rstrip('/')}"
         )
     stage = manifest.get("stage")
-    if stage not in {"documents", "memory_incremental", "human_incremental"}:
-        raise ValueError(
-            "Compile run manifest stage must be documents, memory_incremental, or human_incremental"
-        )
+    if stage != "documents":
+        raise ValueError('Compile run manifest stage must be "documents"')
     manifest_sources = set(
         _string_array(manifest.get("source_roots"), label="run manifest source_roots")
     )
@@ -889,8 +794,8 @@ def _validate_intermediate_artifacts(
 
     report = _load_json_artifact(files, expected["investigation_report"])
     investigation_status = report.get("status")
-    if investigation_status not in {"clear", "needs_human_input"}:
-        raise ValueError("Compile investigation report status must be clear or needs_human_input")
+    if investigation_status not in {"clear", "issues_found"}:
+        raise ValueError("Compile investigation report status must be clear or issues_found")
     issue_ids: set[str] = set()
     issue_count = 0
     for field_name in ("conflicts", "evidence_gaps"):
@@ -929,84 +834,10 @@ def _validate_intermediate_artifacts(
                 )
             issue_ids.add(issue_id)
             issue_count += 1
-    expected_status = "needs_human_input" if issue_count else "clear"
+    expected_status = "issues_found" if issue_count else "clear"
     if investigation_status != expected_status:
         raise ValueError(
             f"Compile investigation report status must be {expected_status} for its issue count"
-        )
-
-    questionnaire = _load_json_artifact(files, expected["questionnaire"])
-    questionnaire_status = questionnaire.get("status")
-    if questionnaire_status not in {"not_required", "open", "answered"}:
-        raise ValueError("Compile questionnaire status must be not_required, open, or answered")
-    questions = questionnaire.get("questions")
-    if not isinstance(questions, list):
-        raise ValueError("Compile questionnaire questions must be an array")
-    covered_issue_ids: set[str] = set()
-    question_ids: set[str] = set()
-    for index, question in enumerate(questions):
-        if not isinstance(question, Mapping):
-            raise ValueError(f"Compile questionnaire questions[{index}] must be an object")
-        question_id = question.get("id")
-        prompt = question.get("prompt")
-        reason = question.get("reason")
-        kind = question.get("kind")
-        if (
-            not isinstance(question_id, str)
-            or not question_id.strip()
-            or question_id in question_ids
-        ):
-            raise ValueError("Compile questionnaire question ids must be unique non-empty strings")
-        if (
-            not isinstance(prompt, str)
-            or not prompt.strip()
-            or not isinstance(reason, str)
-            or not reason.strip()
-        ):
-            raise ValueError(
-                f"Compile questionnaire question {question_id} needs non-empty string "
-                "prompt and reason fields"
-            )
-        if kind not in {"single_choice", "multiple_choice", "free_text"}:
-            raise ValueError(
-                f"Compile questionnaire question {question_id} kind must be single_choice, "
-                "multiple_choice, or free_text"
-            )
-        options = question.get("options", [])
-        if kind != "free_text" and not _string_array(
-            options, label=f"question {question_id} options"
-        ):
-            raise ValueError(f"Compile questionnaire question {question_id} needs options")
-        if kind == "free_text" and not isinstance(options, list):
-            raise ValueError(
-                f"Compile questionnaire question {question_id} options must be an array"
-            )
-        related_ids = set(
-            _string_array(
-                question.get("related_issue_ids"),
-                label=f"question {question_id} related_issue_ids",
-            )
-        )
-        if questionnaire_status != "answered" and not related_ids.issubset(issue_ids):
-            raise ValueError(
-                f"Compile questionnaire question {question_id} references an unknown issue"
-            )
-        covered_issue_ids.update(related_ids)
-        question_ids.add(question_id)
-    if issue_ids and (
-        questionnaire_status not in {"open", "answered"}
-        or not covered_issue_ids.issuperset(issue_ids)
-    ):
-        raise ValueError(
-            "Compile questionnaire must ask at least one question covering every issue"
-        )
-    if not issue_ids and questionnaire_status == "not_required" and questions:
-        raise ValueError(
-            "Compile questionnaire must be not_required with no questions when the report is clear"
-        )
-    if not issue_ids and questionnaire_status not in {"not_required", "answered"}:
-        raise ValueError(
-            "Compile questionnaire must be not_required or answered when the report is clear"
         )
 
     coverage = _load_json_artifact(files, expected["source_coverage"])
@@ -1327,8 +1158,12 @@ def _validate_intermediate_artifacts(
             "Compile document batches with multiple uploads must promote at least one "
             "source-grounded candidate; an index-only/all-skipped result requires review"
         )
-    exempt_paths = set(config.main_view.exempt_paths) if config.main_view is not None else set()
-    missing_candidate_pages = sorted((wiki_paths - exempt_paths) - promoted_pages)
+    non_exempt_pages = {
+        path
+        for path in wiki_paths
+        if config.main_view is None or not config.main_view.is_exempt(path)
+    }
+    missing_candidate_pages = sorted(non_exempt_pages - promoted_pages)
     if missing_candidate_pages:
         raise ValueError(
             "Every non-index Wiki page must be produced by a promoted candidate: missing "
@@ -1404,7 +1239,7 @@ def _validate_intermediate_artifacts(
         }
         for kind, path in expected.items()
     ]
-    return artifacts, str(investigation_status), len(questions), coverage_summary
+    return artifacts, str(investigation_status), coverage_summary
 
 
 def finalize_resource_checkout(
@@ -1478,13 +1313,11 @@ def finalize_resource_checkout(
 
     intermediate_artifacts: list[dict[str, Any]] = []
     investigation_status: str | None = None
-    question_count = 0
     source_coverage: dict[str, Any] | None = None
     if okf_config is not None:
         (
             intermediate_artifacts,
             investigation_status,
-            question_count,
             source_coverage,
         ) = _validate_intermediate_artifacts(
             files,
@@ -1518,11 +1351,12 @@ def finalize_resource_checkout(
             frontmatter_match = _FRONTMATTER_RE.match(content)
             prefix = content[: frontmatter_match.end()] if frontmatter_match else ""
             body = content[frontmatter_match.end() :] if frontmatter_match else content
-            body, rendered_count = _finalize_double_bracket_wikilinks(
+            body, rendered_count = _finalize_markdown_links(
                 body,
                 path=path,
                 source_uri=uri,
                 targets=mention_targets,
+                catalog_uris=wiki_uris,
                 config=okf_config,
             )
             content = prefix + body
@@ -1541,7 +1375,6 @@ def finalize_resource_checkout(
         link_count=link_count,
         intermediate_artifacts=intermediate_artifacts,
         investigation_status=investigation_status,
-        question_count=question_count,
         source_coverage=source_coverage,
     )
 

@@ -9,17 +9,21 @@ function folderFile(path: string, content = 'test'): File {
 }
 
 describe('classifyResourceFolderFiles', () => {
-  it('classifies a structured resource folder and ignores manifests', () => {
+  it('collects supported documents from all subdirectories', () => {
     const pdf = folderFile('resource/documents/pdf/guide.pdf')
     const markdown = folderFile('resource/documents/markdown/guide.md')
-    const memory = folderFile('resource/team-memory/decisions.yaml')
+    const manifest = folderFile('resource/manifest.yaml')
     const readme = folderFile('resource/README.md')
 
-    const result = classifyResourceFolderFiles([pdf, markdown, memory, readme])
+    const result = classifyResourceFolderFiles([
+      pdf,
+      markdown,
+      manifest,
+      readme,
+    ])
 
-    expect(result.documents).toEqual([pdf, markdown])
-    expect(result.memory).toEqual([memory])
-    expect(result.skipped).toEqual([readme])
+    expect(result.documents).toEqual([pdf, markdown, readme])
+    expect(result.skipped).toEqual([manifest])
   })
 
   it('treats supported files in an unstructured folder as documents', () => {
@@ -30,7 +34,6 @@ describe('classifyResourceFolderFiles', () => {
     const result = classifyResourceFolderFiles([pdf, markdown, unsupported])
 
     expect(result.documents).toEqual([pdf, markdown])
-    expect(result.memory).toEqual([])
     expect(result.skipped).toEqual([unsupported])
   })
 

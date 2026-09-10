@@ -1,7 +1,6 @@
 import pytest
 import base64
 import json
-import os
 from pathlib import Path
 
 from openviking_sdk import AsyncHTTPClient

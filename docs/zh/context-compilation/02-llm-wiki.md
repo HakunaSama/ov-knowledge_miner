@@ -10,7 +10,7 @@
 | `concept` | 可复用的思想、机制、模式、协议、心智模型 |
 | `synthesis` | 围绕明确范围或问题的跨来源综合、偏好、事件摘要、洞察或导航页 |
 
-默认以 `entity` 和 `concept` 为主，只有真正组合多份证据或承担导航职责时才使用 `synthesis`。`OKF_CONFIG.yaml` 还定义唯一事实主视图、元知识独立目录、What/Why/How 末层、必需 frontmatter、双重证据谱系、跨库关系、八类中间产物（含候选知识、持久阅读账本和证据历史）和 `[[页面名]]` WikiLink 规则；`generated.by` 可用 `{skill}`/`{model}` 模板，`generated.at` 由提交器写入实际 UTC 时间。产物是一个**知识库**，不是逐文档的摘要拼盘。
+默认以 `entity` 和 `concept` 为主，只有真正组合多份证据或承担导航职责时才使用 `synthesis`。`OKF_CONFIG.yaml` 定义唯一主视图、`page_role / business_domain / subdomain / subject_path / filename` 物理路径、必需 frontmatter、证据谱系、挖掘中间产物、导航页和标准 Markdown 链接规则；`generated.by` 可用 `{skill}`/`{model}` 模板，`generated.at` 由提交器写入实际 UTC 时间。每个晋升候选只对应一个规范知识页，不要求成组生成固定分面页面。产物是一个**知识库**，不是逐文档的摘要拼盘。
 
 Skill 源码：[examples/compile/ov-compile-skills/llm-wiki](https://github.com/volcengine/OpenViking/tree/main/examples/compile/ov-compile-skills/llm-wiki) · 可视化脚本：[examples/compile/graph-show/llm-wiki](https://github.com/volcengine/OpenViking/tree/main/examples/compile/graph-show/llm-wiki)
 
@@ -86,26 +86,23 @@ ov tree viking://resources/research-wiki
 ov read viking://resources/research-wiki/index.md
 ```
 
-典型结构（页面类型对应目录）：
+典型结构（实际目录由 OKF 主视图分类决定）：
 
 ```text
 research-wiki/
-├── index.md                              # 导航综合页
-├── knowledge/<主题>/<meta_id>/what/<页面>.md  # entity：是什么
-├── knowledge/<主题>/<meta_id>/why/<页面>.md   # synthesis：为什么
-├── knowledge/<主题>/<meta_id>/how/<页面>.md   # concept：怎么做
+├── index.md
+├── knowledge/<page_role>/<business_domain>/<subdomain>/<可选主题路径>/<页面>.md
 └── _mining/
     ├── run-manifest.json                 # 运行清单
     ├── evidence-ledger.json              # 逐页证据账本
     ├── investigation-report.json         # 冲突与证据缺口
-    ├── questionnaire.json                # 人工补充问卷
     ├── source-coverage.json              # 上传级来源覆盖
     ├── candidate-knowledge.json          # 候选知识及取舍决策
     ├── readlist.json                     # 平台生成的逐文档阅读账本
     └── evidence-history.json             # 跨阶段证据快照
 ```
 
-每页 `sources` 至少包含一个输入来源和 `_mining/evidence-ledger.json`；`candidate-knowledge.json` 记录从来源候选到最终元知识的取舍；`source-coverage.json` 必须记录每份上传级材料是否已引用、合并或有理由跳过，并与平台生成的 `readlist.json` 和证据账本一致。增量阶段会合并旧证据并追加 `evidence-history.json` 快照。跨知识库关系写入 `knowledge_links`。若调查报告发现未解决问题，使用 Studio 问卷或把人工答案作为新来源，对同一目标执行增量 Compile。
+每页 `sources` 只包含用户提供的来源；中间证据链保存在 `_mining/evidence-ledger.json`。`candidate-knowledge.json` 记录从来源候选到最终知识页的取舍；`source-coverage.json` 必须记录每份上传级材料是否已引用、合并或有理由跳过，并与平台生成的 `readlist.json` 和证据账本一致。增量阶段会合并旧证据并追加 `evidence-history.json` 快照。
 
 Compile 使用逐层非递归遍历建立完整来源树，不依赖有深度和节点截断的递归清单；超出显式来源节点、文件数或字节上限时任务会失败，不会静默漏掉尾部文档。解析后不超过八个正文片段的文档必须全部阅读；更长的 PDF 等文档随片段数量增加采用 12、16 或 24 个均匀分布的必读探针，并始终包含首部、正中和尾部。实际读取轨迹随运行落入 `_mining/readlist.json`，因此可以逐文档倒推阅读覆盖。候选决策必须在最终页面之前逐来源写出；Compile 不再伪造缺失的 rejected 候选，会拒绝当前来源的通用或重复跳过理由，也不会接受多文档首轮全部跳过且只有索引页的结果。
 
@@ -120,7 +117,7 @@ python examples/compile/graph-show/llm-wiki/wiki_graph.py \
   --title "研究知识库"
 ```
 
-用浏览器打开 `research-wiki-graph.html` 即可。节点按 `entity`、`concept`、`synthesis` 分色，边同时识别普通 Markdown 链接和字面量 `[[页面名]]` WikiLink，点节点能看正文。
+用浏览器打开 `research-wiki-graph.html` 即可。节点按 `entity`、`concept`、`synthesis` 分色，边来自标准 Markdown 链接，点节点能看正文。
 
 连接配置的解析顺序和 `ov` 一致：命令行参数 → `OPENVIKING_*` 环境变量 → `~/.openviking/ovcli.conf`。远程服务显式传参：
 

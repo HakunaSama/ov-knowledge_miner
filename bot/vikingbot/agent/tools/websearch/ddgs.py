@@ -1,6 +1,7 @@
 """DDGS (DuckDuckGo) backend - free, no API key required."""
 
 import asyncio
+import importlib.util
 from typing import Any
 
 from .base import WebSearchBackend
@@ -25,12 +26,7 @@ class DDGSBackend(WebSearchBackend):
 
     @property
     def is_available(self) -> bool:
-        try:
-            from ddgs import DDGS
-
-            return True
-        except ImportError:
-            return False
+        return importlib.util.find_spec("ddgs") is not None
 
     async def search(self, query: str, count: int, **kwargs: Any) -> str:
         try:

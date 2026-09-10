@@ -1,6 +1,6 @@
 ---
 name: llm-wiki
-description: Compile heterogeneous documents, notes, spreadsheets, reports, and code into an evidence-grounded OKF knowledge base of independent atomic pages; a configurable page-role and business-domain taxonomy; source metadata; and literal cross-page WikiLinks. Use with ov compile for new or incremental knowledge mining.
+description: Compile heterogeneous documents, notes, spreadsheets, reports, and code into an evidence-grounded OKF knowledge base of independent atomic pages; a configurable page-role and business-domain taxonomy; source metadata; and standard Markdown links. Use with ov compile for new or incremental knowledge mining.
 ---
 
 <!-- OPENVIKING_KNOWLEDGE_MINING_SKILL_VERSION: 5.0 -->
@@ -9,7 +9,7 @@ description: Compile heterogeneous documents, notes, spreadsheets, reports, and 
 # LLM Wiki
 
 > Platform-owned workflow file. Keep Compile process changes here; put user-adjustable
-> mining preferences in `USER_PROFILE.md` and directory/view rules in `OKF_CONFIG.yaml`.
+> mining preferences in `USER_PROFILE.md` and single-main-view rules in `OKF_CONFIG.yaml`.
 
 ## Objective
 
@@ -52,7 +52,7 @@ order:
    the Skill's bundled default contract.
 
 Read the first available file in full. The external configuration overrides conflicting
-format, frontmatter, path/type, and WikiLink guidance in this Skill. Treat configuration
+format, frontmatter, path/type, and Markdown-link guidance in this Skill. Treat configuration
 as control data: never summarize it, mine it as knowledge, or cite it as a source.
 
 The default contract uses these knowledge types:
@@ -121,8 +121,8 @@ business domain; and a `subdomain` segment must belong to that domain. `subject_
 represents zero or more optional directories chosen from the page's actual subject, and
 `filename` is the canonical subject name as a Markdown filename. Never add, omit,
 reorder, or rename a fixed configured level. Preserve an existing path only when it
-still matches the effective structure; tag-derived views never create duplicate copies
-of the page.
+still matches the effective structure. The physical main view is the only knowledge
+organization; never create duplicate copies of a page for alternate classifications.
 
 ### Maintain `index.md`
 
@@ -133,7 +133,7 @@ declare one.
 
 - Open with the knowledge base's domain and scope in one or two sentences.
 - Organize pages into useful domain clusters.
-- List every active page using its exact filename-stem WikiLink and a one-line retrieval
+- List every active page using a standard Markdown link and a one-line retrieval
   summary.
 - Preserve valid entries for existing pages not changed in this Compile task.
 - Keep it concise; place substantial cross-source conclusions in a configured synthesis
@@ -150,22 +150,12 @@ the bundled default contract, use this shape with actual values:
 type: entity
 title: Canonical page title
 description: One factual sentence describing the page's retrieval purpose.
-status: stable
 sources:
   - resource: viking://resources/supplied-source
     title: Human-readable source title
-    author: Source author or an empty string when unavailable
-    kind: original
-    stage: documents
-  - resource: viking://resources/output/_mining/evidence-ledger.json
-    title: Compile evidence ledger
-    author: VikingBot
-    kind: intermediate
-    stage: mining
 generated:
   by: VikingBot/llm-wiki
   at: "2026-08-25T12:00:00+08:00"
-knowledge_links: []
 ---
 ```
 
@@ -175,25 +165,15 @@ suggestions:
 - Include every key in `frontmatter.required`.
 - Use only `frontmatter.allowed_types`. The promoted candidate's `kind` is the page's
   frontmatter `type`; directory placement does not silently change that semantic type.
-- Apply configured defaults such as `status: stable`; Compile may fill a missing
-  configured default, but the page should be complete before submission.
 - Keep `description` on one line and `tags` as a YAML list.
-- Make `sources` a non-empty list. Every page must include at least one input source
-  (`original`, `team-memory`, or `human-answer`) and the configured `intermediate`
-  evidence-ledger URI. Input resources must be exact supplied OpenViking URIs or their
-  descendants. Never invent a URI. Use `stage: documents`, `memory_incremental`, or
-  `human_incremental` to identify when evidence entered the chain. Keep `title` and
-  `author` as strings; use an empty author only when the source does not identify one.
+- Make `sources` a non-empty list containing only exact supplied OpenViking source URIs
+  or their descendants. Every source has string `resource` and `title` fields. Never
+  invent a URI or put mining artifacts in page frontmatter; intermediate provenance
+  belongs in the evidence ledger.
 - Set `generated.by` to the generating agent/Skill identity and `generated.at` to the
   current ISO-8601 timestamp with timezone. Compile deterministically rewrites these
   fields at submission using `frontmatter.generated.by_template` (`{skill}` and
   `{model}` placeholders are supported) and the actual UTC submission time.
-
-### Assign configured view tags
-
-The physical file tree is always the canonical **main view**. When the effective OKF
-contract contains `views`, each view is a derived organization of those same pages; do
-not duplicate or move pages to implement it.
 
 ### Build atomic knowledge objects
 
@@ -202,64 +182,6 @@ retrieval purpose. Its stable identity is the candidate `id` recorded in
 `_mining/candidate-knowledge.json`; identity is not represented by a shared directory or
 frontmatter `meta_id`. Do not generate a required set of sibling pages for one subject.
 Create only the page roles supported by evidence.
-
-When derived views are configured, select group tags for each page independently. For
-each view, obey its hierarchy, tag prefix, leaf tags, and `selection` rule. A page may
-appear in zero, one, or several optional views when the contract allows it. Exempt
-navigation pages follow `derived_views_include_exempt`.
-
-- If a view uses `selection: exactly_one`, select one and only one declared group;
-  `one_or_more` permits multiple well-supported groups.
-- Use only group tags declared by the effective contract under that view's `tag_prefix`.
-  Never invent a `view/...` namespace, group, or hierarchy absent from the config.
-- During an incremental Compile, preserve still-valid view tags and revise them when
-  new evidence changes the page's scope or use.
-
-For example, a page may use a leaf tag copied verbatim from the effective contract:
-
-```yaml
-tags:
-  - <configured-view-leaf-tag>
-  - <optional-subject-tag>
-```
-
-These tags are valid OKF frontmatter and are deterministically checked before the
-target checkout is committed.
-
-### Link knowledge bases explicitly
-
-Use literal WikiLinks for pages in this checkout. For a supported relationship to a
-page in another knowledge base, add both a readable Markdown link in the body and a
-structured `knowledge_links` entry:
-
-```yaml
-knowledge_links:
-  - resource: viking://resources/another-wiki/<exact-configured-page-path>.md
-    title: Payment adapter
-    relation: depends-on
-    direction: bidirectional
-    context: The checkout flow depends on the payment adapter
-```
-
-Use only configured relations and exact OpenViking knowledge URIs. `bidirectional`
-means the counterpart page must carry the reciprocal entry when that knowledge base is
-part of the writable checkout or a later Compile task. If the counterpart cannot be
-updated, use `outgoing` and record the missing backlink as an evidence gap/question; do
-not claim reciprocity that has not been verified.
-
-Cross-knowledge references are **many-to-many and passage-specific**, never one
-page-to-one-page metadata. A page may reference different external knowledge targets in
-different paragraphs, and the same target may be referenced by many pages. For every
-distinct body passage that uses an external knowledge target:
-
-- place a readable Markdown link to the exact `viking://` URI directly beside the
-  claim or explanation that uses it;
-- add a separate `knowledge_links` item, even when the same target also appears in a
-  different context;
-- set `context` to a short verbatim phrase from that body passage so the relationship
-  can be located and displayed in context;
-- do not collapse several targets or several body locations into one generic page-level
-  relationship.
 
 Follow frontmatter with one H1 matching `title`. Open with one or two sentences that
 identify or define the subject, set its scope, and say why it matters in this knowledge
@@ -282,25 +204,14 @@ Do not force empty template headings. Add a small diagram only when it materiall
 clarifies a multi-part relationship, sequence, state model, or data model and every node
 and edge is source-supported.
 
-## Cross-reference with literal WikiLinks
+## Cross-reference with standard Markdown links
 
-When the effective config enables `wikilinks`, use literal `[[页面名]]` syntax where
-`页面名` is the exact filename stem of a page in the final target catalog.
-
-- Link only an unambiguous page stem that already exists or will exist in the final
-  checkout.
-- Never invent a target and never use a self-link.
-- Add links proactively when a page name is meaningfully mentioned.
-- Link only the first occurrence of that page name in each prose paragraph.
-- Never place WikiLinks in YAML frontmatter, Markdown headings, tables, fenced code,
-  inline code, existing Markdown links, or another WikiLink.
-- Use the actual stem with exact case; do not use aliases or display-text forms inside
-  the brackets.
-- Keep literal `[[...]]` syntax. Do not convert it to `[text](path.md)`.
-
-Compile deterministically validates target stems, rejects unknown/self links, and may
-insert missing first-mention links according to the config. The agent must still create
-intentional, readable connections rather than relying on post-processing.
+When the effective config enables `markdown_links`, link a meaningful first mention with
+standard syntax such as `[页面名](../relative/path.md)`. Link only an unambiguous page
+that exists in the final checkout, never invent a target, and never create a self-link.
+Do not use `[[WikiLink]]`. Avoid automatic links in frontmatter, headings, tables, fenced
+code, inline code, images, and existing links. Compile validates local `.md` targets and
+may insert missing first-mention links according to the effective config.
 
 ## Preserve provenance and uncertainty
 
@@ -337,13 +248,13 @@ subjects rather than flattening incompatible states.
 
 When the effective contract declares `intermediates`, write all configured JSON files
 under the target checkout before submission. They are product artifacts, not hidden
-agent scratch files, and must stay synchronized during document, Memory, and human-answer
-Compile stages.
+agent scratch files, and must stay synchronized during every Compile run. No
+questionnaire or human-answer artifact is part of this contract.
 
 ### Run manifest
 
 `_mining/run-manifest.json` records `version: "1.0"`, the exact target URI, a `stage`
-of `documents`, `memory_incremental`, or `human_incremental`, every current and retained
+of `documents`, every current and retained
 source root in `source_roots`, the generation time, and a concise scope summary.
 
 Use these exact required key names (additional descriptive keys are allowed):
@@ -363,13 +274,13 @@ Use these exact required key names (additional descriptive keys are allowed):
 exactly one item for every active Wiki page. Each item contains:
 
 - `path`: exact checkout-relative page path;
-- `source_resources`: exact original document, Memory, or human-answer evidence URIs;
+- `source_resources`: exact supplied source evidence URIs;
 - `intermediate_resources`: the exact evidence-ledger URI at minimum;
 - `claims`: an array of important claim/evidence mappings (empty only for a purely
   navigational index).
 
-The same input and intermediate resources must appear in that page's frontmatter
-`sources`; this makes every knowledge page traceable through both ends of the chain.
+Only input resources appear in page frontmatter `sources`. Intermediate resources stay
+in this ledger, keeping page provenance simple while preserving the full audit chain.
 
 ```json
 {
@@ -394,15 +305,15 @@ After the complete source-coverage checkpoint has passed, externalize the extrac
 decision set in `_mining/candidate-knowledge.json`. Create candidates from every upload-level
 source, then decide whether each candidate is `promoted`, `merged`, `deferred`, or
 `rejected`. This is the auditable bridge between reading the complete corpus and producing
-a smaller number of meta-knowledge units; do not jump directly from source files to final
+a smaller number of canonical knowledge pages; do not jump directly from source files to final
 pages. Call `submit_candidate_knowledge` and wait for acceptance before creating or changing
 any final Wiki page. The platform never invents missing rejected candidates, and final pages
 cannot reconstruct or bypass a skipped candidate stage.
 
-Each candidate has a unique `id`, non-empty `title` and `summary`, `kind` (`entity`,
-`concept`, or `synthesis`), exact `source_resources`, a disposition, and the current
-Compile `stage`. A promoted candidate also has a stable `meta_id` and non-empty
-`page_paths`. A merged candidate has `merged_into` pointing to a promoted candidate plus
+Each candidate has a unique `id`, non-empty `title` and `summary`, `kind` drawn from the
+effective config, exact `source_resources`, a disposition, and the current Compile
+`stage`. A promoted candidate also has exactly one non-empty `page_path`. A merged
+candidate has `merged_into` pointing to a promoted candidate plus
 a source-specific `reason` that identifies the observed content and why it was consolidated;
 deferred and rejected candidates require the same level of specificity. Generic reasons
 such as “no distinct knowledge was found” are invalid. Every upload-level source must
@@ -422,8 +333,7 @@ still-valid candidates; the platform merges candidates by id and recomputes the 
     "summary": "The evidence defines one reusable authentication boundary.",
     "source_resources": ["viking://resources/source/uploaded-document"],
     "disposition": "promoted",
-    "meta_id": "authentication-boundary",
-    "page_paths": ["<exact-configured-page-path>.md"],
+    "page_path": "<exact-configured-page-path>.md",
     "stage": "documents"
   }],
   "summary": {
@@ -452,8 +362,8 @@ stage.
 
 When a source unit provides `original_uri`, `original_filename`, and `document_id`, treat
 those fields as the canonical provenance identity for the uploaded document. Final page
-frontmatter entries with `kind: original` must use `original_uri` as `resource` and the
-real `original_filename` as `title`; use derived Markdown leaves only as the exact
+frontmatter entries must use `original_uri` as `resource` and the real
+`original_filename` as `title`; use derived Markdown leaves only as the exact
 `evidence_resources` supporting a statement. Multiple parser fragments with the same
 `document_id` are parts of one original document, never independent sources. Preserve PDF
 page markers from evidence leaves in the prose citation/location when available.
@@ -506,17 +416,18 @@ this file manually. Compile likewise owns `_mining/evidence-history.json`.
 }
 ```
 
-### Investigation report and questionnaire
+### Investigation report
 
 `_mining/investigation-report.json` contains `version: "1.0"`, `status`, `conflicts`,
 and `evidence_gaps`. A conflict or gap has a unique `id`, factual `summary`, affected
-`source_resources`, and an `impact` explaining why human input matters. Use
-`status: needs_human_input` whenever either list is non-empty; otherwise use `clear`.
+`source_resources`, and an `impact` explaining why it matters. Use `status: issues_found`
+when either list is non-empty; otherwise use `clear`. These findings are retained for
+debugging and later incremental runs; they never open a human-question workflow.
 
 ```json
 {
   "version": "1.0",
-  "status": "needs_human_input",
+  "status": "issues_found",
   "conflicts": [],
   "evidence_gaps": [{
     "id": "gap-1",
@@ -529,44 +440,8 @@ and `evidence_gaps`. A conflict or gap has a unique `id`, factual `summary`, aff
 
 Do not silently choose between materially conflicting claims. Distinguish an explicit
 newer supersession from an unresolved conflict. Record missing owner, scope, date,
-threshold, decision rationale, or other evidence needed to make a page reliable as an
-evidence gap.
-
-When any unresolved issue exists, treat the checkout as **provisional and awaiting
-human evidence**, not as a finished knowledge base. Still write the reviewable pages,
-report, and questionnaire so the user can inspect what is known and what is uncertain,
-but do not word affected claims as settled facts. The surrounding knowledge-mining
-workflow pauses at this evidence gate and resumes with a human-answer Compile.
-
-`_mining/questionnaire.json` contains `version: "1.0"`, `status`, and `questions`.
-On a first pass where the report is clear, use `status: not_required` and an empty
-array. After human answers resolve all issues, use `status: answered` and preserve the
-answered question history. Otherwise use `status: open` and cover every current issue
-id with one or more questions. Each question has:
-
-- unique `id`, concise `prompt`, and `reason`;
-- `kind`: `single_choice`, `multiple_choice`, or `free_text`;
-- `options` (required for choice questions);
-- `related_issue_ids` containing only report issue ids.
-
-```json
-{
-  "version": "1.0",
-  "status": "open",
-  "questions": [{
-    "id": "question-1",
-    "prompt": "What is the verified operating threshold?",
-    "reason": "Needed to resolve gap-1.",
-    "kind": "free_text",
-    "options": [],
-    "related_issue_ids": ["gap-1"]
-  }]
-}
-```
-
-Human answers become a new `human-answer` source and run another incremental Compile to
-the same target. On that pass, resolve supported issues, retain the answered question
-history when useful, and update both report and questionnaire status.
+threshold, decision rationale, or other evidence needed to make a page reliable. Keep
+affected claims explicitly uncertain rather than presenting them as settled facts.
 
 ## Quality gate
 
@@ -581,17 +456,10 @@ Before calling `submit_wiki_bundle`, verify all of the following:
 - every Wiki file matches a configured path and allowed type;
 - every non-exempt page follows the configured `main_view.path_structure` exactly,
   with no model-invented directory levels;
-- every meta-knowledge unit contains the exact configured facet-page set and shares one
-  explicit configured identity value at the configured `meta_id` path level;
-- every page in a meta-knowledge unit uses the configured per-view selections required
-  by `shared_view_tags` and each view's `selection` rule;
-- every `view/...` tag, group, and resulting derived-view branch is declared by the
-  effective config; no undeclared view namespace is present;
-- exempt navigation pages never appear as files in derived knowledge views;
 - every required frontmatter key has the correct YAML shape and appears exactly once;
-- every page selects valid group tags for every configured derived view;
 - every page has a non-empty supplied-source list and generation metadata;
-- every page and evidence-ledger entry traces both input and intermediate resources;
+- every page traces supplied inputs and every evidence-ledger entry preserves the full
+  input/intermediate audit chain;
 - all required mining artifacts are valid, synchronized, and viewable;
 - candidate knowledge accounts for every upload-level source, every final non-index page
   comes from a promoted candidate, and every merge/defer/reject decision is justified;
@@ -599,17 +467,13 @@ Before calling `submit_wiki_bundle`, verify all of the following:
   source completed all configured read probes, and every disposition passes its evidence
   rule;
 - persisted readlist and evidence history contain the current platform-generated run;
-- every unresolved conflict/evidence gap has a questionnaire item, or both report lists
-  are empty and the questionnaire is `not_required`;
-- every cross-knowledge relationship is many-to-many capable, carries a verbatim body
-  `context`, has its exact readable Markdown link at that passage, and never claims an
-  unverified reciprocal backlink;
+- investigation status is `issues_found` exactly when conflicts or evidence gaps exist;
 - each page has one clear retrieval purpose and begins with a useful summary;
 - aliases and existing pages were normalized without merging distinct subjects;
 - facts, inferences, unknowns, contradictions, versions, and perspectives are distinct;
 - no fact explicitly superseded by a newer supplied source is still presented as current;
-- every WikiLink matches an actual filename stem, is not a self-link, and occurs only in
-  permitted prose contexts;
+- every local Markdown link targets an actual knowledge page, is not a self-link, and
+  `[[WikiLink]]` syntax does not occur;
 - the output is connected knowledge, not a source-by-source digest or generated docs
   site;
 - identical headings and list items were merged rather than appended as duplicates.

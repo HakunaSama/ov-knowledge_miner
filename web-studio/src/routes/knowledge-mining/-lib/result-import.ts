@@ -7,7 +7,6 @@ const ARTIFACTS = [
   ['run_manifest', '_mining/run-manifest.json'],
   ['evidence_ledger', '_mining/evidence-ledger.json'],
   ['investigation_report', '_mining/investigation-report.json'],
-  ['questionnaire', '_mining/questionnaire.json'],
   ['source_coverage', '_mining/source-coverage.json'],
   ['candidate_knowledge', '_mining/candidate-knowledge.json'],
   ['readlist', '_mining/readlist.json'],
@@ -122,23 +121,19 @@ export async function inspectCliResult(
   })
   const artifactUri = (kind: CompileIntermediateArtifact['kind']) =>
     intermediateArtifacts.find((artifact) => artifact.kind === kind)?.uri
-  const [manifest, coverage, investigation, questionnaire] = await Promise.all([
+  const [manifest, coverage, investigation] = await Promise.all([
     readJson(artifactUri('run_manifest')),
     readJson(artifactUri('source_coverage')),
     readJson(artifactUri('investigation_report')),
-    readJson(artifactUri('questionnaire')),
   ])
 
   const sourceRoots = stringList(manifest?.source_roots)
   const investigationStatus =
-    investigation?.status === 'needs_human_input'
-      ? 'needs_human_input'
+    investigation?.status === 'issues_found'
+      ? 'issues_found'
       : investigation?.status === 'clear'
         ? 'clear'
         : hint?.investigation_status || null
-  const questions = Array.isArray(questionnaire?.questions)
-    ? questionnaire.questions.length
-    : hint?.question_count || 0
   const hintedArtifacts = hint?.intermediate_artifacts
   const missingStructureWarning = hint?.main_view
     ? []
@@ -163,7 +158,6 @@ export async function inspectCliResult(
       main_view: hint?.main_view || null,
       okf_version: hint?.okf_version || stringValue(manifest?.version) || '1.0',
       page_count: hint?.page_count || pageUris.length,
-      question_count: questions,
       skill: hint?.skill || 'llm-wiki',
       source_coverage:
         hint?.source_coverage ||
@@ -172,7 +166,6 @@ export async function inspectCliResult(
       unchanged: hint?.unchanged || [],
       updated: hint?.updated || [],
       validation_passed: hint?.validation_passed ?? true,
-      views: hint?.views || [],
       warnings: [...(hint?.warnings || []), ...missingStructureWarning],
     },
     scopeSummary,
@@ -188,23 +181,14 @@ export function importedMiningJob(input: {
 }): MiningJob {
   const now = new Date().toISOString()
   const targetUri = normalizeTargetUri(input.targetUri)
-  const phase: MiningPhase =
-    input.result.validation_passed === false
-      ? 'partial'
-      : input.result.investigation_status === 'needs_human_input'
-        ? 'awaiting_human'
-        : 'completed'
+  const phase: MiningPhase = 'completed'
   return {
     createdAt: now,
     documentFiles: [],
     documentSourceUri: input.result.from[0] || targetUri,
     documentTaskId: null,
     error: null,
-    humanTaskId: null,
     id: `${input.origin}:${targetUri}`,
-    memoryFiles: [],
-    memorySourceUri: `${targetUri}/_human-input`,
-    memoryTaskId: null,
     okfConfigUri: null,
     origin: input.origin,
     phase,

@@ -10,7 +10,7 @@ function normalizedVikingUri(value: string): string | null {
   }
 }
 
-export function findWikiLinkTarget(
+export function findMarkdownLinkTarget(
   href: string | undefined,
   currentUri: string | null,
   entryUris: string[],
@@ -31,22 +31,4 @@ export function findWikiLinkTarget(
       (entryUri) => normalizedVikingUri(entryUri) === normalizedTarget,
     ) ?? null
   )
-}
-
-export function renderDoubleBracketWikiLinks(
-  markdown: string,
-  entries: Array<{ name: string; uri: string }>,
-): string {
-  const targets = new Map<string, string>()
-  const duplicates = new Set<string>()
-  for (const entry of entries) {
-    const stem = entry.name.replace(/\.md$/i, '')
-    if (targets.has(stem)) duplicates.add(stem)
-    else targets.set(stem, entry.uri)
-  }
-  for (const duplicate of duplicates) targets.delete(duplicate)
-  return markdown.replace(/\[\[([^\r\n]+?)\]\]/g, (source, stem: string) => {
-    const target = targets.get(stem)
-    return target ? `[${stem}](${target})` : source
-  })
 }

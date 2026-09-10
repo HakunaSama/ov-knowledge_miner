@@ -1230,8 +1230,6 @@ This is a file in subdir2.
                 entries = await svc.viking_fs.ls(uri, output="original", ctx=ctx)
                 for entry in entries:
                     entry_uri = entry["uri"]
-                    entry_name = entry.get("name", "")
-
                     if entry["isDir"]:
                         await check_encrypted_files(entry_uri)
                     else:

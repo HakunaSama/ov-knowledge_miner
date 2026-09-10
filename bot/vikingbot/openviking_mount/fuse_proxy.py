@@ -185,16 +185,12 @@ if FUSE_AVAILABLE:
                 data = self._pending_uploads[path]
                 del self._pending_uploads[path]
 
-                path_name = Path(path).name
-
                 self._handle_upload(path, data)
 
         def _handle_upload(self, path: str, data: bytes) -> None:
             logger.info(f"Processing PDF upload: {path}")
 
             try:
-                dir_name = Path(path).stem.replace(" ", "_")
-
                 with tempfile.NamedTemporaryFile(suffix=".tmp", delete=False) as f:
                     temp_path = Path(f.name)
                     f.write(data)
@@ -229,8 +225,6 @@ if FUSE_AVAILABLE:
             if orig_path.exists():
                 orig_path.unlink()
                 logger.info(f"Deleted from original files: {orig_path}")
-
-                path_name = Path(path).name
 
                 dir_name = Path(path).stem.replace(" ", "_")
                 try:

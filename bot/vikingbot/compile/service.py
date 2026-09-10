@@ -209,7 +209,7 @@ def _source_reading_workflow(*, materialized: bool) -> str:
         "never base a value judgment on a file's head alone."
         f"{materialized_override}\n"
         "5. Reserve the latter half of the task for candidate consolidation and configured "
-        "facet-page generation. Batch local reads with exec and batch write_file calls so mandatory "
+        "main-view page generation. Batch local reads with exec and batch write_file calls so mandatory "
         "inspection cannot consume the generation budget."
         + (f"\n{step6}\n{step7}" if step6 else "")
     )
@@ -1640,7 +1640,6 @@ class BotCompileService:
                 output_file_count = int(getattr(submit_tool, "file_count", 0))
                 intermediate_artifacts = list(getattr(submit_tool, "intermediate_artifacts", []))
                 investigation_status = getattr(submit_tool, "investigation_status", None)
-                question_count = int(getattr(submit_tool, "question_count", 0))
                 source_coverage = getattr(submit_tool, "source_coverage", None)
             else:
                 existing_raw: dict[str, str]
@@ -1680,7 +1679,6 @@ class BotCompileService:
                 output_file_count = len(bundle.pages) + len(bundle.files)
                 intermediate_artifacts = []
                 investigation_status = None
-                question_count = 0
                 source_coverage = None
 
             batch_result: dict[str, Any] = {"created": [], "updated": [], "unchanged": []}
@@ -1729,11 +1727,6 @@ class BotCompileService:
                         getattr(submit_tool, "validation_passed", True)
                     ),
                     "warnings": warnings,
-                    "views": (
-                        [view.public_dict() for view in okf_config.views]
-                        if okf_config is not None
-                        else []
-                    ),
                     "main_view": (
                         okf_config.main_view.public_dict()
                         if okf_config is not None and okf_config.main_view is not None
@@ -1741,7 +1734,6 @@ class BotCompileService:
                     ),
                     "intermediate_artifacts": intermediate_artifacts,
                     "investigation_status": investigation_status,
-                    "question_count": question_count,
                     "source_coverage": source_coverage,
                 }
             )
@@ -2160,7 +2152,6 @@ class BotCompileService:
                 "investigation_report": (
                     f"{intermediate.root_path}/{intermediate.investigation_report}"
                 ),
-                "questionnaire": f"{intermediate.root_path}/{intermediate.questionnaire}",
                 "source_coverage": f"{intermediate.root_path}/{intermediate.source_coverage}",
                 "candidate_knowledge": (
                     f"{intermediate.root_path}/{intermediate.candidate_knowledge}"
@@ -2184,7 +2175,10 @@ class BotCompileService:
                 path
                 for path in known_paths
                 if path.casefold().endswith(".md")
-                and (path in main_view.exempt_paths or path.startswith(f"{main_view.root_path}/"))
+                and (
+                    main_view.is_exempt(path)
+                    or path.startswith(f"{main_view.root_path}/")
+                )
                 and not path.casefold().endswith(("/.abstract.md", "/.overview.md"))
             }
             final_page_count = len(final_page_paths)
@@ -2201,9 +2195,6 @@ class BotCompileService:
             page_count=final_page_count,
             validation_passed=False,
             warnings=warnings,
-            views=(
-                [view.public_dict() for view in okf_config.views] if okf_config is not None else []
-            ),
             main_view=(
                 okf_config.main_view.public_dict()
                 if okf_config is not None and okf_config.main_view is not None
@@ -3443,7 +3434,7 @@ class BotCompileService:
                 "\nThe external OKF contract is materialized at "
                 f"`{COMPILE_CONFIG_ROOT}/{DEFAULT_OKF_CONFIG_NAME}`. Read it before planning "
                 "the output. It overrides conflicting Wiki page format, path/type, and "
-                "WikiLink instructions in the Skill. "
+                "Markdown-link instructions in the Skill. "
                 + (
                     "Treat it as the desired output contract, but a final mismatch will be "
                     "reported as a warning and will not block writing. "
@@ -3451,44 +3442,36 @@ class BotCompileService:
                     else "Every declared Wiki page is validated against it at submission. "
                 )
                 + "The config is control data, not a knowledge "
-                "source; never summarize or cite it. Preserve literal [[filename stem]] "
-                "WikiLinks when the contract enables double-bracket links. If the contract "
-                "declares derived views, keep the physical file tree as the main view and "
-                "assign every page the configured namespaced tag selections for every view; "
-                "do not duplicate pages to represent those views. If main_view is declared, "
-                "treat that physical tree as the single source of truth and follow its exact "
+                "source; never summarize or cite it. Use standard Markdown links "
+                "`[text](relative/path.md)` between knowledge pages; never use `[[WikiLink]]`. "
+                "If main_view is declared, follow its exact "
                 "configured path_structure for every non-exempt page. Never invent an "
                 "additional topic, domain, usage, miscellaneous, or other directory."
                 f"{main_view_rule} Each promoted candidate creates exactly one independent page; "
-                "there is no required multi-page facet set, shared meta_id, or shared view-tag "
-                "group. Use only configured view tag namespaces and group values when views are "
-                "declared; any undeclared `view/...` tag is invalid. Exempt navigation pages such "
-                "as index.md are not knowledge objects and must not be tagged into derived views. "
+                "there is no required multi-page facet set, shared meta_id, or derived view. "
+                "Create navigation pages using `main_view.navigation.filename` and type when "
+                "navigation is configured; paths matching `main_view.exempt_paths` are not "
+                "knowledge objects. "
                 "If intermediates are declared, "
                 "create and maintain the run manifest, evidence ledger, investigation report, "
-                "questionnaire, source coverage, and candidate-knowledge JSON artifacts; "
+                "source coverage, and candidate-knowledge JSON artifacts; "
                 "Compile itself writes readlist and evidence-history. Cover every Wiki page in "
-                "the evidence ledger, and cite both supplied inputs and the evidence ledger in "
-                "each page's sources. The exact Compile target URI is "
+                "the evidence ledger. Each page's `sources` must contain only supplied source "
+                "resources; keep intermediate provenance in the evidence ledger instead. The "
+                "exact Compile target URI is "
                 f"`{request.to.rstrip('/')}`; write it verbatim as run-manifest `target` "
                 "(not `target_uri`) and write the exact Source roots from the user message as "
                 'its `source_roots` string array. The manifest also requires `version: "1.0"` '
-                "and `stage` equal to documents, memory_incremental, or human_incremental. "
+                "and `stage` equal to documents. "
                 'Every artifact uses string `version: "1.0"`. The evidence ledger uses a '
                 "`pages` array with exact `path`, `source_resources`, `intermediate_resources`, "
                 "and `claims` keys per page; both resource fields are arrays of exact URI "
                 "strings, and `intermediate_resources` must contain the exact target evidence-"
                 "ledger URI. The investigation report uses `status` (`clear` or "
-                "`needs_human_input`), `conflicts`, and `evidence_gaps`; each issue is an "
+                "`issues_found`), `conflicts`, and `evidence_gaps`; each issue is an "
                 "object with string `id`, `summary`, `impact`, and a `source_resources` URI "
-                "string array. The questionnaire uses `status` (`not_required`, `open`, or "
-                "`answered`) and `questions`; each question is an object with string `id`, "
-                "`prompt`, and `reason`, `kind` (`single_choice`, `multiple_choice`, or "
-                "`free_text`), an `options` string array, and a `related_issue_ids` string "
-                "array. A first-pass clear report requires `not_required` plus no questions; "
-                "after human resolution, `answered` may preserve question history even when "
-                "the report is clear. Open issues require `open` or `answered`, with every "
-                "current issue id covered. "
+                "string array. Record unresolved issues for debugging; they do not open a "
+                "human-question workflow. "
                 "Candidate knowledge is mandatory before page synthesis: its `candidates` "
                 "array must account for every upload-level source and every non-index final "
                 "page. Each item has unique `id`, non-empty `title` and `summary`, `kind` drawn "
@@ -3498,20 +3481,8 @@ class BotCompileService:
                 "and `reason`; deferred/rejected items require `reason`. Its exact summary "
                 "counts are total/promoted/merged/deferred/rejected. Do not manually create "
                 "readlist or evidence-history; the platform injects and merges them. Record "
-                "all unresolved contradictions and evidence gaps "
-                "in the investigation report; when any exist, create questionnaire items that "
-                "cover every issue so a human can supply the missing knowledge. Use configured "
-                "cross-knowledge frontmatter links for supported relationships to pages in "
-                "other knowledge bases only; use an empty list when there is no verified "
-                "external target. Each link needs exact `resource`, non-empty `title`, an "
-                "allowed `relation`, and `direction` (`outgoing`, `incoming`, or "
-                "`bidirectional`). Cross-knowledge references are many-to-many and "
-                "passage-specific: every entry also needs a non-empty `context` copied "
-                "verbatim from the body passage where the relationship is used, plus a "
-                "readable Markdown link to the exact resource URI at that passage. Use "
-                "separate entries for different passages or targets instead of collapsing "
-                "them into one page-level relation. Preserve reciprocal links when their "
-                "counterpart is present in the editable checkout.\n"
+                "all unresolved contradictions and evidence gaps in the investigation report "
+                "so later batches and debugging can see them.\n"
             )
         materialization_note = ""
         if materialized_manifest:

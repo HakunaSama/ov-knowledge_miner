@@ -1076,9 +1076,6 @@ enum Commands {
             value_name = "path-or-uri"
         )]
         document_paths: Vec<String>,
-        /// Local team Memory file or directory; repeat the flag or separate entries with commas
-        #[arg(long = "memory", value_delimiter = ',', value_name = "path")]
-        memory_paths: Vec<String>,
         /// Mining target; defaults to an isolated knowledge-mining batch URI
         #[arg(long = "to", value_name = "uri")]
         target_uri: Option<String>,
@@ -1113,7 +1110,7 @@ enum Commands {
         /// Knowledge-mining objective
         #[arg(long, value_name = "text")]
         reason: Option<String>,
-        /// Wait for the full document and optional team Memory workflow
+        /// Wait for the complete document-mining workflow
         #[arg(long)]
         wait: bool,
         /// Local wait timeout in seconds for each Compile stage; does not cancel server tasks
@@ -3525,7 +3522,6 @@ async fn main() {
         }
         Commands::KnowledgeMining {
             document_paths,
-            memory_paths,
             target_uri,
             skill_uri,
             okf_config_path,
@@ -3548,7 +3544,6 @@ async fn main() {
                 &client,
                 commands::knowledge_mining::KnowledgeMiningOptions {
                     document_paths,
-                    memory_paths,
                     target_uri,
                     skill_uri,
                     okf_config_path,
@@ -4022,14 +4017,12 @@ mod tests {
     }
 
     #[test]
-    fn cli_knowledge_mining_accepts_local_sources_and_optional_memory() {
+    fn cli_knowledge_mining_accepts_local_sources() {
         let cli = Cli::try_parse_from([
             "ov",
             "knowledge-mining",
             "--documents",
             "./docs-a,./docs-b",
-            "--memory",
-            "./memory",
             "--okf-config",
             "./OKF_CONFIG.yaml",
             "--reason",
@@ -4049,7 +4042,6 @@ mod tests {
         match cli.command {
             Commands::KnowledgeMining {
                 document_paths,
-                memory_paths,
                 okf_config_path,
                 window_files,
                 window_bytes,
@@ -4062,7 +4054,6 @@ mod tests {
                 ..
             } => {
                 assert_eq!(document_paths, vec!["./docs-a", "./docs-b"]);
-                assert_eq!(memory_paths, vec!["./memory"]);
                 assert_eq!(okf_config_path.as_deref(), Some("./OKF_CONFIG.yaml"));
                 assert_eq!(reason.as_deref(), Some("提炼产品知识"));
                 assert_eq!(window_files, 80);
@@ -4075,6 +4066,21 @@ mod tests {
             }
             _ => panic!("expected knowledge-mining command"),
         }
+    }
+
+    #[test]
+    fn cli_knowledge_mining_rejects_removed_memory_source_flag() {
+        assert!(
+            Cli::try_parse_from([
+                "ov",
+                "knowledge-mining",
+                "--documents",
+                "./documents",
+                "--memory",
+                "./team-memory",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

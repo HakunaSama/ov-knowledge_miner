@@ -236,10 +236,8 @@ class _SubmitMiningCheckpointTool(Tool):
         manifest_path, coverage_path, _candidate_path = self._artifact_paths()
         manifest = _json_object(checkout.get(manifest_path), path=manifest_path)
         stage = manifest.get("stage")
-        if stage not in {"documents", "memory_incremental", "human_incremental"}:
-            raise ValueError(
-                "run manifest stage must be documents, memory_incremental, or human_incremental"
-            )
+        if stage != "documents":
+            raise ValueError('run manifest stage must be "documents"')
         coverage = _json_object(checkout.get(coverage_path), path=coverage_path)
         if coverage.get("stage") != stage:
             raise ValueError("source coverage stage must match the run manifest stage")
@@ -651,7 +649,6 @@ class SubmitTargetCheckoutTool(Tool):
         self.file_count = 0
         self.intermediate_artifacts: list[dict[str, Any]] = []
         self.investigation_status: str | None = None
-        self.question_count = 0
         self.source_coverage: dict[str, Any] | None = None
         self.validation_passed = initial_validation_warning is None
         self.validation_warnings = (
@@ -692,7 +689,6 @@ class SubmitTargetCheckoutTool(Tool):
         self.file_count = 0
         self.intermediate_artifacts = []
         self.investigation_status = None
-        self.question_count = 0
         self.source_coverage = None
         self.validation_passed = self.initial_validation_warning is None
         self.validation_warnings = (
@@ -826,7 +822,6 @@ class SubmitTargetCheckoutTool(Tool):
             self.file_count = len(finalized.files)
             self.intermediate_artifacts = finalized.intermediate_artifacts
             self.investigation_status = finalized.investigation_status
-            self.question_count = finalized.question_count
             self.source_coverage = finalized.source_coverage
             artifact_count = self.file_count - self.page_count
             if self.page_count > self.limits.output_pages:

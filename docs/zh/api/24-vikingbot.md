@@ -141,7 +141,8 @@ data: {"event":"response","data":{"content":"当前知识库包含……","respo
 | `from` | string[] | 是 | - | 一个或多个来源目录 |
 | `to` | string | 是 | - | 目标 Resource 或 Memory 目录，或受支持的 Skill namespace |
 | `skill` | string | 是 | - | Skill 目录或其 `SKILL.md` URI |
-| `okf_config` | string | 否 | - | 外部 OKF YAML 配置文件 URI；Resource Wiki 提交会据此校验 frontmatter、目录类型与 WikiLink |
+| `okf_config` | string | 否 | - | 外部 OKF YAML 配置文件 URI；Resource Wiki 提交会据此校验 frontmatter、单一主视图目录类型和标准 Markdown 链接 |
+| `allow_invalid_okf_output` | boolean | 否 | `false` | 将最终 OKF 一致性失败记录为告警并仍然提交 checkout。knowledge-mining 客户端会设为 `true`；普通 Compile 默认保持严格校验。 |
 | `reason` | string | 否 | Skill 驱动的默认值 | 本次 Compile 的补充指令 |
 | `runtime_timeout_seconds` | number | 否 | 无 | 可选的正数运行时限；不传时任务没有服务端硬截止时间。若服务端管理员配置了最大时限，本字段不得超过该值 |
 
@@ -178,7 +179,7 @@ ov compile \
 
 `--okf-config` 指向 OpenViking 中可读的 YAML 文件。VikingBot 会将其物化为任务工作区的 `compile_config/OKF_CONFIG.yaml`，并把它作为控制数据而非知识来源；外部契约优先于 Skill 中冲突的格式规则。未提供时保持现有 Compile 行为。
 
-`--wait` 会轮询状态接口，直到任务进入终态。`--timeout` 只限制本地等待时间，不会取消服务端任务。默认不设置服务端硬运行时限；只有显式传入 `--runtime-timeout`，或管理员配置了服务端最大运行时限时，任务才会因运行时限终止。超过管理员上限的请求会以 `429 RESOURCE_EXHAUSTED` 拒绝。Compile 的工具轮次上限现为 240，用于阻止无进展的无限循环，而不是墙钟超时。知识挖掘的 `source_coverage` 和 `candidate_knowledge` 门禁通过时会各自写入私有恢复检查点；任务被取消、显式超时或耗尽轮次时也会尽力保存当前检查点，但不会把未通过最终校验的半成品写入正式目标。
+`--wait` 会轮询状态接口，直到任务进入终态。`--timeout` 只限制本地等待时间，不会取消服务端任务。默认不设置服务端硬运行时限；只有显式传入 `--runtime-timeout`，或管理员配置了服务端最大运行时限时，任务才会因运行时限终止。超过管理员上限的请求会以 `429 RESOURCE_EXHAUSTED` 拒绝。Compile 的工具轮次上限现为 240，用于阻止无进展的无限循环，而不是墙钟超时。知识挖掘的 `source_coverage` 和 `candidate_knowledge` 门禁通过时会各自写入私有恢复检查点；任务被取消、显式超时或耗尽轮次时也会尽力保存当前检查点。私有检查点不会写入正式目标；最终提交时 knowledge-mining 会设置 `allow_invalid_okf_output=true`，所以第三阶段 OKF 一致性校验失败也会提交结果，并返回 `validation_passed=false` 和 warnings。普通 Compile 保持严格校验。
 
 `direct` backend 会以 Bot 宿主机权限执行 Compile 的 `exec` 命令。`bot.sandbox.backends.direct.allow_compile_exec` 默认为 `true`：Compile 工具链开源，`exec` 默认直接以用户 shell 权限运行，普通 Wiki 和产物文件整理仍通过文件工具运行。声明了 `requires.bins` 或 `requires.env` 的 Skill 仍会先探测命令；将该选项设为 `false` 时 Compile 不会暴露 `exec`，此类 Skill 会在执行任何命令探测前以 `SKILL_CAPABILITY_UNAVAILABLE` 失败。依赖 CLI 的 Skill 推荐使用具备文件系统和网络策略的隔离 backend。超过 admission 上限时返回 `429 RESOURCE_EXHAUSTED`。
 
@@ -199,7 +200,7 @@ HTTP 接口返回 `202 Accepted`：
 
 ### compile_history()
 
-列出当前 principal 可见的 Compile 任务，按创建时间倒序返回。响应包含公开任务状态及已净化的原始请求，便于客户端把同一 `to` 目标的文档、Memory 和人工补证任务组合成一条挖掘历史。默认最多返回 200 条，可通过 `limit` 调整到 1000；终态任务默认保留 90 天。
+列出当前 principal 可见的 Compile 任务，按创建时间倒序返回。响应包含公开任务状态及已净化的原始请求，便于客户端合并同一文档窗口的重试记录，并关联写入相同 `to` 目标的串行窗口。默认最多返回 200 条，可通过 `limit` 调整到 1000；终态任务默认保留 90 天。
 
 ```http
 GET /bot/v1/compile?limit=200
@@ -250,11 +251,23 @@ ov task status cmp_01abc
       "validation_passed": true,
       "warnings": [],
       "main_view": {
-        "single_source_of_truth": true,
         "root_path": "knowledge",
-        "facet_categories": ["what", "why", "how"],
-        "path_structure": ["facet", "meta_id", "filename"],
-        "exempt_paths": ["index.md"]
+        "path_structure": ["page_role", "business_domain", "subdomain", "subject_path", "filename"],
+        "page_roles": [
+          {"id": "topic", "title": "TOPIC", "description": "解释性知识"}
+        ],
+        "business_domains": [
+          {
+            "id": "technology-data",
+            "title": "技术与数据",
+            "description": "技术知识",
+            "subdomains": [
+              {"id": "engineering", "title": "工程研发", "description": "工程知识"}
+            ]
+          }
+        ],
+        "navigation": {"filename": "index.md", "type": "index"},
+        "exempt_paths": ["**/index.md"]
       },
       "intermediate_artifacts": [
         {
@@ -264,7 +277,6 @@ ov task status cmp_01abc
         }
       ],
       "investigation_status": "clear",
-      "question_count": 0,
       "source_coverage": {
         "uploaded": 30,
         "inspected": 30,
@@ -272,33 +284,17 @@ ov task status cmp_01abc
         "merged": 4,
         "skipped": 2,
         "artifact_uri": "viking://resources/research-wiki/_mining/source-coverage.json"
-      },
-      "views": [
-        {
-          "id": "domain",
-          "title": "知识域 · Domain",
-          "description": "按知识域组织页面",
-          "selection": "one_or_more",
-          "groups": [
-            {
-              "id": "products-and-systems",
-              "title": "产品与系统",
-              "description": "产品、服务和技术系统",
-              "tag": "view/domain/products-and-systems"
-            }
-          ]
-        }
-      ]
+      }
     }
   }
 }
 ```
 
-`main_view` 描述唯一事实源的物理目录约束；未配置时为 `null`。`views` 来自外部 OKF 配置；未配置派生视图时为空数组。客户端可按每个 group 的精确 `tag` 读取页面 frontmatter 并重组导航，实际文件结构仍由 `to` 目录表示。
+`main_view` 描述物理目录约束；未配置时为 `null`。每个知识页只存在于这棵主视图文件树中。导航页由 `navigation` 描述，`exempt_paths` 支持安全的 `*`/`**` 路径模式。
 
-`intermediate_artifacts` 给出经过校验的运行清单、证据账本、调查报告、问卷、来源覆盖、候选知识、持久阅读账本和证据历史 URI。`source_coverage` 汇总通过真实 readlist 与证据门禁后的上传级来源已检查、已引用、已合并和已跳过数量。`investigation_status=needs_human_input` 表示存在未解决的冲突或证据缺口，`question_count` 给出问卷问题数。使用人工答案发起后续 Compile 时，应让 `from` 精确指向答案资源并保持同一个 `to`，以保留可验证的增量谱系。
+`intermediate_artifacts` 给出经过校验的运行清单、证据账本、调查报告、来源覆盖、候选知识、持久阅读账本和证据历史 URI。`source_coverage` 汇总通过真实 readlist 与证据门禁后的上传级来源已检查、已引用、已合并和已跳过数量。`investigation_status=issues_found` 表示未解决的冲突或证据缺口已保留用于调试，不会开启人工问答流程。
 
-`stage=salvaged` 表示保留了阶段性工作区快照，而不是严格校验成功。此时 `result.validation_passed=false`；结果仍会返回已知 `main_view`、`views` 和可读取的 `intermediate_artifacts`，但客户端必须显示为“部分结果”，且不得自动以它作为下一轮 Memory 或人工答案增量 Compile 的成功基线。只有 `stage=completed` 且 `validation_passed=true` 才是可继续自动增量的最终结果。
+`stage=salvaged` 表示被中断或失败的严格 Compile 保留了阶段性工作区快照。此时 `result.validation_passed=false`，客户端必须将其显示为部分结果。knowledge-mining 若已到最终提交、但存在 OKF 一致性告警，则以 `stage=completed` 结束，同时保留 `validation_passed=false` 并公开已提交结果。
 
 ### compile_cancel()
 
@@ -323,7 +319,7 @@ curl -X POST http://localhost:1933/bot/v1/compile/cmp_01abc/cancel \
 
 ### compile_resume()
 
-为一个 `failed`、`cancelled` 或未通过最终校验的 `salvaged` 任务创建新的 Compile 任务。新任务复用原任务已经净化并持久化的请求和来源 URI，因此无需重新上传文件；如果原任务有相同来源签名的私有检查点，则从最近完成的阶段继续，否则从来源读取阶段重新执行。原任务保持不变，新任务通过 `resumed_from_task_id` 记录来源任务。
+为一个 `failed`、`cancelled` 或 `salvaged` 任务创建新的 Compile 任务。新任务复用原任务已经净化并持久化的请求和来源 URI，因此无需重新上传文件；如果原任务有相同来源签名的私有检查点，则从最近完成的阶段继续，否则从来源读取阶段重新执行。原任务保持不变，新任务通过 `resumed_from_task_id` 记录来源任务。
 
 ```http
 POST /bot/v1/compile/{task_id}/resume

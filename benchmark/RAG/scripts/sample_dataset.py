@@ -6,12 +6,11 @@ Supports both full dataset and sampled subsets with seed-based reproducibility.
 
 import argparse
 import json
-import os
 import random
 import shutil
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Callable
+from typing import Any, Dict, List, Optional, Tuple
 
 sys.path.append(str(Path(__file__).parent.parent))
 
@@ -354,7 +353,6 @@ def sample_locomo(
                     doc_cat_qas[cat].append(q)
         doc_category_qas.append(doc_cat_qas)
     
-    total_qas = sum(len(qas) for qas in category_qas.values())
     categories = sorted(category_qas.keys())
     print(f"Total QAs (excluding category 5): {total_qas}")
     print(f"Categories: {categories}")
@@ -1034,7 +1032,6 @@ def sample_financebench(
     all_doc_names = list(doc_groups.keys())
     original_num_docs = len(all_doc_names)
     original_total_qas = len(data)
-    total_qas = sum(len(qas) for qas in category_qas.values())
     categories = sorted(category_qas.keys())
     print(f"Financebench original size: {original_num_docs} documents, {original_total_qas} QAs")
     print(f"Categories: {categories}")

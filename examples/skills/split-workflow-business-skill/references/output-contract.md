@@ -13,7 +13,7 @@ description: <保留并校准原触发描述>
 # <名称>
 
 > Platform-owned workflow file. Keep process changes here; put user-adjustable
-> preferences in USER_PROFILE.md and directory/view rules in OKF_CONFIG.yaml.
+> preferences in USER_PROFILE.md and single-main-view rules in OKF_CONFIG.yaml.
 
 ## Objective
 ## Load the user profile
@@ -80,7 +80,7 @@ description: <保留并校准原触发描述>
 ## Subject selection and consolidation
 ## Naming and terminology
 ## Page content
-## Navigation and derived views
+## Navigation
 ## Relationships and links
 ## Evidence and uncertainty
 ## Incremental knowledge maintenance

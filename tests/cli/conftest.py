@@ -364,6 +364,13 @@ def pytest_collection_modifyitems(config, items):
             if item.get_closest_marker("cli_remote"):
                 item.add_marker(skip_cli)
 
+    for item in items:
+        if (
+            item.get_closest_marker("cli_remote")
+            and "ensure_resources_dir" not in item.fixturenames
+        ):
+            item.fixturenames.append("ensure_resources_dir")
+
 
 def _parse_cli_json(stdout):
     json_start = stdout.find("{")
@@ -605,15 +612,6 @@ def _find_file_in_pack(pack_uri, retries=10, interval=5):
                     return item["uri"]
         time.sleep(interval)
     return None
-
-
-def pytest_collection_modifyitems(items):
-    for item in items:
-        if (
-            item.get_closest_marker("cli_remote")
-            and "ensure_resources_dir" not in item.fixturenames
-        ):
-            item.fixturenames.append("ensure_resources_dir")
 
 
 @pytest.fixture(scope="session")

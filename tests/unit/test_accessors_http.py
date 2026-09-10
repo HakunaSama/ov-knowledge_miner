@@ -3,7 +3,7 @@
 """Unit tests for HTTPAccessor."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import httpx
 

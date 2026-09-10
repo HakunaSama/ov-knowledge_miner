@@ -19,14 +19,9 @@ from PIL import Image
 from openviking.parse.base import NodeType, ParseResult, ResourceNode
 from openviking.parse.parsers.base_parser import BaseParser
 from openviking.parse.parsers.media.constants import IMAGE_EXTENSIONS
-from openviking.parse.parsers.media.large_image_processor import (
-    LargeImageResult,
-    process_large_image,
-    save_image_to_bytes,
-)
+from openviking.parse.parsers.media.large_image_processor import process_large_image, save_image_to_bytes
 from openviking.parse.parsers.media.naming import resolve_media_names
 from openviking.parse.parsers.media.utils import _convert_svg_to_png
-from openviking.prompts import render_prompt
 from openviking.storage.viking_fs import get_viking_fs
 from openviking_cli.utils.config.parser_config import ImageConfig
 from openviking_cli.utils.logger import get_logger

@@ -6,10 +6,9 @@ OpenViking Mount Manager
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Dict, List, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from loguru import logger
 

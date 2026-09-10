@@ -35,13 +35,12 @@ describe('CLI knowledge result import', () => {
     vi.mocked(fetchFsTree).mockResolvedValue({
       nodes: [
         node('index.md'),
-        node('configured-root/definition/catalog/rag/rag.md'),
-        node('configured-root/rationale/policy/rag/rag.md'),
-        node('configured-root/execution/runtime/rag/rag.md'),
+        node('knowledge/topic/technology-data/engineering/rag.md'),
+        node('knowledge/reference/technology-data/engineering/api.md'),
+        node('knowledge/procedure/technology-data/engineering/deploy.md'),
         node('_mining/run-manifest.json'),
         node('_mining/source-coverage.json'),
         node('_mining/investigation-report.json'),
-        node('_mining/questionnaire.json'),
       ],
       rootUri: target,
     })
@@ -63,9 +62,7 @@ describe('CLI knowledge result import', () => {
                 uploaded: 10,
               },
             }
-          : uri.endsWith('investigation-report.json')
-            ? { status: 'clear' }
-            : { questions: [] }
+          : { status: 'clear' }
       return {
         content: JSON.stringify(json),
         limit: -1,
@@ -92,17 +89,17 @@ describe('CLI knowledge result import', () => {
       },
       to: target,
     })
-    expect(inspected.result.intermediate_artifacts).toHaveLength(4)
+    expect(inspected.result.intermediate_artifacts).toHaveLength(3)
     expect(inspected.result.warnings).toContain(
       'The imported result has no OKF main_view metadata. Studio will not infer a directory schema.',
     )
   })
 
-  it('preserves custom main-view and derived-view metadata from Compile', async () => {
+  it('preserves the configured atomic main-view metadata from Compile', async () => {
     vi.mocked(fetchFsTree).mockResolvedValue({
       nodes: [
         node('index.md'),
-        node('configured-root/definition/catalog/rag/rag.md'),
+        node('knowledge/topic/technology-data/engineering/rag.md'),
       ],
       rootUri: target,
     })
@@ -111,23 +108,36 @@ describe('CLI knowledge result import', () => {
       from: [],
       link_count: 0,
       main_view: {
-        derived_views_include_exempt: false,
         exempt_paths: ['index.md'],
-        facet_categories: ['definition'],
-        meta_knowledge: {
-          group_by: 'frontmatter_field' as const,
-          id_field: 'meta_id',
-          require_complete: true,
-          shared_view_tags: true,
-        },
+        page_roles: [
+          {
+            description: 'Explanatory knowledge',
+            id: 'topic',
+            title: 'TOPIC',
+          },
+        ],
+        business_domains: [
+          {
+            description: 'Technical knowledge',
+            id: 'technology-data',
+            title: 'Technology and data',
+            subdomains: [
+              {
+                description: 'Engineering knowledge',
+                id: 'engineering',
+                title: 'Engineering',
+              },
+            ],
+          },
+        ],
         path_structure: [
-          'facet' as const,
-          'route' as const,
-          'meta_id' as const,
+          'page_role' as const,
+          'business_domain' as const,
+          'subdomain' as const,
+          'subject_path' as const,
           'filename' as const,
         ],
-        root_path: 'configured-root',
-        single_source_of_truth: true,
+        root_path: 'knowledge',
       },
       okf_version: '1.2',
       page_count: 1,
@@ -136,29 +146,12 @@ describe('CLI knowledge result import', () => {
       unchanged: [],
       updated: [],
       validation_passed: true,
-      views: [
-        {
-          description: 'Configured view',
-          groups: [
-            {
-              description: 'Configured group',
-              id: 'catalog',
-              tag: 'view/catalog/catalog',
-              title: 'Catalog',
-            },
-          ],
-          id: 'catalog',
-          selection: 'exactly_one' as const,
-          title: 'Catalog',
-        },
-      ],
       warnings: [],
     }
 
     const inspected = await inspectCliResult(target, hint)
 
     expect(inspected.result.main_view).toEqual(hint.main_view)
-    expect(inspected.result.views).toEqual(hint.views)
     expect(inspected.result.warnings).toEqual([])
   })
 
@@ -171,7 +164,7 @@ describe('CLI knowledge result import', () => {
     await expect(inspectCliResult(target)).rejects.toThrow('index.md')
   })
 
-  it('marks imported partial and human-gated results accurately', () => {
+  it('treats advisory validation findings as a completed result', () => {
     const baseResult = {
       created: [`${target}/index.md`],
       from: [],
@@ -190,16 +183,16 @@ describe('CLI knowledge result import', () => {
         result: { ...baseResult, validation_passed: false },
         targetUri: target,
       }).phase,
-    ).toBe('partial')
+    ).toBe('completed')
     expect(
       importedMiningJob({
         origin: 'cli',
         result: {
           ...baseResult,
-          investigation_status: 'needs_human_input',
+          investigation_status: 'issues_found',
         },
         targetUri: target,
       }).phase,
-    ).toBe('awaiting_human')
+    ).toBe('completed')
   })
 })

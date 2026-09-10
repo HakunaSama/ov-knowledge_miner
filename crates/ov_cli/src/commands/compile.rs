@@ -151,11 +151,9 @@ fn render_completed(value: &CompileTaskStatus, format: OutputFormat, compact: bo
             page_count: 0,
             link_count: 0,
             warnings: Vec::new(),
-            views: Vec::new(),
             main_view: None,
             intermediate_artifacts: Vec::new(),
             investigation_status: None,
-            question_count: 0,
             validation_passed: None,
         });
     println!("to: {}", result.to);
@@ -171,7 +169,6 @@ fn render_completed(value: &CompileTaskStatus, format: OutputFormat, compact: bo
             .as_deref()
             .unwrap_or("not_configured")
     );
-    println!("question_count: {}", result.question_count);
     println!(
         "intermediate_artifacts: {}",
         result.intermediate_artifacts.len()

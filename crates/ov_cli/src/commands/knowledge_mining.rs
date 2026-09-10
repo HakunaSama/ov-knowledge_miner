@@ -21,32 +21,25 @@ const DEFAULT_USER_PROFILE: &str =
 const DEFAULT_OKF_CONFIG: &str =
     include_str!("../../../../examples/compile/ov-compile-skills/llm-wiki/OKF_CONFIG.yaml");
 const DEFAULT_REASON: &str = "将这些文档整理成便于团队检索和复用的 OKF 知识库。提取关键实体、概念、综合结论与关系，保留重要结论的出处，并使用中文输出。";
-const MEMORY_INCREMENTAL_REASON: &str = "这是团队 Memory 增量更新阶段。请完整检查现有目标知识库，以团队 Memory 为新增证据更新、补充或纠正已有页面；明确的新事实应取代旧事实。保留仍然准确的文档知识、出处、WikiLink 和所有配置视图标签，避免重复页面。";
 const MAX_UPLOAD_FILE_SIZE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_COMPILE_SOURCE_ROOTS: usize = 16;
 const DOCUMENT_EXTENSIONS: &[&str] = &["doc", "docx", "md", "markdown", "pdf", "xls", "xlsx"];
-const MEMORY_EXTENSIONS: &[&str] = &["json", "markdown", "md", "text", "txt", "yaml", "yml"];
 
 #[derive(Debug, Serialize)]
 struct KnowledgeMiningResult {
     batch_id: String,
     phase: String,
     document_files: usize,
-    memory_files: usize,
     window_count: usize,
     completed_windows: usize,
     state_file: String,
     run_log_uri: String,
     document_source_uri: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    memory_source_uri: Option<String>,
     okf_config_uri: String,
     target_uri: String,
     skill_uri: String,
     /// First document task retained for compatibility with the former single-window output.
     document_task_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    memory_task_id: Option<String>,
     task_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     result: Option<CompileResult>,
@@ -55,7 +48,6 @@ struct KnowledgeMiningResult {
 #[derive(Debug)]
 pub struct KnowledgeMiningOptions {
     pub document_paths: Vec<String>,
-    pub memory_paths: Vec<String>,
     pub target_uri: Option<String>,
     pub skill_uri: Option<String>,
     pub okf_config_path: Option<String>,
@@ -73,13 +65,6 @@ pub struct KnowledgeMiningOptions {
     pub verbose: bool,
     pub output_format: OutputFormat,
     pub compact: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum WindowKind {
-    Documents,
-    Memory,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,7 +85,6 @@ struct WindowFileState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct MiningWindowState {
     index: usize,
-    kind: WindowKind,
     source_uri: String,
     size_bytes: u64,
     pdf_pages: usize,
@@ -159,14 +143,6 @@ pub async fn run(client: &HttpClient, options: KnowledgeMiningOptions) -> Result
         (state, path, None)
     } else {
         let document_files = collect_document_sources(client, &options.document_paths).await?;
-        let memory_files = if options.memory_paths.is_empty() {
-            Vec::new()
-        } else {
-            collect_supported_files(&options.memory_paths, MEMORY_EXTENSIONS, "memory")?
-                .iter()
-                .map(|path| window_file(path))
-                .collect::<Result<Vec<_>>>()?
-        };
         let reason = options
             .reason
             .as_deref()
@@ -186,7 +162,6 @@ pub async fn run(client: &HttpClient, options: KnowledgeMiningOptions) -> Result
         let windows = build_window_states(
             &root_uri,
             &document_files,
-            &memory_files,
             options.window_files,
             options.window_bytes,
             options.window_pages,
@@ -244,12 +219,7 @@ pub async fn run(client: &HttpClient, options: KnowledgeMiningOptions) -> Result
         state.skill_uri =
             ensure_llm_wiki_skill(client, options.show_progress, options.verbose).await?;
     }
-    mkdir_idempotent(
-        client,
-        &state.root_uri,
-        Some("Knowledge-mining serial run"),
-    )
-    .await?;
+    mkdir_idempotent(client, &state.root_uri, Some("Knowledge-mining serial run")).await?;
     if let Some(config) = okf_config {
         write_text_upsert_compatible(client, &state.okf_config_uri, &config).await?;
     }
@@ -410,14 +380,13 @@ fn window_file(path: &Path) -> Result<WindowFileState> {
     })
 }
 
-fn plan_kind_windows(
+fn plan_windows(
     files: &[WindowFileState],
-    kind: WindowKind,
     file_limit: usize,
     byte_limit: u64,
     page_limit: usize,
     probe_limit: usize,
-) -> Result<Vec<(WindowKind, Vec<WindowFileState>, u64, usize, usize, bool)>> {
+) -> Result<Vec<(Vec<WindowFileState>, u64, usize, usize, bool)>> {
     let mut planned = Vec::new();
     let mut current = Vec::new();
     let mut current_bytes = 0_u64;
@@ -431,7 +400,6 @@ fn plan_kind_windows(
         {
             if !current.is_empty() {
                 planned.push((
-                    kind.clone(),
                     std::mem::take(&mut current),
                     current_bytes,
                     current_pages,
@@ -445,7 +413,7 @@ fn plan_kind_windows(
             let size = file.size_bytes;
             let pages = file.pdf_pages;
             let probes = file.estimated_probes;
-            planned.push((kind.clone(), vec![file], size, pages, probes, true));
+            planned.push((vec![file], size, pages, probes, true));
             continue;
         }
         let next_remote_roots =
@@ -460,7 +428,6 @@ fn plan_kind_windows(
                 || current_probes + file.estimated_probes > probe_limit)
         {
             planned.push((
-                kind.clone(),
                 std::mem::take(&mut current),
                 current_bytes,
                 current_pages,
@@ -477,14 +444,7 @@ fn plan_kind_windows(
         current.push(file);
     }
     if !current.is_empty() {
-        planned.push((
-            kind,
-            current,
-            current_bytes,
-            current_pages,
-            current_probes,
-            false,
-        ));
+        planned.push((current, current_bytes, current_pages, current_probes, false));
     }
     Ok(planned)
 }
@@ -492,41 +452,19 @@ fn plan_kind_windows(
 fn build_window_states(
     root_uri: &str,
     documents: &[WindowFileState],
-    memory: &[WindowFileState],
     file_limit: usize,
     byte_limit: u64,
     page_limit: usize,
     probe_limit: usize,
 ) -> Result<Vec<MiningWindowState>> {
-    let mut planned = plan_kind_windows(
-        documents,
-        WindowKind::Documents,
-        file_limit,
-        byte_limit,
-        page_limit,
-        probe_limit,
-    )?;
-    planned.extend(plan_kind_windows(
-        memory,
-        WindowKind::Memory,
-        file_limit,
-        byte_limit,
-        page_limit,
-        probe_limit,
-    )?);
+    let planned = plan_windows(documents, file_limit, byte_limit, page_limit, probe_limit)?;
     Ok(planned
         .into_iter()
         .enumerate()
         .map(
-            |(
-                offset,
-                (kind, files, size_bytes, pdf_pages, estimated_probes, oversized_singleton),
-            )| {
+            |(offset, (files, size_bytes, pdf_pages, estimated_probes, oversized_singleton))| {
                 let index = offset + 1;
-                let source_name = match kind {
-                    WindowKind::Documents => "document-sources",
-                    WindowKind::Memory => "team-memory",
-                };
+                let source_name = "document-sources";
                 let mut files = files;
                 for (file_offset, file) in files.iter_mut().enumerate() {
                     if !file.remote {
@@ -538,7 +476,6 @@ fn build_window_states(
                 }
                 MiningWindowState {
                     index,
-                    kind,
                     source_uri: format!("{root_uri}/windows/{index:04}/{source_name}"),
                     size_bytes,
                     pdf_pages,
@@ -625,7 +562,6 @@ fn remote_run_state(state: &MiningRunState) -> Value {
         "updated_at": state.updated_at,
         "windows": state.windows.iter().map(|window| json!({
             "index": window.index,
-            "kind": window.kind,
             "source_uri": window.source_uri,
             "size_bytes": window.size_bytes,
             "pdf_pages": window.pdf_pages,
@@ -694,33 +630,15 @@ async fn write_window_log(
     Ok(())
 }
 
-async fn write_text_upsert_compatible(
-    client: &HttpClient,
-    uri: &str,
-    content: &str,
-) -> Result<()> {
+async fn write_text_upsert_compatible(client: &HttpClient, uri: &str, content: &str) -> Result<()> {
     match client
-        .write(
-            uri,
-            content,
-            "create",
-            false,
-            None,
-            "semantic_and_vectors",
-        )
+        .write(uri, content, "create", false, None, "semantic_and_vectors")
         .await
     {
         Ok(_) => Ok(()),
         Err(error) if matches!(error.code(), "CONFLICT" | "ALREADY_EXISTS") => {
             client
-                .write(
-                    uri,
-                    content,
-                    "replace",
-                    false,
-                    None,
-                    "semantic_and_vectors",
-                )
+                .write(uri, content, "replace", false, None, "semantic_and_vectors")
                 .await?;
             Ok(())
         }
@@ -728,11 +646,7 @@ async fn write_text_upsert_compatible(
     }
 }
 
-async fn mkdir_idempotent(
-    client: &HttpClient,
-    uri: &str,
-    reason: Option<&str>,
-) -> Result<()> {
+async fn mkdir_idempotent(client: &HttpClient, uri: &str, reason: Option<&str>) -> Result<()> {
     match client.mkdir(uri, reason).await {
         Ok(_) => Ok(()),
         Err(error) if matches!(error.code(), "CONFLICT" | "ALREADY_EXISTS") => Ok(()),
@@ -880,9 +794,7 @@ async fn run_serial_window(
     } else {
         state.windows[window_index].status = "queued".into();
         checkpoint_run(client, state_path, state).await?;
-        let reason = if state.windows[window_index].kind == WindowKind::Memory {
-            format!("{}\n\n{}", state.reason, MEMORY_INCREMENTAL_REASON)
-        } else if window_index == 0 {
+        let reason = if window_index == 0 {
             state.reason.clone()
         } else {
             format!(
@@ -945,24 +857,10 @@ fn build_result(
     state_path: &Path,
     result: Option<CompileResult>,
 ) -> KnowledgeMiningResult {
-    let document_windows: Vec<_> = state
-        .windows
-        .iter()
-        .filter(|window| window.kind == WindowKind::Documents)
-        .collect();
-    let memory_windows: Vec<_> = state
-        .windows
-        .iter()
-        .filter(|window| window.kind == WindowKind::Memory)
-        .collect();
     KnowledgeMiningResult {
         batch_id: state.batch_id.clone(),
         phase: state.phase.clone(),
-        document_files: document_windows
-            .iter()
-            .map(|window| window.files.len())
-            .sum(),
-        memory_files: memory_windows.iter().map(|window| window.files.len()).sum(),
+        document_files: state.windows.iter().map(|window| window.files.len()).sum(),
         window_count: state.windows.len(),
         completed_windows: state
             .windows
@@ -971,23 +869,19 @@ fn build_result(
             .count(),
         state_file: state_path.to_string_lossy().into_owned(),
         run_log_uri: format!("{}/logs/run.json", state.root_uri),
-        document_source_uri: document_windows
+        document_source_uri: state
+            .windows
             .first()
             .map(|window| primary_window_source_uri(window))
             .unwrap_or_default(),
-        memory_source_uri: memory_windows
-            .first()
-            .map(|window| primary_window_source_uri(window)),
         okf_config_uri: state.okf_config_uri.clone(),
         target_uri: state.target_uri.clone(),
         skill_uri: state.skill_uri.clone(),
-        document_task_id: document_windows
+        document_task_id: state
+            .windows
             .iter()
             .find_map(|window| window.task_id.clone())
             .unwrap_or_default(),
-        memory_task_id: memory_windows
-            .iter()
-            .find_map(|window| window.task_id.clone()),
         task_ids: state
             .windows
             .iter()
@@ -1040,9 +934,7 @@ fn print_progress(output_format: OutputFormat, message: String) {
 }
 
 fn completion_phase(_result: Option<&CompileResult>) -> &'static str {
-    // Human evidence is currently informational for the CLI workflow. Keep the
-    // investigation and questionnaire in the Compile result for auditing, but
-    // do not make them a completion gate or submit answers automatically.
+    // Investigation findings are audit/debug information and never a completion gate.
     "completed"
 }
 
@@ -1366,10 +1258,10 @@ fn add_supported_file(
 #[cfg(test)]
 mod tests {
     use super::{
-        DOCUMENT_EXTENSIONS, MEMORY_EXTENSIONS, MiningRunState, WindowKind, build_window_states,
-        collect_document_sources, collect_supported_files, compile_source_uris, completion_phase,
-        find_llm_wiki_skill, plan_kind_windows, primary_window_source_uri, remote_document_source,
-        validate_remote_folder, validate_resume_files, window_file,
+        DOCUMENT_EXTENSIONS, MiningRunState, build_window_states, collect_document_sources,
+        collect_supported_files, compile_source_uris, completion_phase, find_llm_wiki_skill,
+        plan_windows, primary_window_source_uri, remote_document_source, validate_remote_folder,
+        validate_resume_files, window_file,
     };
     use crate::client::{CompileResult, HttpClient};
     use lopdf::{Document, Object, dictionary};
@@ -1377,7 +1269,7 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    fn compile_result(investigation_status: Option<&str>, question_count: usize) -> CompileResult {
+    fn compile_result(investigation_status: Option<&str>) -> CompileResult {
         CompileResult {
             from_uris: Vec::new(),
             to: String::new(),
@@ -1389,11 +1281,9 @@ mod tests {
             page_count: 0,
             link_count: 0,
             warnings: Vec::new(),
-            views: Vec::new(),
             main_view: None,
             intermediate_artifacts: Vec::new(),
             investigation_status: investigation_status.map(str::to_owned),
-            question_count,
             validation_passed: Some(true),
         }
     }
@@ -1440,7 +1330,7 @@ mod tests {
     }
 
     #[test]
-    fn recursively_collects_only_supported_files() {
+    fn recursively_collects_only_supported_documents() {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join("report.pdf"), b"pdf").expect("write pdf");
         std::fs::write(dir.path().join("notes.txt"), b"notes").expect("write txt");
@@ -1451,17 +1341,8 @@ mod tests {
             "documents",
         )
         .expect("collect documents");
-        let memory = collect_supported_files(
-            &[dir.path().to_string_lossy().into_owned()],
-            MEMORY_EXTENSIONS,
-            "memory",
-        )
-        .expect("collect memory");
-
         assert_eq!(documents.len(), 1);
         assert!(documents[0].ends_with("report.pdf"));
-        assert_eq!(memory.len(), 1);
-        assert!(memory[0].ends_with("notes.txt"));
     }
 
     #[test]
@@ -1515,15 +1396,14 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let windows = plan_kind_windows(&files, WindowKind::Documents, 2, 100, 1_500, 300)
-            .expect("plan windows");
+        let windows = plan_windows(&files, 2, 100, 1_500, 300).expect("plan windows");
         assert_eq!(windows.len(), 3);
-        assert_eq!(windows[0].1.len(), 2);
-        assert_eq!(windows[0].2, 80);
-        assert_eq!(windows[0].4, 2);
-        assert!(windows[1].5);
-        assert_eq!(windows[1].2, 120);
-        assert_eq!(windows[2].1.len(), 1);
+        assert_eq!(windows[0].0.len(), 2);
+        assert_eq!(windows[0].1, 80);
+        assert_eq!(windows[0].3, 2);
+        assert!(windows[1].4);
+        assert_eq!(windows[1].1, 120);
+        assert_eq!(windows[2].0.len(), 1);
     }
 
     #[test]
@@ -1607,7 +1487,6 @@ mod tests {
         let windows = build_window_states(
             "viking://resources/knowledge-mining/test",
             &sources,
-            &[],
             10,
             1024,
             1500,
@@ -1625,7 +1504,6 @@ mod tests {
         let wide_windows = build_window_states(
             "viking://resources/knowledge-mining/test",
             &sources,
-            &[],
             100,
             1024,
             1500,
@@ -1651,7 +1529,6 @@ mod tests {
         let windows = build_window_states(
             "viking://resources/knowledge-mining/test",
             &[local, remote],
-            &[],
             10,
             1024,
             1500,
@@ -1679,7 +1556,6 @@ mod tests {
         let windows = build_window_states(
             "viking://resources/knowledge-mining/test",
             &[remote],
-            &[],
             10,
             1024,
             1500,
@@ -1701,7 +1577,6 @@ mod tests {
                 "existing-source",
                 &json!({"isDir": true}),
             )],
-            &[],
             10,
             1024,
             1500,
@@ -1760,13 +1635,13 @@ mod tests {
     }
 
     #[test]
-    fn unresolved_questions_do_not_block_cli_completion() {
+    fn investigation_issues_do_not_block_cli_completion() {
         assert_eq!(
-            completion_phase(Some(&compile_result(Some("needs_human_input"), 2))),
+            completion_phase(Some(&compile_result(Some("issues_found")))),
             "completed"
         );
         assert_eq!(
-            completion_phase(Some(&compile_result(Some("clear"), 0))),
+            completion_phase(Some(&compile_result(Some("clear")))),
             "completed"
         );
     }

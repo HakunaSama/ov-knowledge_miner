@@ -58,14 +58,18 @@ def _page_metadata(
     files: Mapping[str, bytes], config: OKFConfig
 ) -> dict[str, dict[str, Any]]:
     """Extract the small amount of page metadata needed by platform-owned ledgers."""
-    exempt = set(config.main_view.exempt_paths) if config.main_view is not None else set()
     root = config.main_view.root_path if config.main_view is not None else ""
     pages: dict[str, dict[str, Any]] = {}
     for path, payload in files.items():
         if (
             not path.casefold().endswith(".md")
             or path.rsplit("/", 1)[-1].casefold() in _RESERVED_MARKDOWN
-            or (root and path not in exempt and not path.startswith(f"{root}/"))
+            or (
+                root
+                and config.main_view is not None
+                and not config.main_view.is_exempt(path)
+                and not path.startswith(f"{root}/")
+            )
         ):
             continue
         try:
@@ -85,7 +89,7 @@ def _page_metadata(
             continue
         source_resources: list[str] = []
         for source in frontmatter.get("sources") or []:
-            if not isinstance(source, Mapping) or source.get("kind") == "intermediate":
+            if not isinstance(source, Mapping):
                 continue
             resource = source.get("resource")
             if isinstance(resource, str) and resource.strip().startswith("viking://"):
@@ -482,9 +486,7 @@ def prepare_persistent_intermediates(
         return dict(checkout)
     result = dict(checkout)
     manifest = _load(result, paths["run_manifest"])
-    stage = str(manifest.get("stage") or "documents")
-    if stage not in {"documents", "memory_incremental", "human_incremental"}:
-        stage = "documents"
+    stage = "documents"
     manifest.update(
         {
             "version": "1.0",
@@ -532,7 +534,13 @@ def prepare_persistent_intermediates(
         stage=stage,
         allowed_types=config.allowed_types,
         pages=canonical_pages,
-        exempt_paths=(set(config.main_view.exempt_paths) if config.main_view is not None else set()),
+        exempt_paths=(
+            {
+                path
+                for path in (canonical_pages or {})
+                if config.main_view is not None and config.main_view.is_exempt(path)
+            }
+        ),
     )
     result[paths["candidate_knowledge"]] = _dump(candidates)
 

@@ -15,16 +15,36 @@ def _json(value: dict) -> bytes:
     return json.dumps(value).encode()
 
 
+def _page(*, title: str, page_type: str, source: str) -> bytes:
+    return (
+        "---\n"
+        f"type: {page_type}\n"
+        f"title: {title}\n"
+        f"description: Knowledge about {title}.\n"
+        "sources:\n"
+        f"  - resource: {source}\n"
+        "    title: Source\n"
+        "generated:\n"
+        "  by: VikingBot/llm-wiki\n"
+        "  at: 2026-08-27T00:00:00Z\n"
+        "---\n\n"
+        f"# {title}\n\nBody.\n"
+    ).encode()
+
+
 def test_platform_intermediates_preserve_prior_evidence_and_append_audit_runs():
+    page_path = "knowledge/topic/technology-data/engineering/prior.md"
     baseline = {
         "_mining/evidence-ledger.json": _json(
             {
                 "version": "1.0",
                 "pages": [
                     {
-                        "path": "knowledge/topic/id/what/page.md",
+                        "path": page_path,
                         "source_resources": ["viking://resources/prior/document"],
-                        "intermediate_resources": ["viking://resources/wiki/_mining/prior.json"],
+                        "intermediate_resources": [
+                            "viking://resources/wiki/_mining/prior.json"
+                        ],
                         "claims": [{"claim": "prior"}],
                     }
                 ],
@@ -76,7 +96,7 @@ def test_platform_intermediates_preserve_prior_evidence_and_append_audit_runs():
             {
                 "version": "1.0",
                 "target": "viking://resources/wiki",
-                "stage": "memory_incremental",
+                "stage": "documents",
                 "source_roots": ["viking://resources/current"],
             }
         ),
@@ -85,7 +105,7 @@ def test_platform_intermediates_preserve_prior_evidence_and_append_audit_runs():
                 "version": "1.0",
                 "pages": [
                     {
-                        "path": "knowledge/topic/id/what/page.md",
+                        "path": page_path,
                         "source_resources": ["viking://resources/current/document"],
                         "intermediate_resources": [
                             "viking://resources/wiki/_mining/evidence-ledger.json"
@@ -96,14 +116,10 @@ def test_platform_intermediates_preserve_prior_evidence_and_append_audit_runs():
             }
         ),
         "_mining/source-coverage.json": _json(
-            {"version": "1.0", "stage": "memory_incremental", "sources": []}
+            {"version": "1.0", "stage": "documents", "sources": []}
         ),
         "_mining/candidate-knowledge.json": _json(
-            {
-                "version": "1.0",
-                "stage": "memory_incremental",
-                "candidates": [],
-            }
+            {"version": "1.0", "stage": "documents", "candidates": []}
         ),
     }
     source_unit = {
@@ -141,81 +157,37 @@ def test_platform_intermediates_preserve_prior_evidence_and_append_audit_runs():
         "current-task",
     ]
     assert readlist["runs"][-1]["source_units"][0]["complete"] is True
-    coverage = json.loads(result["_mining/source-coverage.json"])
-    assert {item["resource"] for item in coverage["sources"]} == {
-        "viking://resources/prior/document",
-        "viking://resources/current/document",
-    }
-    candidates = json.loads(result["_mining/candidate-knowledge.json"])
-    assert "prior-candidate" in {item["id"] for item in candidates["candidates"]}
-    assert not any(
-        item.get("source_resources") == ["viking://resources/current/document"]
-        for item in candidates["candidates"]
-    )
     history = json.loads(result["_mining/evidence-history.json"])
-    assert [run["task_id"] for run in history["runs"]] == ["prior-task", "current-task"]
+    assert [run["task_id"] for run in history["runs"]] == [
+        "prior-task",
+        "current-task",
+    ]
     assert history["runs"][-1]["pages"] == ledger["pages"]
 
 
-def test_platform_enriches_explicit_incremental_candidates_and_rebuilds_page_ledgers():
+def test_platform_enriches_atomic_incremental_candidates_and_page_ledgers():
     prior_source = "viking://resources/prior/document"
     current_source = "viking://resources/current/document"
     evidence_uri = "viking://resources/wiki/_mining/evidence-ledger.json"
-
-    def page(path: str, facet: str, source: str, meta_id: str = "topic") -> bytes:
-        return (
-            "---\n"
-            f"type: {'entity' if facet == 'what' else 'synthesis' if facet == 'why' else 'concept'}\n"
-            f"title: Topic {facet}\n"
-            f"description: Topic {facet} description.\n"
-            "tags:\n"
-            "  - view/domain/products-and-systems\n"
-            "  - view/usage/reference\n"
-            f"meta_id: {meta_id}\n"
-            "status: stable\n"
-            "sources:\n"
-            f"  - resource: {source}\n"
-            "    title: Source\n"
-            "    author: Team\n"
-            "    kind: team-memory\n"
-            "    stage: memory_incremental\n"
-            f"  - resource: {evidence_uri}\n"
-            "    title: Evidence ledger\n"
-            "    author: VikingBot\n"
-            "    kind: intermediate\n"
-            "    stage: mining\n"
-            "generated:\n"
-            "  by: VikingBot/llm-wiki\n"
-            "  at: 2026-08-27T00:00:00Z\n"
-            "knowledge_links: []\n"
-            "---\n\nBody.\n"
-        ).encode()
-
-    page_paths = [
-        f"knowledge/domain/topic/{facet}/topic-{facet}.md"
-        for facet in ("what", "why", "how")
-    ]
-    prior_page_paths = [
-        f"knowledge/domain/prior-topic/{facet}/prior-{facet}.md"
-        for facet in ("what", "why", "how")
-    ]
+    current_path = "knowledge/topic/technology-data/engineering/current-topic.md"
+    prior_path = "knowledge/reference/technology-data/engineering/prior-topic.md"
     checkout = {
         "_mining/run-manifest.json": _json(
             {
                 "version": "1.0",
                 "target": "viking://resources/wiki",
-                "stage": "memory_incremental",
-                "source_roots": [current_source],
+                "stage": "documents",
+                "source_roots": [current_source, prior_source],
             }
         ),
         "_mining/evidence-ledger.json": _json({"version": "1.0", "pages": []}),
         "_mining/source-coverage.json": _json(
-            {"version": "1.0", "stage": "memory_incremental", "sources": []}
+            {"version": "1.0", "stage": "documents", "sources": []}
         ),
         "_mining/candidate-knowledge.json": _json(
             {
                 "version": "1.0",
-                "stage": "memory_incremental",
+                "stage": "documents",
                 "candidates": [
                     {
                         "id": "current-topic",
@@ -223,11 +195,20 @@ def test_platform_enriches_explicit_incremental_candidates_and_rebuilds_page_led
                         "kind": "concept",
                         "summary": "The current source supports this topic.",
                         "source_resources": [current_source],
-                        "disposition": "deferred",
-                        "reason": "Page generation for the current topic is still in progress.",
-                        "meta_id": "topic",
-                        "page_paths": [],
-                    }
+                        "disposition": "promoted",
+                        "page_path": current_path,
+                        "stage": "documents",
+                    },
+                    {
+                        "id": "prior-topic",
+                        "title": "Prior topic",
+                        "kind": "synthesis",
+                        "summary": "The prior source supports this topic.",
+                        "source_resources": [prior_source],
+                        "disposition": "promoted",
+                        "page_path": prior_path,
+                        "stage": "documents",
+                    },
                 ],
             }
         ),
@@ -239,19 +220,12 @@ def test_platform_enriches_explicit_incremental_candidates_and_rebuilds_page_led
                 "evidence_gaps": [],
             }
         ),
-        "_mining/questionnaire.json": _json(
-            {"version": "1.0", "status": "not_required", "questions": []}
+        current_path: _page(
+            title="Current topic", page_type="concept", source=current_source
         ),
-        **{
-            path: page(path, facet, current_source)
-            for path, facet in zip(page_paths, ("what", "why", "how"), strict=True)
-        },
-        **{
-            path: page(path, facet, prior_source, "prior-topic")
-            for path, facet in zip(
-                prior_page_paths, ("what", "why", "how"), strict=True
-            )
-        },
+        prior_path: _page(
+            title="Prior topic", page_type="synthesis", source=prior_source
+        ),
     }
     baseline = {
         "_mining/evidence-ledger.json": _json({"version": "1.0", "pages": []}),
@@ -259,36 +233,34 @@ def test_platform_enriches_explicit_incremental_candidates_and_rebuilds_page_led
             {"version": "1.0", "stage": "documents", "sources": []}
         ),
         "_mining/candidate-knowledge.json": _json(
-            {
-                "version": "1.0",
-                "stage": "documents",
-                "candidates": [
-                    {
-                        "id": "prior",
-                        "title": "Prior",
-                        "kind": "synthesis",
-                        "summary": "Prior candidate.",
-                        "source_resources": [prior_source],
-                        "disposition": "deferred",
-                        "reason": "The retained prior topic is awaiting page reconciliation.",
-                        "meta_id": "prior-topic",
-                        "page_paths": [],
-                    }
-                ],
-            }
+            {"version": "1.0", "stage": "documents", "candidates": []}
         ),
     }
-    source_unit = {
-        "resource": current_source,
-        "title": "Current",
-        "required_read_paths": ["compile_resources/current.md"],
-        "leaves": [
-            {
-                "workspace_path": "compile_resources/current.md",
-                "status": "materialized",
-            }
-        ],
-    }
+    source_units = [
+        {
+            "resource": current_source,
+            "title": "Current",
+            "required_read_paths": ["compile_resources/current.md"],
+            "leaves": [
+                {
+                    "workspace_path": "compile_resources/current.md",
+                    "status": "materialized",
+                }
+            ],
+        },
+        {
+            "resource": prior_source,
+            "title": "Prior",
+            "required_read_paths": ["compile_resources/prior.md"],
+            "leaves": [
+                {
+                    "workspace_path": "compile_resources/prior.md",
+                    "status": "materialized",
+                }
+            ],
+        },
+    ]
+    read_paths = {"compile_resources/current.md", "compile_resources/prior.md"}
 
     result = prepare_persistent_intermediates(
         checkout,
@@ -296,45 +268,34 @@ def test_platform_enriches_explicit_incremental_candidates_and_rebuilds_page_led
         config=CONFIG,
         task_id="current-task",
         recorded_at="2026-08-27T00:00:00Z",
-        source_units=[source_unit],
-        read_paths={"compile_resources/current.md"},
+        source_units=source_units,
+        read_paths=read_paths,
         target_uri="viking://resources/wiki",
         source_roots={"current": current_source, "prior": prior_source},
     )
 
     ledger = json.loads(result["_mining/evidence-ledger.json"])
-    expected_page_paths = {*page_paths, *prior_page_paths}
-    assert {entry["path"] for entry in ledger["pages"]} == expected_page_paths
-    assert {
-        source
-        for entry in ledger["pages"]
-        for source in entry["source_resources"]
-    } == {current_source, prior_source}
+    assert {entry["path"] for entry in ledger["pages"]} == {current_path, prior_path}
     assert all(entry["intermediate_resources"] == [evidence_uri] for entry in ledger["pages"])
     candidates = json.loads(result["_mining/candidate-knowledge.json"])
-    promoted = [entry for entry in candidates["candidates"] if entry["disposition"] == "promoted"]
-    assert {entry["meta_id"] for entry in promoted} == {"topic", "prior-topic"}
-    assert {
-        path for entry in promoted for path in entry["page_paths"]
-    } == expected_page_paths
-    assert {entry["resource"] for entry in json.loads(
-        result["_mining/source-coverage.json"]
-    )["sources"]} == {prior_source, current_source}
+    promoted = [
+        entry for entry in candidates["candidates"] if entry["disposition"] == "promoted"
+    ]
+    assert {entry["page_path"] for entry in promoted} == {current_path, prior_path}
 
     finalized = finalize_resource_checkout(
         result,
         target_uri="viking://resources/wiki",
         source_roots={"current": current_source, "prior": prior_source},
         okf_config=CONFIG,
-        source_units=[source_unit],
-        read_paths={"compile_resources/current.md"},
+        source_units=source_units,
+        read_paths=read_paths,
     )
-    assert set(finalized.wiki_paths) == expected_page_paths
+    assert finalized.wiki_paths == {current_path, prior_path}
     assert {artifact["kind"] for artifact in finalized.intermediate_artifacts} == {
         "run_manifest",
         "evidence_ledger",
         "investigation_report",
-        "questionnaire",
         "source_coverage",
         "candidate_knowledge",
         "readlist",

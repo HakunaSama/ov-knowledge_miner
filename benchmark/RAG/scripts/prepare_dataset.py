@@ -7,7 +7,7 @@ Orchestrates download and sampling for end-to-end data preparation.
 import argparse
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 sys.path.append(str(Path(__file__).parent))
 

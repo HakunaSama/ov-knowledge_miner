@@ -9,7 +9,7 @@
 | 系统必须怎样执行且不能被用户破坏？ | `SKILL.md` | 阶段顺序、接口、检查点、审计产物、安全、恢复、校验 |
 | 用户希望产出什么知识、面向谁、怎样表达？ | `USER_PROFILE.md` | 目标、受众、选材、原子性、术语、证据偏好、语言、文风 |
 | 用户是否有一套更完整的原子企业知识政策？ | `USER_PROFILE_ATOMIC_ENTERPRISE_KNOWLEDGE.md` | 知识对象模型、合并拆分、页面内容、关系、增量维护、技术资料偏好 |
-| 文件应放在哪里、允许什么类型和视图？ | `OKF_CONFIG.yaml` | 目录层级、facet/route/meta_id/filename、frontmatter、path_types、views |
+| 文件应放在哪里、允许什么类型和主视图结构？ | `OKF_CONFIG.yaml` | `main_view` 路径层级、页面角色、frontmatter、导航和标准 Markdown 链接 |
 
 不要把 OKF 当成第四个要新建的拆分结果；它是已有的独立契约，只需原样保留。
 
@@ -22,7 +22,7 @@
 | 优先提炼可复用的规则、决策和方法 | 当前 Profile | 用户可调整的选材偏好 |
 | 面向了解业务但未读原文的新同事 | 当前 Profile | 受众偏好 |
 | 同一主题跨文档合并，互不相关的主题拆开 | 原子知识 Profile；若为硬校验则固定部分留在 `SKILL.md` | 业务原子化策略与平台底线需要按子句拆分 |
-| `why/{meta_id}.md` 的类型为 concept | `OKF_CONFIG.yaml` | 路径和类型契约 |
+| `knowledge/procedure/.../{filename}.md` 使用 procedure 页面角色 | `OKF_CONFIG.yaml` | 单一主视图的路径和角色契约 |
 | `_mining/evidence-ledger.json` 必须包含哪些字段 | `SKILL.md` | 中间产物协议 |
 | 使用简洁中文，先给结论 | 当前 Profile | 写作偏好 |
 

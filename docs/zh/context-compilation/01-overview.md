@@ -44,7 +44,7 @@ Compile 本身不规定「编译成什么」——那由 Skill 决定。同一�
 
 ## 前置条件
 
-偏好图形界面的用户也可以使用 [Studio 知识挖掘](./06-knowledge-mining-studio.md)，在同一个页面完成文档上传、LLM Wiki 编译、任务跟踪和结果浏览。
+批量知识挖掘统一使用 [CLI 知识挖掘](./06-knowledge-mining-studio.md)，按串行窗口完成文档上传、LLM Wiki 编译、任务跟踪、断点恢复和日志检查。
 
 - 一个正在运行、且启用了 Bot（`--with-bot`）的 OpenViking 服务。默认端点是 `http://localhost:1933`；远程使用需要 API Key，参见 [鉴权](../guides/04-authentication.md)。没有服务先看 [快速开始](../getting-started/02-quickstart.md)。
 - `ov` CLI 已配置好连接（`~/.openviking/ovcli.conf` 或 `OPENVIKING_*` 环境变量）。

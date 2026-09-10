@@ -72,13 +72,12 @@ describe('knowledge mining history', () => {
     expect(history.jobs[0].documentFiles[0].name).toBe('guide.pdf')
   })
 
-  it('groups document, Memory, and human tasks into one rich history job', () => {
+  it('groups retries for one document source into one history job', () => {
     const jobs = jobsFromCompileTasks([
       task('cmp_1', 'viking://resources/knowledge-mining/run/document-sources'),
-      task('cmp_2', 'viking://resources/knowledge-mining/run/team-memory'),
       task(
-        'cmp_3',
-        'viking://resources/knowledge-mining/run/team-memory/human-answers-1.md',
+        'cmp_2',
+        'viking://resources/knowledge-mining/run/document-sources',
         {
           result: {
             created: [],
@@ -100,11 +99,9 @@ describe('knowledge mining history', () => {
 
     expect(jobs).toHaveLength(1)
     expect(jobs[0]).toMatchObject({
-      documentTaskId: 'cmp_1',
-      humanTaskId: 'cmp_3',
-      memoryTaskId: 'cmp_2',
+      documentTaskId: 'cmp_2',
       phase: 'completed',
-      taskId: 'cmp_3',
+      taskId: 'cmp_2',
     })
     expect(jobs[0].result?.page_count).toBe(9)
   })
@@ -162,7 +159,7 @@ describe('knowledge mining history', () => {
     expect(merged[0].documentFiles[0].name).toBe('guide.pdf')
   })
 
-  it('keeps the latest available result when a later stage fails', () => {
+  it('keeps the latest available result when a retry fails', () => {
     const documentResult = {
       created: ['viking://resources/knowledge-mining/run/wiki/index.md'],
       from: [],
@@ -185,10 +182,14 @@ describe('knowledge mining history', () => {
           status: 'completed',
         },
       ),
-      task('cmp_2', 'viking://resources/knowledge-mining/run/team-memory', {
-        error: { code: 'AGENT_ERROR', message: 'Memory compile failed' },
-        status: 'failed',
-      }),
+      task(
+        'cmp_2',
+        'viking://resources/knowledge-mining/run/document-sources',
+        {
+          error: { code: 'AGENT_ERROR', message: 'Compile retry failed' },
+          status: 'failed',
+        },
+      ),
     ])
 
     expect(jobs[0].phase).toBe('failed')

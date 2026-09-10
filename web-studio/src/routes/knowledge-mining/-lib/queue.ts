@@ -4,9 +4,6 @@ const BLOCKING_PHASES = new Set<MiningPhase>([
   'preparing',
   'uploading',
   'compiling_documents',
-  'compiling_memory',
-  'compiling_human',
-  'awaiting_human',
 ])
 
 export function isMiningWorkflowBlocking(phase: MiningPhase): boolean {

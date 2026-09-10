@@ -861,8 +861,8 @@ const COMMAND_HELP_SPECS: &[CommandHelpSpec] = &[
                 description: "Mine an existing OpenViking folder without uploading it again.",
             },
             HelpItem {
-                label: "ov knowledge-mining --documents ./documents --memory ./team-memory --okf-config ./OKF_CONFIG.yaml --wait",
-                description: "Run document mining followed by a team Memory incremental update.",
+                label: "ov knowledge-mining --documents ./documents --okf-config ./OKF_CONFIG.yaml --wait",
+                description: "Mine documents with a custom single-main-view OKF contract.",
             },
             HelpItem {
                 label: "ov knowledge-mining --documents ./documents --window-files 10 --window-bytes 209715200 --window-pages 1500 --window-probes 300 --state-file ./mining.json --wait",

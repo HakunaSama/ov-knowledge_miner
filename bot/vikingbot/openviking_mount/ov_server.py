@@ -618,8 +618,8 @@ class VikingClient:
 
     async def tree(self, uri: str, *, node_limit: int = 1000) -> List[Dict[str, Any]]:
         # The SDK/server default depth is only three levels. Compile knowledge
-        # pages live at knowledge/<topic>/<meta_id>/<facet>/<page>, so using the
-        # default silently omitted the canonical Wiki tree from incremental
+        # pages live below the configured main-view hierarchy, so using the
+        # default silently omitted the Wiki tree from incremental
         # checkouts. Node count remains the primary bounded inventory guard.
         return await self.client.tree(uri, node_limit=node_limit, level_limit=128)
 
